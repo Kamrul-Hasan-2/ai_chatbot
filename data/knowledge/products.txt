@@ -1,0 +1,50 @@
+Product Catalog
+
+1. Basic Chatbot Plan
+Price: $99/month
+Features:
+- Up to 1,000 conversations/month
+- Email support
+- Basic analytics
+- Single language support
+- Response time: 2-3 seconds
+- 30-day free trial
+
+2. Professional Chatbot Plan
+Price: $299/month
+Features:
+- Up to 10,000 conversations/month
+- Priority email and chat support
+- Advanced analytics and reporting
+- Multi-language support (10+ languages)
+- Response time: 1-2 seconds
+- Custom branding
+- API access
+- 30-day free trial
+
+3. Enterprise Chatbot Plan
+Price: Custom pricing
+Features:
+- Unlimited conversations
+- 24/7 dedicated support
+- Enterprise analytics and reporting
+- Unlimited language support
+- Response time: <1 second
+- Custom branding and white-label options
+- Full API access
+- Custom integrations
+- Dedicated account manager
+- SLA guarantee
+- Free trial available
+
+Add-ons:
+- RAG Enhancement: $50/month (improves accuracy)
+- Voice Integration: $100/month
+- Advanced Security Features: $75/month
+- Custom Model Training: Starting at $500
+
+All plans include:
+- Regular updates
+- Security patches
+- Documentation
+- Community forum access

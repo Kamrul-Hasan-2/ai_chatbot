@@ -1,0 +1,25 @@
+Company Overview
+Our company was founded in 2020 with a mission to provide innovative AI solutions for businesses of all sizes. We specialize in chatbot development, natural language processing, and machine learning applications.
+
+Our Vision
+To make AI accessible and beneficial for everyone, helping businesses improve customer engagement and operational efficiency.
+
+Core Values
+- Innovation: We continuously push the boundaries of what's possible with AI
+- Customer Focus: Our customers' success is our success
+- Quality: We deliver reliable, high-quality solutions
+- Transparency: We believe in open communication and honest practices
+
+Team
+We have a diverse team of 50+ professionals including:
+- AI/ML Engineers
+- Software Developers
+- Data Scientists
+- Customer Success Specialists
+- Sales and Marketing Professionals
+
+Achievements
+- Served over 500 clients worldwide
+- Processed 10 million+ conversations
+- 99.9% uptime guarantee
+- Winner of "Best AI Chatbot Platform" award 2023

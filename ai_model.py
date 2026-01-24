@@ -80,11 +80,29 @@ class QwenAIModel:
             # Build conversation messages
             messages = []
             
-            # Add system prompt with admin context
+            # Add system prompt with admin context and RAG instructions
             system_prompt = "You are a helpful AI assistant representing an admin. "
+            
             if context:
-                system_prompt += f"Here is important information you should know:\n{context}\n\n"
-            system_prompt += "Reply professionally and helpfully to user messages."
+                # Check if context contains RAG-retrieved information
+                if "Relevant Information:" in context or "[Source" in context:
+                    system_prompt += (
+                        "Use the following information to answer the user's question accurately. "
+                        "If the information provided contains the answer, use it. "
+                        "If the provided information is not relevant or insufficient, "
+                        "use your general knowledge to provide a helpful response.\n\n"
+                        f"{context}\n\n"
+                        "Base your response primarily on the information above when relevant. "
+                    )
+                else:
+                    # Regular context without RAG
+                    system_prompt += f"Here is important information you should know:\n{context}\n\n"
+            
+            system_prompt += (
+                "Reply professionally and helpfully to user messages. "
+                "Be concise and accurate. If you reference information from the provided sources, "
+                "you can mention that you're using available knowledge to assist them."
+            )
             
             messages.append({
                 "role": "system",

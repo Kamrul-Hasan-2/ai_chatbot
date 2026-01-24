@@ -1,0 +1,55 @@
+Customer Support Policies
+
+Support Hours
+- Basic Plan: Monday-Friday, 9 AM - 5 PM EST
+- Professional Plan: 7 days a week, 8 AM - 8 PM EST
+- Enterprise Plan: 24/7/365
+
+Response Time SLA
+- Basic Plan: Within 24 hours
+- Professional Plan: Within 4 hours
+- Enterprise Plan: Within 1 hour (critical issues: 15 minutes)
+
+Support Channels
+- Email: support@company.com
+- Live Chat: Available on website during business hours
+- Phone: +1-800-123-4567 (Professional and Enterprise only)
+- Ticket System: Available in customer portal
+
+Common Issues Resolution Time
+- Account access issues: 1-2 hours
+- Billing questions: 4 hours
+- Technical bugs: 24-48 hours
+- Feature requests: Evaluated monthly
+
+Refund Policy
+We offer a 30-day money-back guarantee on all plans. No questions asked.
+To request a refund:
+1. Email support@company.com
+2. Provide your account details
+3. Refund processed within 5-7 business days
+
+Cancellation Policy
+You can cancel your subscription at any time.
+- Cancel before renewal date: No charges
+- After cancellation: Service available until end of billing period
+- Data retention: 30 days after cancellation
+
+Data Privacy
+We take your privacy seriously:
+- All data encrypted in transit and at rest
+- GDPR and CCPA compliant
+- No data shared with third parties
+- Regular security audits
+- Right to request data deletion
+
+Upgrade/Downgrade
+- Upgrades: Immediate effect, prorated billing
+- Downgrades: Take effect at next billing cycle
+- Contact support for assistance
+
+Service Level Agreement (SLA)
+- 99.9% uptime guarantee (Professional and Enterprise)
+- Compensation: 10% credit per hour of downtime
+- Scheduled maintenance: Announced 48 hours in advance
+- Emergency maintenance: Rare, but may occur without notice

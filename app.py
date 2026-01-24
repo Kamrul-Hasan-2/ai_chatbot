@@ -1,12 +1,14 @@
 """
 Facebook Messenger Integration
 Flask webhook for receiving and responding to messages
+Enhanced with RAG support
 """
 import os
 import logging
 from flask import Flask, request, jsonify
 import requests
 from chatbot import AdminChatbot
+from knowledge_loader import initialize_rag_with_data
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -25,6 +27,10 @@ chatbot = None
 # Facebook Page Access Token and Verify Token
 PAGE_ACCESS_TOKEN = os.getenv('PAGE_ACCESS_TOKEN')
 VERIFY_TOKEN = os.getenv('VERIFY_TOKEN', 'my_verify_token_12345')
+
+# RAG Configuration
+ENABLE_RAG = os.getenv('ENABLE_RAG', 'true').lower() == 'true'
+RAG_TOP_K = int(os.getenv('RAG_TOP_K', '3'))
 
 
 def send_message(recipient_id: str, message_text: str) -> bool:
@@ -171,10 +177,34 @@ def test_message():
 
 
 def initialize_chatbot():
-    """Initialize the chatbot (called when app starts)"""
+    """Initialize the chatbot with RAG support (called when app starts)"""
     global chatbot
     logger.info("Initializing chatbot...")
-    chatbot = AdminChatbot()
+    logger.info(f"RAG enabled: {ENABLE_RAG}")
+    
+    # Initialize chatbot with RAG
+    chatbot = AdminChatbot(
+        enable_rag=ENABLE_RAG,
+        rag_top_k=RAG_TOP_K
+    )
+    
+    # Load knowledge base if RAG is enabled
+    if ENABLE_RAG:
+        logger.info("Loading knowledge base into RAG store...")
+        try:
+            results = initialize_rag_with_data(
+                chatbot, 
+                knowledge_dirs=["data/knowledge", "docs"]
+            )
+            logger.info(f"RAG initialized: {results}")
+            
+            # Show RAG stats
+            stats = chatbot.get_rag_stats()
+            logger.info(f"RAG Stats: {stats}")
+        except Exception as e:
+            logger.warning(f"RAG initialization warning: {e}")
+            logger.info("Continuing without RAG enhancement")
+    
     logger.info("Chatbot ready!")
 
 

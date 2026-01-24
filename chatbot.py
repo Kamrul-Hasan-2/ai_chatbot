@@ -1,6 +1,6 @@
 """
 Main Chatbot Logic
-Handles conversation management and data integration
+Handles conversation management and data integration with RAG
 """
 import json
 import os
@@ -9,27 +9,45 @@ from datetime import datetime
 import logging
 from ai_model import QwenAIModel
 from database_handler import DatabaseHandler
+from rag_store import RAGStore
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 class AdminChatbot:
-    def __init__(self, data_file: str = "data/admin_data.json", csv_database: str = "database.csv"):
+    def __init__(
+        self, 
+        data_file: str = "data/admin_data.json", 
+        csv_database: str = "database.csv",
+        enable_rag: bool = True,
+        rag_top_k: int = 3
+    ):
         """
-        Initialize the chatbot with AI model and data
+        Initialize the chatbot with AI model, RAG, and data
         
         Args:
             data_file: Path to JSON file containing admin data/context
             csv_database: Path to CSV file with Q&A database
+            enable_rag: Whether to enable RAG retrieval
+            rag_top_k: Number of documents to retrieve from RAG
         """
         self.data_file = data_file
         self.admin_context = ""
         self.conversation_history: Dict[str, List[Dict[str, str]]] = {}
+        self.enable_rag = enable_rag
+        self.rag_top_k = rag_top_k
         
         # Load CSV database (priority responses)
         logger.info("Loading CSV database...")
         self.database = DatabaseHandler(csv_database)
+        
+        # Initialize RAG store
+        if self.enable_rag:
+            logger.info("Initializing RAG store...")
+            self.rag_store = RAGStore()
+        else:
+            self.rag_store = None
         
         # Load admin data
         self.load_admin_data()
@@ -102,7 +120,7 @@ class AdminChatbot:
         maintain_history: bool = True
     ) -> str:
         """
-        Get AI response for a user message
+        Get AI response for a user message with RAG enhancement
         
         Args:
             user_id: Unique identifier for the user
@@ -121,8 +139,26 @@ class AdminChatbot:
                 self._log_conversation(user_id, message, db_response)
                 return db_response
             
-            # STEP 2: If no database match, use AI model
-            logger.info("No database match, using AI model")
+            # STEP 2: Retrieve relevant context from RAG store
+            rag_context = ""
+            if self.enable_rag and self.rag_store:
+                logger.info("Retrieving context from RAG store...")
+                rag_context = self.rag_store.get_context_for_query(
+                    message, 
+                    top_k=self.rag_top_k,
+                    max_context_length=2000
+                )
+                
+                if rag_context:
+                    logger.info(f"Retrieved RAG context ({len(rag_context)} chars)")
+            
+            # STEP 3: Combine admin context with RAG context
+            combined_context = self.admin_context
+            if rag_context:
+                combined_context += f"\n\nRelevant Information:\n{rag_context}"
+            
+            # STEP 4: Use AI model with enhanced context
+            logger.info("Generating response with AI model (RAG-enhanced)")
             
             # Get or create conversation history for this user
             if user_id not in self.conversation_history:
@@ -133,7 +169,7 @@ class AdminChatbot:
             # Generate response using AI model
             response = self.ai_model.generate_response(
                 user_message=message,
-                context=self.admin_context,
+                context=combined_context,
                 conversation_history=history
             )
             
@@ -190,3 +226,33 @@ class AdminChatbot:
         self.load_admin_data()
         self.database.reload_database()
         logger.info("Admin data and database reloaded")
+    
+    def add_documents_to_rag(
+        self, 
+        documents: List[str], 
+        metadata: Optional[List[Dict]] = None
+    ) -> int:
+        """
+        Add documents to RAG knowledge base
+        
+        Args:
+            documents: List of document texts
+            metadata: Optional metadata for each document
+            
+        Returns:
+            Number of chunks added
+        """
+        if not self.enable_rag or not self.rag_store:
+            logger.warning("RAG is not enabled")
+            return 0
+        
+        return self.rag_store.add_documents(documents, metadata)
+    
+    def get_rag_stats(self) -> Dict:
+        """Get RAG store statistics"""
+        if not self.enable_rag or not self.rag_store:
+            return {"enabled": False}
+        
+        stats = self.rag_store.get_stats()
+        stats["enabled"] = True
+        return stats
