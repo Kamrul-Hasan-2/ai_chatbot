@@ -7,9 +7,11 @@ import os
 from typing import Dict, List, Optional
 from datetime import datetime
 import logging
-from ai_model import QwenAIModel
+from gemini_model import GeminiAIModel
+from fallback_handler import FallbackResponder
 from database_handler import DatabaseHandler
 from rag_store import RAGStore
+from product_search import ProductSearchAPI
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -21,7 +23,8 @@ class AdminChatbot:
         data_file: str = "data/admin_data.json", 
         csv_database: str = "database.csv",
         enable_rag: bool = True,
-        rag_top_k: int = 3
+        rag_top_k: int = 5,
+        response_style: str = "friendly"
     ):
         """
         Initialize the chatbot with AI model, RAG, and data
@@ -31,12 +34,18 @@ class AdminChatbot:
             csv_database: Path to CSV file with Q&A database
             enable_rag: Whether to enable RAG retrieval
             rag_top_k: Number of documents to retrieve from RAG
+            response_style: Style of responses ('friendly', 'professional', 'casual')
         """
         self.data_file = data_file
         self.admin_context = ""
         self.conversation_history: Dict[str, List[Dict[str, str]]] = {}
         self.enable_rag = enable_rag
         self.rag_top_k = rag_top_k
+        self.response_style = response_style
+        
+        # Initialize Product Search API
+        logger.info("Initializing Product Search API...")
+        self.product_api = ProductSearchAPI()
         
         # Load CSV database (priority responses)
         logger.info("Loading CSV database...")
@@ -52,9 +61,14 @@ class AdminChatbot:
         # Load admin data
         self.load_admin_data()
         
-        # Initialize AI model
-        logger.info("Loading AI model...")
-        self.ai_model = QwenAIModel()
+        # Initialize AI model (Gemini API)
+        logger.info("Loading Gemini AI model...")
+        self.ai_model = GeminiAIModel()
+        
+        # Initialize fallback responder for when API is unavailable
+        logger.info("Initializing fallback responder...")
+        self.fallback = FallbackResponder()
+        
         logger.info("Chatbot initialized successfully")
     
     def load_admin_data(self):
@@ -131,7 +145,21 @@ class AdminChatbot:
             AI-generated response
         """
         try:
-            # STEP 1: First check CSV database for exact/similar match
+            # STEP 1: Check if this is a product search query
+            search_term = self.product_api.detect_product_query(message)
+            
+            if search_term:
+                logger.info(f"Product search detected: {search_term}")
+                search_result = self.product_api.search_products(search_term, max_results=5)
+                
+                # Detect language
+                language = 'bengali' if any(char >= '\u0980' and char <= '\u09FF' for char in message) else 'english'
+                
+                product_response = self.product_api.format_response(search_result, language)
+                self._log_conversation(user_id, message, product_response)
+                return product_response
+            
+            # STEP 2: Check CSV database for exact/similar match
             db_response = self.database.search_database(message, threshold=0.7)
             
             if db_response:
@@ -139,23 +167,45 @@ class AdminChatbot:
                 self._log_conversation(user_id, message, db_response)
                 return db_response
             
-            # STEP 2: Retrieve relevant context from RAG store
+            # STEP 3: Retrieve relevant context from RAG store
             rag_context = ""
+            similar_conversations = []
             if self.enable_rag and self.rag_store:
                 logger.info("Retrieving context from RAG store...")
                 rag_context = self.rag_store.get_context_for_query(
                     message, 
                     top_k=self.rag_top_k,
-                    max_context_length=2000
+                    max_context_length=3000
                 )
+                
+                # Get similar conversations for learning response style
+                results = self.rag_store.search(message, top_k=3)
+                for doc, score, metadata in results:
+                    if metadata and metadata.get('type') == 'conversation':
+                        similar_conversations.append({
+                            'user_msg': metadata.get('user_message', ''),
+                            'admin_resp': metadata.get('admin_response', ''),
+                            'score': score
+                        })
                 
                 if rag_context:
                     logger.info(f"Retrieved RAG context ({len(rag_context)} chars)")
+                if similar_conversations:
+                    logger.info(f"Found {len(similar_conversations)} similar conversations")
             
             # STEP 3: Combine admin context with RAG context
             combined_context = self.admin_context
             if rag_context:
                 combined_context += f"\n\nRelevant Information:\n{rag_context}"
+            
+            # Add similar conversation examples for better context
+            if similar_conversations:
+                examples = "\n\nSimilar Previous Conversations (learn from these):\n"
+                for i, conv in enumerate(similar_conversations[:2], 1):
+                    examples += f"\nExample {i}:\n"
+                    examples += f"User: {conv['user_msg']}\n"
+                    examples += f"Admin: {conv['admin_resp']}\n"
+                combined_context += examples
             
             # STEP 4: Use AI model with enhanced context
             logger.info("Generating response with AI model (RAG-enhanced)")
@@ -172,6 +222,13 @@ class AdminChatbot:
                 context=combined_context,
                 conversation_history=history
             )
+            
+            # If Gemini API is unavailable, try fallback
+            if any(error_indicator in response for error_indicator in ["সার্ভার মোমেন্টে ব্যস্ত", "সিস্টেমে একটি সমস্যা", "কনফিগারেশন সমস্যা"]):
+                logger.warning("API unavailable, using fallback responder")
+                fallback_response = self.fallback.get_response(message)
+                if fallback_response:
+                    response = fallback_response
             
             # Update conversation history
             if maintain_history:
@@ -195,7 +252,9 @@ class AdminChatbot:
             
         except Exception as e:
             logger.error(f"Error getting response: {e}")
-            return "I apologize, but I'm having trouble processing your request right now. Please try again later."
+            # Try fallback when exception occurs
+            fallback_response = self.fallback.get_response(message)
+            return fallback_response if fallback_response else "আমরা মোমেন্টে সেবা দিতে পারছি না। একটু পরে চেষ্টা করুন। 🙏"
     
     def _log_conversation(self, user_id: str, message: str, response: str):
         """Log conversation to file for record keeping"""

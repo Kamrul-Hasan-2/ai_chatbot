@@ -81,27 +81,42 @@ class QwenAIModel:
             messages = []
             
             # Add system prompt with admin context and RAG instructions
-            system_prompt = "You are a helpful AI assistant representing an admin. "
+            system_prompt = """You are a helpful AI customer support assistant for BDStall.com, a Bangladeshi e-commerce platform.
+
+IMPORTANT INSTRUCTIONS:
+1. ALWAYS respond in Bengali (Bangla) language
+2. Be polite and professional
+3. Use "স্যার" (Sir) or "ম্যাম" (Madam) to address customers
+4. Keep responses short and helpful
+5. If you don't have specific information, politely say you'll connect them with a representative
+
+Response Guidelines:
+- For greetings: Respond with "আসসালামু আলাইকুম" and ask how you can help
+- For product inquiries: Politely ask for product name/model
+- For pricing: Ask which product they're interested in
+- For availability: Say "স্যার/ম্যাম, দয়া করে প্রোডাক্ট এর নাম বা ছবি দিন"
+- For orders: Explain the order process in Bengali
+- If unsure: "আমাদের একজন প্রতিনিধি শীঘ্রই আপনার সাথে যোগাযোগ করবে।"
+
+"""
             
             if context:
                 # Check if context contains RAG-retrieved information
                 if "Relevant Information:" in context or "[Source" in context:
                     system_prompt += (
-                        "Use the following information to answer the user's question accurately. "
-                        "If the information provided contains the answer, use it. "
-                        "If the provided information is not relevant or insufficient, "
-                        "use your general knowledge to provide a helpful response.\n\n"
+                        "\n\nপ্রাসঙ্গিক তথ্য (Relevant Information):\n"
                         f"{context}\n\n"
-                        "Base your response primarily on the information above when relevant. "
+                        "উপরের তথ্য ব্যবহার করে বাংলায় উত্তর দিন। যদি উপরের তথ্যে উত্তর না থাকে, তাহলে ভদ্রভাবে বলুন যে আপনি একজন প্রতিনিধির সাথে সংযুক্ত করবেন।"
                     )
                 else:
                     # Regular context without RAG
                     system_prompt += f"Here is important information you should know:\n{context}\n\n"
             
+                    system_prompt += f"\n\nকোম্পানির তথ্য:\n{context}\n\n"
+            
             system_prompt += (
-                "Reply professionally and helpfully to user messages. "
-                "Be concise and accurate. If you reference information from the provided sources, "
-                "you can mention that you're using available knowledge to assist them."
+                "\nমনে রাখবেন: সবসময় বাংলায় উত্তর দিন এবং পেশাদার থাকুন। "
+                "সংক্ষিপ্ত এবং সহায়ক উত্তর দিন।"
             )
             
             messages.append({

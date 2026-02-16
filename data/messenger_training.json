@@ -1,0 +1,899 @@
+{
+  "metadata": {
+    "source": "https://ai.bdstall.com/rest_api/item/chatbot_grouped?limit=1000",
+    "total_conversations": 107,
+    "training_pairs": 175,
+    "processed_at": "2026-02-13T03:31:58.736046"
+  },
+  "conversations": [
+    {
+      "user_message": "আমি একটা কাজ খুজছি,আপনাদের এখানে কাজের কোন সুযোগ তাকলে একটা কল দিবেন।০১৭২৮৪৫৭২৯৫",
+      "admin_response": "Noted."
+    },
+    {
+      "user_message": "Refurbished Original Nokia 6500 Classic 6500C Unlocked Mobile Phone 3G Quad- Band. \nWant to buy.",
+      "admin_response": "Dear Sir\n\nNokia 6500 is not currently listed.\n\nThank you"
+    },
+    {
+      "user_message": "When will I get that product?",
+      "admin_response": "No estimated time.\n\nThank you"
+    },
+    {
+      "user_message": "01673675056",
+      "admin_response": "Please call at 0190-464-2489."
+    },
+    {
+      "user_message": "Tds meter achey.",
+      "admin_response": "Dear Sir,\nPlease call at 0176-488-5269 for TDS meter."
+    },
+    {
+      "user_message": "Hello",
+      "admin_response": "this product is not available at the moment.. thank you"
+    },
+    {
+      "user_message": "koto",
+      "admin_response": "You sent an attachment."
+    },
+    {
+      "user_message": "Eta ki vhabe nibo ar order korte gayle ki korte hobe",
+      "admin_response": "Please call at the given showroom hotline number."
+    },
+    {
+      "user_message": "আমি আপনাদের মাধ্যমে আমার পন্য বিক্রি করতে চাই",
+      "admin_response": "Okay Bhaiya\nAmi Stall Support er number diye dicchi \n01305686876"
+    },
+    {
+      "user_message": "আপনাদের এইখানে আগে একাউন্ট খুলতে  হবে তারপর স্টল কিভাবে খুলতে হবে ?",
+      "admin_response": "bhaiya ei number e call dilei apnake details e bole dibe"
+    },
+    {
+      "user_message": "???",
+      "admin_response": "bhaiya details e likha ache"
+    },
+    {
+      "user_message": "এটার কোন ভিডিও রিভিউ আছে",
+      "admin_response": "Apni youtube e dekhte paren sir"
+    },
+    {
+      "user_message": "link den",
+      "admin_response": "Sir i meant"
+    },
+    {
+      "user_message": "Ai phnta available?",
+      "admin_response": "Sorry mam"
+    },
+    {
+      "user_message": "Thankyou ????",
+      "admin_response": "wlc"
+    },
+    {
+      "user_message": "1c monitor lagbe akta",
+      "admin_response": "প্রিয় গ্রাহক, আপনার মনিটরের ব্যান্ড ও মডেলের নাম বলুন।"
+    },
+    {
+      "user_message": "Xiaomi 1c monitor",
+      "admin_response": "বর্তমান দাম ১১,৪৯৯ টাকা । বিস্তারিত জানতে ভিজিট করুন https://www.bdstall.com/details/xiaomi-mi-1c-238-full-hd-boundless-ips-monitor-59132/"
+    },
+    {
+      "user_message": "Ar kivabe ami pabo?",
+      "admin_response": "জ্বি স্যার আমাদের শো রুম আছে । আপনি সরাসরি আমাদের শো রুম থেকে নিতে পারবেন ।"
+    },
+    {
+      "user_message": "Nki lockdwn e off?",
+      "admin_response": "online theke order kore delivery nite parben"
+    },
+    {
+      "user_message": "Akn pataya diben?",
+      "admin_response": "আপনার ঠিকানা কোথায় ?"
+    },
+    {
+      "user_message": "Airport",
+      "admin_response": "আজকে দেওয়া যাবে না । তবে আগামি ৭২ ঘন্টার মধ্যে পেয়ে যাবেন"
+    },
+    {
+      "user_message": "????",
+      "admin_response": "01765542331\n01765542332"
+    },
+    {
+      "user_message": "Apnader showroom kothay",
+      "admin_response": "স্যার, এটা আমরা অফিস থেকে নিয়ন্ত্রন করি, শো রুম আমাদের অফিসের সাথে নেই।"
+    },
+    {
+      "user_message": "Ami iphone 6s ta nibo",
+      "admin_response": "iPhone 6s সম্পর্কে বিস্তারিত জানতে ও সরাসরি অনলাইনে অর্ডার করতে ভিজিট করুন https://www.bdstall.com/details/apple-iphone-6s-64gb-dual-core-12mp-camera-2gb-ram-mobile-26144/"
+    },
+    {
+      "user_message": "6s koto vai",
+      "admin_response": "বর্তমান দাম ১৫৪০০ টাকা"
+    },
+    {
+      "user_message": "Naki use kora",
+      "admin_response": "new condition but refurbished"
+    },
+    {
+      "user_message": "Helo",
+      "admin_response": "You sent an attachment."
+    },
+    {
+      "user_message": "আমার একটি ডিজিটাল ওয়েট মেশিন লাগবে।\n০১৭২৬-০৫১৬১৬",
+      "admin_response": "আমাদের শো রুমের নাম্বারে যোগাযোগ করে নিতে পারবেন  01718555596\n01922297160"
+    },
+    {
+      "user_message": "আমার একটি ডিজিটাল ওয়েট মেশিন লাগবে।\n০১৭২৬-০৫১৬১৬",
+      "admin_response": "উপরে দেওয়া নাম্বারে যোগাযোগ করে আপনার চাহিদা অনুযায়ী মেশিন নিতে পারবেন"
+    },
+    {
+      "user_message": "Want to order",
+      "admin_response": "Buy now option theke order korun"
+    },
+    {
+      "user_message": "Available?",
+      "admin_response": "এখান থেকে অর্ডার করুন https://www.bdstall.com/details/40-watt-uva-tube-mosquito-pest-killer-84020/"
+    },
+    {
+      "user_message": "Customer Name:Akkas mollah\nMobile Number:01631743206\nAddress: Shadhinata Sharani, Jamtola, North Badda, Dhaka 1212\nRahat sondha maloti opposite of usman madrasa.building owner name Ajibur saheb. Plot No. 296, House No. 1, Ward No. 8,\n3 tala lift er 2,lift theke neme hater baam e.\nOrder confirmed",
+      "admin_response": "order confirmed"
+    },
+    {
+      "user_message": "Total kto?",
+      "admin_response": "শো রুম থেকে বলে দিবে"
+    },
+    {
+      "user_message": "Amra apnake valo price dibo",
+      "admin_response": "আমাদের ওয়েবসাইটে আমরা বিভিন্ন সেলারদের নিয়ে কাজ করে থাকি। আপনি চাইলে আমাদের মাধ্যমে ব্যবসায় করতে পারেন। ধন্যবাদ।"
+    },
+    {
+      "user_message": "এই ফোন টা কি আপনাদের কাছে আছে",
+      "admin_response": "iPhone 5s এর বর্তমান দাম ৫৭৯০ টাকা। অর্ডার করতে লিংকে প্রবেশ করুন।https://www.bdstall.com/details/apple-iphone-5s-dual-core-4-1gb-ram-8mp-full-hd-mobile-27066/"
+    },
+    {
+      "user_message": "Emergency please reply my msg",
+      "admin_response": "Ji bolun"
+    },
+    {
+      "user_message": "Hello?",
+      "admin_response": "Apni kon phone nite cacchen?"
+    },
+    {
+      "user_message": "Eita",
+      "admin_response": "এটা ইউজড"
+    },
+    {
+      "user_message": "Hello?",
+      "admin_response": "এই ফোন গুলো ইউসড কিন্তু নতুন কন্ডিশন। আর বর্তমানে দেশে আন অফিশিয়াল বা অফিশিয়াল কোন ফোন বন্ধ হবে নাহ।"
+    },
+    {
+      "user_message": "Hello vai?",
+      "admin_response": "স্যার, ফোন এর সাথে বক্স ও চার্জার পাবেন।"
+    },
+    {
+      "user_message": "Phone e kono somossa hobenato?",
+      "admin_response": "স্যার, ৭ দিনের রিপ্লেস্মেন্ট ওয়ারেন্টি ও ১ বছরের সার্ভিস ওয়ারেন্টি পাবেন।"
+    },
+    {
+      "user_message": "Hello?vai",
+      "admin_response": "ফোন গুলো কপি নাহ। এগুলো রিফাবরিসড ফোন।"
+    },
+    {
+      "user_message": "Hote pare",
+      "admin_response": "ইনশা আল্লাহ"
+    },
+    {
+      "user_message": "Ata ki ache apndr kache?",
+      "admin_response": "জ্বি স্যার আছে"
+    },
+    {
+      "user_message": "Already kena hoye geche",
+      "admin_response": "ওহ আচ্ছা, ঠিক আছে  স্যার"
+    },
+    {
+      "user_message": "ata 40,000/- dao jabe ..",
+      "admin_response": "Please call our showroom number  55/B, Purana Paltan, Noakhali Tower, 4th Floor\nPurana Paltan, Dhaka, Bangladesh\nMR. Abu Kalam\nHotline1\n0171-830-1384\nHotline2\n0197-900-0054\n Thank you"
+    },
+    {
+      "user_message": "Ata ki kom kora jabe ..?",
+      "admin_response": "বিস্তারিত জানতে শোরুমের দেয়া নাম্বারে যোগাযোগ করুন। আমাদের শোরুমের নাম্বারঃ 01780009000 অথবা 01738793388"
+    },
+    {
+      "user_message": "ফোনে 3d দেখার জন্য একটা 3dসানগ্লাস লাগবে",
+      "admin_response": "ওয়ালাইকুমুসসালাম, নিচের দেয়া লিংক হতে আপনি আপনার পছন্দ মতো 3D গ্লাস পছন্দ করতে পারেন। লিংকঃ https://www.bdstall.com/search/?term=3d+glass"
+    },
+    {
+      "user_message": "এটা দিয়ে কি ফোনে 3d video দেখা যাবে",
+      "admin_response": "জ্বী একদম ক্লিয়ার দেখা যাবে"
+    },
+    {
+      "user_message": "ডেলিভারি দিতে কত দিন লাগবে",
+      "admin_response": "আমরা ঢাকা সিটির ভিতরে সর্বোচ্চ ৩দিন সময় নিয়ে থাকি এবং ঢাকা সিটির বাইরে সর্বোচ্চ ৭ দিন"
+    },
+    {
+      "user_message": "টাকা কি আগে দিতে হবে",
+      "admin_response": "ঢাকা সিটির ভিতরে হলে অগ্রীম কোনো টাকা দিতে হবে না, আর ঢাকা সিটির বাইরে হলে ডেলিভারি চার্জ অগ্রীম দিতে হবে।"
+    },
+    {
+      "user_message": "ভাই আমি সানগ্লাস টি আর্ডার করেছি কালকে 2টার দিকে পাঠিয়ে দিয়ন আমার নাম মাহদি  ঠিকানা  আগারগাঁও ইসলামি ফাউন্ডেশন",
+      "admin_response": "আপনাকে কল করা হবে শোরুম থেকে তখন সময়টা বলে দিবেন।"
+    },
+    {
+      "user_message": "কোই ফোন তো করলোনা",
+      "admin_response": "আপনার সাথে কথা হয়েছে।"
+    },
+    {
+      "user_message": "আজকে আমার পন্যটি পাঠাবার ব্যবস্হা করেন",
+      "admin_response": "আপনাকে শোরুম থেকে কে কল করা হবে"
+    },
+    {
+      "user_message": "Mi 3 phone ta ki ase",
+      "admin_response": "জ্বী আছে, এর বর্তমান মূল্য মাত্র ২,৯১৫ টাকা। বিস্তারিত জানতে ও অর্ডার করতে নিচের লিংকে প্রবেশ করুন, https://www.bdstall.com/details/xiaomi-mi-3-mobile-phone-5-quad-core-13mp-camera-2gb-ram-21107/"
+    },
+    {
+      "user_message": "Taka ki age dite hobe",
+      "admin_response": "প্রোডাক্ট হাতে পাওয়ার পরে টাকা দিবেন, তবে ঢাকা সিটির বাইরে থেকে অর্ডার করলে কুরিয়ার চার্জটা অগ্রিম দিতে হবে ২০০ টাকা"
+    },
+    {
+      "user_message": "Ami dhaka Gazipur Thaki tahole ki charg age dite hobe",
+      "admin_response": "জ্বী, গাজিপুর ঢাকা সিটির ভিতরে না।"
+    },
+    {
+      "user_message": "Kotokhon ar bitoke Pabo Ami Phone Ta",
+      "admin_response": "আমরা ঢাকা সিটির ভিতরে সর্বোচ্চ ৩ দিন সময় নিয়ে থাকি এবং ঢাকা সিটির বাইরে আমরা সর্বোচ্চ ৭ দিন সময় নিয়ে থাকি।"
+    },
+    {
+      "user_message": "এটাই তো আপনাদের নাম্বার",
+      "admin_response": "স্যার আপনি যে সময়ে ফোন দিয়েছিলেন তখন ফোনের সাথে না থাকায় ফোন রিসিভ হয় নাই"
+    },
+    {
+      "user_message": "Etai apnader service system?????",
+      "admin_response": "আসসালামু আলাইকুম, বিডিস্টলে আপনাকে স্বাগতম। দুঃখিত স্যার লেট রিপ্লাই এর জন্য। জ্বী আছে, নিচের লিংক থেকে দেখতে পারেন, https://www.bdstall.com/details/geo-phone-r7-74620/"
+    },
+    {
+      "user_message": "MotionView theke nisi official genuine 1550৳.❤️",
+      "admin_response": "100% original"
+    },
+    {
+      "user_message": "Hai",
+      "admin_response": "দুঃখিত স্যার বর্তমানে আমাদের সকল কার্যক্রম বন্ধ আছে আগামী ০৭ / ০৫ / ২০২২ তারিখ থেকে আমাদের সকল কার্যক্রম শুরু হবে।"
+    },
+    {
+      "user_message": "এটা হবে?",
+      "admin_response": "জ্বী হবে, এর বর্তমান মূল্য মাত্র ৫২০ টাকা। বিস্তারিত জানতে ও অর্ডার করতে নিচের লিংকে প্রবেশ করুন, https://www.bdstall.com/details/stainless-steel-vaccum-500ml-water-bottle-56856/"
+    },
+    {
+      "user_message": "সেইম এটাই আছে নাকি অন্য টা?",
+      "admin_response": "লিংকে প্রবেশ করলে ছবি গুলো দেখতে পারবেন। যেটা অর্ডার করতে চান সেটা উল্লেখ করে দিবেন ঠিকানার জায়গায়।"
+    },
+    {
+      "user_message": "কোনো কিছু ওর্ডার দিলে কত সময় লাগে তা ডেলিবারি দিতে",
+      "admin_response": "ঢাকা সিটির মধ্যে সর্বোচ্চ ৩ দিন এবং ঢাকা সিটির বাইরে সর্বোচ্চ ৭ দিন।"
+    },
+    {
+      "user_message": "তাহলে গাজীপুর থেকে ওর্ডার দিলে",
+      "admin_response": "সর্বোচ্চ ৭ দিন সময় নিয়ে থাকা ঢাকা সিটির বাইরে তবে আশা করছি ৫ দিনের মধ্যে পেয়ে যাবেন।"
+    },
+    {
+      "user_message": "এটবান্স টাকা কত দিতে হয়",
+      "admin_response": "আপনি কোন পণ্য নিতে চাচ্ছেন?"
+    },
+    {
+      "user_message": "একটা আটশত টাকা দামের ব্লটুথ",
+      "admin_response": "আইডি বলুন"
+    },
+    {
+      "user_message": "ওর্ডার দিছি",
+      "admin_response": "ঠিকাছে ধন্যবাদ"
+    },
+    {
+      "user_message": "দয়া করে ব্লটু গুলোর ছবি দিতে পারবেন",
+      "admin_response": "আপনার অর্ডার আইডিটি বলুন"
+    },
+    {
+      "user_message": "01931132596",
+      "admin_response": "নিচের লিঙ্কে প্রবেশ করে ছবি গুলো দেখতে পারেন, https://www.bdstall.com/details/m10-newest-digital-indicator-true-wireless-headset-72159/"
+    },
+    {
+      "user_message": "ধন্যবাদ",
+      "admin_response": "স্বাগত আপনাকে"
+    },
+    {
+      "user_message": "আমার পন্য এখনো পাই নাই",
+      "admin_response": "স্যার আমরা আমাদের শো রুমের সাথে কথা বলে দেখছি"
+    },
+    {
+      "user_message": "৩০০টাকার মধ্যে গোল্ডেন কালারের ঘড়ি আর্ডার দিতে চাই",
+      "admin_response": "স্যার ৩০০ টাকায় গোল্ডেন কালারের ঘড়ি হবে না।"
+    },
+    {
+      "user_message": "hollo",
+      "admin_response": "এই ঘড়িটি হবে না তবে নিচের লিঙ্ক থেকে এই ঘড়ি গুলো দেখতে পারেন, https://www.bdstall.com/details/peacock-pride-ladies-wristwatch-75495/"
+    },
+    {
+      "user_message": "এখানে তো নাই",
+      "admin_response": "লিঙ্কে প্রবেশ করুন স্যার"
+    },
+    {
+      "user_message": "করছি",
+      "admin_response": "পছন্দ হয়েছে কি?"
+    },
+    {
+      "user_message": "ত্রিকেট খেলার ব্যটের লিংক দেন",
+      "admin_response": "এই মূহূর্তে আমাদের স্টকে নেই।"
+    },
+    {
+      "user_message": "আমাকে ফুটবল খেলার কিছু বুট দেখান",
+      "admin_response": "দুঃখিত স্যার, এই মুহূর্তে আমাদের স্টকে নেই"
+    },
+    {
+      "user_message": "Akm anwar",
+      "admin_response": "ধন্যবাদ স্যার"
+    },
+    {
+      "user_message": "Kids der joonnoo bicycles ???? acea apnader kacea",
+      "admin_response": "জ্বি আছে, নিচের লিংক থেকে দেখুন, https://www.bdstall.com/bicycle/baby-bicycle/"
+    },
+    {
+      "user_message": "Kmnea kintea parmuo",
+      "admin_response": "শোরুমের নাম্বারে কল করুন 01534773860"
+    },
+    {
+      "user_message": "Air mouse",
+      "admin_response": "এই মূহুর্তে আমাদের স্টকে নেই।"
+    },
+    {
+      "user_message": "What are your delivery options?",
+      "admin_response": "স্যার আপনার যোগাযোগের নাম্বার টি দিবেন। আমরা আপনার সাথে সরাসরি যোগাযোগ করবো। ফনের মাধ্যমে যোগাযোগ করে অর্ডার কনফার্ম করা হয়।"
+    },
+    {
+      "user_message": "Can I make a purchase?",
+      "admin_response": "আসসালামু আলাইকুম স্যার"
+    },
+    {
+      "user_message": "Apnader tent collection er photo din price soho",
+      "admin_response": "এটাই অরিজিনাল"
+    },
+    {
+      "user_message": "Size?",
+      "admin_response": "dimension is 77 x 92 x 135 cm."
+    },
+    {
+      "user_message": "Cm???",
+      "admin_response": "জ্বি"
+    },
+    {
+      "user_message": "আরেকটু বড় নেই ?",
+      "admin_response": "আপনার কতটুকুর প্রয়োজন ?"
+    },
+    {
+      "user_message": "55\"/52\"",
+      "admin_response": "আমাদের এখানে যে পণ্য টি আছে সেটা ৩০*৩৬*৫৪ ইঞ্চি সাইজ"
+    },
+    {
+      "user_message": "ওটাই দিন",
+      "admin_response": "আপনার ঠিকানা ও মোবাইল নাম্বার টি দিবেন প্লিজ"
+    },
+    {
+      "user_message": "Vai apna der kase Cameo 4 Vinyl cutting machine ase?",
+      "admin_response": "ওয়ালাইকুম সালাম"
+    },
+    {
+      "user_message": "Apnader kase Epson L3110 Purge unit pawa jabe?",
+      "admin_response": "সরাসরি এখান থেকে অর্ডার করে নিতে পারবেন  37, New Elephent Road, Motiya Vaban, 2nd Floor\nElephantRoad, Dhaka, Bangladesh\n01766637581\n01830538152"
+    },
+    {
+      "user_message": "Price koto",
+      "admin_response": "বর্তমান দাম ৭০০০ টাকা"
+    },
+    {
+      "user_message": "With box carger hat phone black clower incitive",
+      "admin_response": "এই ফোন এখন ইউজড পাওয়া যায়"
+    },
+    {
+      "user_message": "Price ta 7000 taka na",
+      "admin_response": "জ্বি স্যার"
+    },
+    {
+      "user_message": "Hoba",
+      "admin_response": "used or refurbished"
+    },
+    {
+      "user_message": "2 jon jabo  children nai  Dhaka hote DEC ar last a  khorcha pati kemon hobe discount diye",
+      "admin_response": "জ্বি স্যার দেওয়া যাবে"
+    },
+    {
+      "user_message": "01772599360 WhatsApp",
+      "admin_response": "okay.. thanks"
+    },
+    {
+      "user_message": "Price koto?",
+      "admin_response": "দুঃখিত স্যার স্টকে নাই"
+    },
+    {
+      "user_message": "price koto?",
+      "admin_response": "আমাদের কাছে নাই"
+    },
+    {
+      "user_message": "Price",
+      "admin_response": "বর্তমান দাম  ৳ 5,100"
+    },
+    {
+      "user_message": "Home delivery Hobe",
+      "admin_response": "জ্বি স্যার"
+    },
+    {
+      "user_message": "Apnader kono response nai, evabei behave koren customer der sathe",
+      "admin_response": "Xiaomi Mi 3 এর বর্তমান দাম ২,৮৯০ টাকা। বিস্তারিত জানুন ও অর্ডার করুন লিংক থেকে। https://www.bdstall.com/details/xiaomi-mi-3-mobile-phone-5-quad-core-13mp-camera-2gb-ram-21107/"
+    },
+    {
+      "user_message": "মোবাইলটা কি পাটিয়ে দিয়েছেন",
+      "admin_response": "আপনার অর্ডার আইডিটি দিন।"
+    },
+    {
+      "user_message": "41068",
+      "admin_response": "আপানার অর্ডারটি বাতিল করা হয়েছে। ধন্যবাদ।"
+    },
+    {
+      "user_message": "Ai configaration diye ki graphic design possible",
+      "admin_response": "স্যার, স্ক্রিনশটের লেখাগুলো বোঝা যাচ্ছে না।"
+    },
+    {
+      "user_message": "Aita nite chai",
+      "admin_response": "Details\" অপশনে ক্লিক করুন। Contact Seller\" অপশন পাবেন সেখানে ক্লিক করলে শোরুমের নাম্বার পাবেন। বিস্তারিত জানতে শোরুমে যোগাযোগ করুন।"
+    },
+    {
+      "user_message": "Camera Pacific Hobe",
+      "admin_response": "জী স্যার আছে।আমাদের শো-রুমের সাথে সরাসরি  যোগাযোগ করুন।"
+    },
+    {
+      "user_message": "Toshiba e-studio 2523A bd price",
+      "admin_response": "বর্তমান দাম ৪৩,০০০ টাকা। সররাসরি শো রুমের  নাম্বারে যোগাযোগ করুন  Sheba Noorjahan Eycon Center 60, Purana Paltan\nMotijheel, Dhaka, Bangladesh\n01716354319\n01713289544"
+    },
+    {
+      "user_message": "ব্রাদার প্রিন্টার টি ৭২০ দাম কত",
+      "admin_response": "বর্তমান দাম ২৭০০০ টাকা"
+    },
+    {
+      "user_message": "And charge backup dey ktto somoy?",
+      "admin_response": "জ্বি স্যার হবে"
+    },
+    {
+      "user_message": "And charge backup dibe ktto somoy",
+      "admin_response": "সর্বনিন্ম দাম -৩৯৯ টাকা। চার্জ বেকাপ দেবে ৬০-৮০ মিনিট।"
+    },
+    {
+      "user_message": "And outside dhaka delivery crg ktto?",
+      "admin_response": "বর্তমান দাম ৳ 745"
+    },
+    {
+      "user_message": "Outside",
+      "admin_response": "এতে ৩-৫ দিন সময় লাগবে"
+    },
+    {
+      "user_message": "Assa bujlam",
+      "admin_response": "ডাহাকা সিটির বাহিরে হলে ৯৯ টাকা"
+    },
+    {
+      "user_message": "Debo?",
+      "admin_response": "ডেলিভারি চার্জ এডভান্স দিতে হবে। পরে প্রডাক্ট নিয়ে বাকি পেমেন্ট করবেন।"
+    },
+    {
+      "user_message": "Er jnno ki extra kono charge lagbe?",
+      "admin_response": "জ্বি না স্যার লাগবে নাহ ।"
+    },
+    {
+      "user_message": "আপনাদের website এ  binding machine dekhlam",
+      "admin_response": "সরাসরি শো রুমের নাম্বারে যোগাযোগ করে নিতে পারবেন  Shop: 06, Chowdhury Complex, Purana Paltan\nDhaka, Bangladesh\n01707743185\n01859858475"
+    },
+    {
+      "user_message": "আসসালামু আলাইকুম",
+      "admin_response": "ওয়ালাইকুম সালাম"
+    },
+    {
+      "user_message": "জ্বী ২০ হাজারে কম্পিউটার এর কোনো ভালো প্যাকেজ আছে কি?",
+      "admin_response": "জ্বি স্যার আছে"
+    },
+    {
+      "user_message": "Can I make a purchase?",
+      "admin_response": "জ্বি স্যার অবশ্যই"
+    },
+    {
+      "user_message": "iPhone 5s আছে",
+      "admin_response": "জ্বি স্যার আছে"
+    },
+    {
+      "user_message": "Mini computerআছে",
+      "admin_response": "জ্বি স্যার আছে"
+    },
+    {
+      "user_message": "WiWU 14 inch Laptop Tote Bag for Women available ?",
+      "admin_response": "we don't have a available."
+    },
+    {
+      "user_message": "মিনি এয়ারকুলার কোনটা ভালো?",
+      "admin_response": "বিস্তারিত জানতে আমাদের শো রুমে সরাসরি কল করুন Shop-129, Motalab Plaza, Ground Floor\nElephantRoad, Dhaka, Bangladesh\n 01406707055"
+    },
+    {
+      "user_message": "assalamualaikum\nSamsung galaxy watch 4  strap available ?",
+      "admin_response": "নেই"
+    },
+    {
+      "user_message": "Available ?",
+      "admin_response": "ji mam"
+    },
+    {
+      "user_message": "Okk",
+      "admin_response": "ঢাকা সিটির ভিতরে ফুল ক্যাশ অন ডেলিভারি, সিটির বাহিরে শুধুমাত্র ডেলিভারি চার্জটা অগ্রিম দিয়ে নিতে পারবেন স্যার"
+    },
+    {
+      "user_message": "আপনাদের কন্টাক্ট নাম্বারটা দেন তো",
+      "admin_response": "জ্বি আছে"
+    },
+    {
+      "user_message": "Etar charger ache",
+      "admin_response": "এই মুহূর্তে নেই"
+    },
+    {
+      "user_message": "Emergency lagto",
+      "admin_response": "conform nha sir"
+    },
+    {
+      "user_message": "Mi 3",
+      "admin_response": "জ্বি স্যার আছে।  অর্ডার করুন এখান থেকে https://www.bdstall.com/details/xiaomi-mi-3-mobile-phone-5-quad-core-13mp-camera-2gb-ram-21107/"
+    },
+    {
+      "user_message": "Price??",
+      "admin_response": "দাম 3,419 টাকা"
+    },
+    {
+      "user_message": "আসসালামু আলাইকুম ভাই দেওয়া যাবে মালটা",
+      "admin_response": "জ্বি দেয়া যাবে"
+    },
+    {
+      "user_message": "Sir apnara home delivery diye thaken courier?",
+      "admin_response": "আমরা কোরিয়ার মাধ্যমে হোম ডেলিভারি দিয়ে থাকি।"
+    },
+    {
+      "user_message": "Dinajpur er Kaharol thanay delivery asbe?",
+      "admin_response": "জ্বি স্যার দেয়া যাবে ।"
+    },
+    {
+      "user_message": "2 tar theke konta dite parban",
+      "admin_response": "আমাদের কাছে দুটোই স্টক আছে আপনি কোনটা নিতে চাচ্ছেন"
+    },
+    {
+      "user_message": "Kon brand er ki cemera kivabe bujbo Bhai",
+      "admin_response": "এটি নিতে ও বিস্তারিত জানতে আমাদের শো রুমের এই ঠিকানায় সরাসরি কল করুন Shop-740, Level-7, ECS Computer City, Multiplan Centre, 69-71, New Elephant Road\nElephantRoad, Dhaka, Bangladesh\n 01619212122\n 01721358987"
+    },
+    {
+      "user_message": "Apni model ar brand er nam ta bolen",
+      "admin_response": "brand: Astrum"
+    },
+    {
+      "user_message": "Aita austrum",
+      "admin_response": "এটার নির্দিষ্ট কোন ব্র্যান্ড মডেল নেই"
+    },
+    {
+      "user_message": "ei power bank ta ki ache?",
+      "admin_response": "এই মুহূর্তে আমাদের স্টকে নেই"
+    },
+    {
+      "user_message": "ভেরিকেচ ভেইন কিম নেব ২ পিচ",
+      "admin_response": "ওয়ালাইকুম সালাম"
+    },
+    {
+      "user_message": "কত দাম",
+      "admin_response": "আমাদের শো রুমের নাম্বারে যোগাযোগ করে নিতে পারবেন Shop-129, Motalab Plaza, Ground Floor\nElephantRoad, Dhaka, Bangladesh\n01406707055"
+    },
+    {
+      "user_message": "এটা",
+      "admin_response": "আমাদের শো রুমের নাম্বারে যোগাযোগ করে জেনে নিতে পারবেন Shop No : 319 & 319A, 2nd Floor, Alpona Plaza, New Elephent Road.\nElephantRoad, Dhaka, Bangladesh\n01602269517\n01833685828"
+    },
+    {
+      "user_message": "হ্যালো",
+      "admin_response": "হাই"
+    },
+    {
+      "user_message": "সোফার কাপড়",
+      "admin_response": "জ্বি না"
+    },
+    {
+      "user_message": "Price koto",
+      "admin_response": "21,000 taka"
+    },
+    {
+      "user_message": "Deoya jabe",
+      "admin_response": "জ্বি দেয়া যাবে"
+    },
+    {
+      "user_message": "কিভাবে নিব একটু বলেন",
+      "admin_response": "এই লিঙ্কে ক্লিক করে অর্ডার করুন বাই নাউ বাটন থেকে https://www.bdstall.com/details/canon-eos-700d-dslr-18mp-camera-with-18-55mm-lens-18928/"
+    },
+    {
+      "user_message": "Gece ki ordar ta",
+      "admin_response": "অর্ডার কি কনফার্ম হইছে ?"
+    },
+    {
+      "user_message": "Vaiya bikash numbar ta din",
+      "admin_response": "আমাদের কাস্টমার সেন্টার থেকে আপনাকে কল দেয়া হবে"
+    },
+    {
+      "user_message": "Pic daw mobile",
+      "admin_response": "ক্লিক করে দেখুন স্যার"
+    },
+    {
+      "user_message": "A3 splicer mashin",
+      "admin_response": "সরি স্যার স্টকে নাই"
+    },
+    {
+      "user_message": "ডেট কত পর্যন্ত ব্যবহার করা যাবে ?",
+      "admin_response": "ম্যাম  ডেটটা উল্লেখ করানাই"
+    },
+    {
+      "user_message": "বোতলের নিচে ডেট উল্লেখ করা থাকে",
+      "admin_response": "ম্যাম প্রডাক্ট ঠিকঠাক পেয়েছিলেন"
+    },
+    {
+      "user_message": "জ্বি পেয়েছিলাম",
+      "admin_response": "আলহামদুলিল্লাহ"
+    },
+    {
+      "user_message": "Ekta product powchaite jodi eto din lage apnara customer handal koren kivabe?",
+      "admin_response": "ম্যাম আপনার অর্ডারকৃত প্রডাক্টটি সেলারের কাছে ছিলোনা পরবর্তীতে আমরা আমাদের অন্য সেলারের মাধ্যমে অর্ডারটি কনফার্ম করে দিয়েছি যদিও তার কাছে প্রাইজ বেশি ছিলো আমার অর্ডার নম্বর-56868, ২-৩ দিনের মধ্যে পেয়ে যাবেন ইনশাআল্লাহ"
+    },
+    {
+      "user_message": "Jeta ekhon manage kore dilen?",
+      "admin_response": "ম্যাম অর্ডারের বিষয়গুলি আমাদের যিনি দেখেন উনি আমাকে এই রিপোর্ট ই দিয়েছে"
+    },
+    {
+      "user_message": "Ami apnader page e ei tap ta order diyechi. Plz same ei rokom tap e diben jate pipe  connection ta pichoner dike thake .plz",
+      "admin_response": "ম্যাম যেহেতু আপনি ঢাকার বাহিরে ডেলিভারি চার্জটা অগ্রিম দিতে হবে"
+    },
+    {
+      "user_message": "Koto din lagbe product ashte?",
+      "admin_response": "ম্যাম সাধারণত ঢাকার ভিতরে ১-২ দিন এবং বাহিরে ৪-৫ দিন সময় লাগে"
+    },
+    {
+      "user_message": "Number din",
+      "admin_response": "01797927168 বিকাশ পেমেন্ট অপশন থেকে পেমেন্ট করবেন"
+    },
+    {
+      "user_message": "Ami ki delivery fee ta diye dibo?",
+      "admin_response": "mam cheak kore janassi aktu somoy diben"
+    },
+    {
+      "user_message": "Ji ektu taratari janaben plz.",
+      "admin_response": "mam 130 tk delivery charge ta payment koren"
+    },
+    {
+      "user_message": "Apnadar kasa ke 700d ta hoba new",
+      "admin_response": "নিউ হবেনা স্যার ইউজড"
+    },
+    {
+      "user_message": "ভাই",
+      "admin_response": "https://www.bdstall.com/listingDetail/index/3382/"
+    },
+    {
+      "user_message": "Is it available?",
+      "admin_response": "https://www.bdstall.com/details/dexe-hair-color-shampoo-25ml-economy-pack-18018/"
+    },
+    {
+      "user_message": "Eta te ki chul kalo hobe?",
+      "admin_response": "জ্বি ম্যাম"
+    },
+    {
+      "user_message": "Sharmin Reza Eva \nMirpur DOHS \nAvenue 4\nRoad 10\nHouse 651\nMob: 01763141525",
+      "admin_response": "ধন্যবাদ ম্যাম"
+    },
+    {
+      "user_message": "সাদাটা আছে?",
+      "admin_response": "01760676767"
+    },
+    {
+      "user_message": "এফ ওয়ান নাইন সিক্স মডেলের দাম কত",
+      "admin_response": "দুঃখিত নাই"
+    },
+    {
+      "user_message": "I phone 5s hbe ki",
+      "admin_response": "https://www.bdstall.com/details/apple-iphone-5s-dual-core-4-1gb-ram-8mp-full-hd-mobile-27066/"
+    },
+    {
+      "user_message": "Condition ki rkm",
+      "admin_response": "ভালো স্যার"
+    },
+    {
+      "user_message": "Jegula Cel kren",
+      "admin_response": "বিডিস্টল একটি ই-কমার্স মার্কেটপ্লেস যেখানে বিভিন্ন সেলার তাদের পণ্য বিক্রয় করেন।"
+    },
+    {
+      "user_message": "Grantty wrantty tahle ki rkm vabe hbe",
+      "admin_response": "7 days parts\n1 year service warranty"
+    }
+  ],
+  "query_categories": {
+    "product_inquiry": [
+      "Refurbished Original Nokia 6500 Classic 6500C Unlocked Mobile Phone 3G Quad- Band. \nWant to buy.",
+      "When will I get that product?",
+      "Ami iphone 6s ta nibo",
+      "Phone e kono somossa hobenato?",
+      "Mi 3 phone ta ki ase",
+      "With box carger hat phone black clower incitive",
+      "Ekta product powchaite jodi eto din lage apnara customer handal koren kivabe?",
+      "I phone 5s hbe ki"
+    ],
+    "price_inquiry": [
+      "koto",
+      "6s koto vai",
+      "Amra apnake valo price dibo",
+      "টাকা কি আগে দিতে হবে",
+      "Kotokhon ar bitoke Pabo Ami Phone Ta",
+      "এটবান্স টাকা কত দিতে হয়",
+      "একটা আটশত টাকা দামের ব্লটুথ",
+      "৩০০টাকার মধ্যে গোল্ডেন কালারের ঘড়ি আর্ডার দিতে চাই",
+      "Apnader tent collection er photo din price soho",
+      "Price koto",
+      "Price ta 7000 taka na",
+      "Price koto?",
+      "price koto?",
+      "Price",
+      "Toshiba e-studio 2523A bd price",
+      "ব্রাদার প্রিন্টার টি ৭২০ দাম কত",
+      "Price??",
+      "কত দাম",
+      "Price koto",
+      "Koto din lagbe product ashte?",
+      "এফ ওয়ান নাইন সিক্স মডেলের দাম কত"
+    ],
+    "availability": [
+      "Tds meter achey.",
+      "এটার কোন ভিডিও রিভিউ আছে",
+      "Ai phnta available?",
+      "Available?",
+      "এই ফোন টা কি আপনাদের কাছে আছে",
+      "Ata ki ache apndr kache?",
+      "সেইম এটাই আছে নাকি অন্য টা?",
+      "জ্বী ২০ হাজারে কম্পিউটার এর কোনো ভালো প্যাকেজ আছে কি?",
+      "iPhone 5s আছে",
+      "Mini computerআছে",
+      "WiWU 14 inch Laptop Tote Bag for Women available ?",
+      "assalamualaikum\nSamsung galaxy watch 4  strap available ?",
+      "Available ?",
+      "Etar charger ache",
+      "ei power bank ta ki ache?",
+      "Is it available?",
+      "সাদাটা আছে?"
+    ],
+    "delivery": [
+      "ডেলিভারি দিতে কত দিন লাগবে",
+      "আজকে আমার পন্যটি পাঠাবার ব্যবস্হা করেন",
+      "What are your delivery options?",
+      "Home delivery Hobe",
+      "And outside dhaka delivery crg ktto?",
+      "Sir apnara home delivery diye thaken courier?",
+      "Dinajpur er Kaharol thanay delivery asbe?",
+      "Ami ki delivery fee ta diye dibo?"
+    ],
+    "order_status": [
+      "Eta ki vhabe nibo ar order korte gayle ki korte hobe",
+      "Want to order",
+      "Customer Name:Akkas mollah\nMobile Number:01631743206\nAddress: Shadhinata Sharani, Jamtola, North Badda, Dhaka 1212\nRahat sondha maloti opposite of usman madrasa.building owner name Ajibur saheb. Plot No. 296, House No. 1, Ward No. 8,\n3 tala lift er 2,lift theke neme hater baam e.\nOrder confirmed",
+      "Ami apnader page e ei tap ta order diyechi. Plz same ei rokom tap e diben jate pipe  connection ta pichoner dike thake .plz"
+    ],
+    "general": [
+      "আমি একটা কাজ খুজছি,আপনাদের এখানে কাজের কোন সুযোগ তাকলে একটা কল দিবেন।০১৭২৮৪৫৭২৯৫",
+      "01673675056",
+      "Hello",
+      "আমি আপনাদের মাধ্যমে আমার পন্য বিক্রি করতে চাই",
+      "আপনাদের এইখানে আগে একাউন্ট খুলতে  হবে তারপর স্টল কিভাবে খুলতে হবে ?",
+      "???",
+      "link den",
+      "Thankyou ????",
+      "1c monitor lagbe akta",
+      "Xiaomi 1c monitor",
+      "Ar kivabe ami pabo?",
+      "Nki lockdwn e off?",
+      "Akn pataya diben?",
+      "Airport",
+      "????",
+      "Apnader showroom kothay",
+      "Naki use kora",
+      "Helo",
+      "আমার একটি ডিজিটাল ওয়েট মেশিন লাগবে।\n০১৭২৬-০৫১৬১৬",
+      "আমার একটি ডিজিটাল ওয়েট মেশিন লাগবে।\n০১৭২৬-০৫১৬১৬",
+      "Total kto?",
+      "Emergency please reply my msg",
+      "Hello?",
+      "Eita",
+      "Hello?",
+      "Hello vai?",
+      "Hello?vai",
+      "Hote pare",
+      "Already kena hoye geche",
+      "ata 40,000/- dao jabe ..",
+      "Ata ki kom kora jabe ..?",
+      "ফোনে 3d দেখার জন্য একটা 3dসানগ্লাস লাগবে",
+      "এটা দিয়ে কি ফোনে 3d video দেখা যাবে",
+      "ভাই আমি সানগ্লাস টি আর্ডার করেছি কালকে 2টার দিকে পাঠিয়ে দিয়ন আমার নাম মাহদি  ঠিকানা  আগারগাঁও ইসলামি ফাউন্ডেশন",
+      "কোই ফোন তো করলোনা",
+      "Taka ki age dite hobe",
+      "Ami dhaka Gazipur Thaki tahole ki charg age dite hobe",
+      "এটাই তো আপনাদের নাম্বার",
+      "Etai apnader service system?????",
+      "MotionView theke nisi official genuine 1550৳.❤️",
+      "Hai",
+      "এটা হবে?",
+      "কোনো কিছু ওর্ডার দিলে কত সময় লাগে তা ডেলিবারি দিতে",
+      "তাহলে গাজীপুর থেকে ওর্ডার দিলে",
+      "ওর্ডার দিছি",
+      "দয়া করে ব্লটু গুলোর ছবি দিতে পারবেন",
+      "01931132596",
+      "ধন্যবাদ",
+      "আমার পন্য এখনো পাই নাই",
+      "hollo",
+      "এখানে তো নাই",
+      "করছি",
+      "ত্রিকেট খেলার ব্যটের লিংক দেন",
+      "আমাকে ফুটবল খেলার কিছু বুট দেখান",
+      "Akm anwar",
+      "Kids der joonnoo bicycles ???? acea apnader kacea",
+      "Kmnea kintea parmuo",
+      "Air mouse",
+      "Can I make a purchase?",
+      "Size?",
+      "Cm???",
+      "আরেকটু বড় নেই ?",
+      "55\"/52\"",
+      "ওটাই দিন",
+      "Vai apna der kase Cameo 4 Vinyl cutting machine ase?",
+      "Apnader kase Epson L3110 Purge unit pawa jabe?",
+      "Hoba",
+      "2 jon jabo  children nai  Dhaka hote DEC ar last a  khorcha pati kemon hobe discount diye",
+      "01772599360 WhatsApp",
+      "Apnader kono response nai, evabei behave koren customer der sathe",
+      "মোবাইলটা কি পাটিয়ে দিয়েছেন",
+      "41068",
+      "Ai configaration diye ki graphic design possible",
+      "Aita nite chai",
+      "Camera Pacific Hobe",
+      "And charge backup dey ktto somoy?",
+      "And charge backup dibe ktto somoy",
+      "Outside",
+      "Assa bujlam",
+      "Debo?",
+      "Er jnno ki extra kono charge lagbe?",
+      "আপনাদের website এ  binding machine dekhlam",
+      "আসসালামু আলাইকুম",
+      "Can I make a purchase?",
+      "মিনি এয়ারকুলার কোনটা ভালো?",
+      "Okk",
+      "আপনাদের কন্টাক্ট নাম্বারটা দেন তো",
+      "Emergency lagto",
+      "Mi 3",
+      "আসসালামু আলাইকুম ভাই দেওয়া যাবে মালটা",
+      "2 tar theke konta dite parban",
+      "Kon brand er ki cemera kivabe bujbo Bhai",
+      "Apni model ar brand er nam ta bolen",
+      "Aita austrum",
+      "ভেরিকেচ ভেইন কিম নেব ২ পিচ",
+      "এটা",
+      "হ্যালো",
+      "সোফার কাপড়",
+      "Deoya jabe",
+      "কিভাবে নিব একটু বলেন",
+      "Gece ki ordar ta",
+      "Vaiya bikash numbar ta din",
+      "Pic daw mobile",
+      "A3 splicer mashin",
+      "ডেট কত পর্যন্ত ব্যবহার করা যাবে ?",
+      "বোতলের নিচে ডেট উল্লেখ করা থাকে",
+      "জ্বি পেয়েছিলাম",
+      "Jeta ekhon manage kore dilen?",
+      "Number din",
+      "Ji ektu taratari janaben plz.",
+      "Apnadar kasa ke 700d ta hoba new",
+      "ভাই",
+      "Eta te ki chul kalo hobe?",
+      "Sharmin Reza Eva \nMirpur DOHS \nAvenue 4\nRoad 10\nHouse 651\nMob: 01763141525",
+      "Condition ki rkm",
+      "Jegula Cel kren",
+      "Grantty wrantty tahle ki rkm vabe hbe"
+    ]
+  }
+}
