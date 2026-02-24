@@ -164,84 +164,86 @@ class ProductSearchAPI:
         language: str = 'bengali'
     ) -> str:
         """
-        Format search results into a human-readable response
+        Format search results into a natural conversational response
         
         Args:
             search_result: Search result dictionary
             language: 'bengali' or 'english'
             
         Returns:
-            Formatted response string
+            Natural conversational response string
         """
         if not search_result.get('success'):
             if language == 'bengali':
-                return f"দুঃখিত, '{search_result['query']}' এর জন্য কোনো পণ্য পাওয়া যায়নি। অন্য কিছু খুঁজে দেখুন।"
+                return f"দুঃখিত, '{search_result['query']}' এর কোনো পণ্য খুঁজে পাইনি। অন্য কিছু খোঁজ করে দেখুন।"
             else:
-                return f"Sorry, no products found for '{search_result['query']}'. Please try a different search."
+                return f"Sorry, I couldn't find any products for '{search_result['query']}'. Try searching for something else."
         
         products = search_result['products']
         total = search_result['total_found']
         
         if not products:
             if language == 'bengali':
-                return f"'{search_result['query']}' এর জন্য কোনো পণ্য পাওয়া যায়নি।"
+                return f"'{search_result['query']}' এর কোনো পণ্য পাওয়া যায়নি।"
             else:
                 return f"No products found for '{search_result['query']}'."
         
-        # Build response
+        # Build natural conversational response
         if language == 'bengali':
-            response = f"✓ '{search_result['query']}' এর জন্য {total}টি পণ্য পাওয়া গেছে।\n\n"
+            if len(products) == 1:
+                response = f"হ্যাঁ, আমার কাছে {products[0]['name']} আছে। দাম {products[0]['price']} টাকা।"
+            else:
+                response = f"আপনার জন্য কয়েকটি ভালো অপশন আছে। "
+                
+                for i, product in enumerate(products[:3]):
+                    if i == 0:
+                        response += f"প্রথমে {product['name']} - এর দাম {product['price']} টাকা"
+                    elif i == 1:
+                        response += f", তারপর {product['name']} - {product['price']} টাকা"
+                    else:
+                        response += f", এবং {product['name']} - {product['price']} টাকা"
+                
+                response += "। "
+                
+                if total > 3:
+                    response += f"আরও {total - 3}টি পণ্য আছে। "
             
-            for i, product in enumerate(products[:3], 1):
-                response += f"【{i}】 {product['name']}\n"
-                response += f"   💰 মূল্য: {product['price']}"
+            # Add stock information naturally
+            available_products = [p for p in products[:3] if p['available']]
+            if available_products:
+                response += "সব পণ্যই স্টকে আছে। "
+            else:
+                response += "কিছু পণ্য স্টকে নেই, আপনি চাইলে অর্ডার করে রাখতে পারেন। "
                 
-                if product['discount'] > 0:
-                    response += f" (ছাড়: {product['discount']}%)"
-                
-                response += f"\n   📦 স্ট্যাটাস: {product['stock_status']}"
-                
-                if product['available']:
-                    response += " ✓"
-                else:
-                    response += " ✗"
-                
-                if product['seller'] != 'BDStall':
-                    response += f"\n   🏪 বিক্রেতা: {product['seller']}"
-                
-                response += "\n\n"
-            
-            if total > 3:
-                response += f"আরো {total - 3}টি পণ্য পাওয়া গেছে।\n"
-            
-            response += "\nবিস্তারিত দেখতে বা অর্ডার করতে আমাদের ওয়েবসাইট ভিজিট করুন: www.bdstall.com"
+            response += "আরো জানতে চাইলে বা অর্ডার করতে চাইলে www.bdstall.com দেখুন।"
             
         else:
-            response = f"✓ Found {total} products for '{search_result['query']}'.\n\n"
+            if len(products) == 1:
+                response = f"Yes, we have {products[0]['name']} for {products[0]['price']} taka."
+            else:
+                response = f"I found some great options for you. "
+                
+                for i, product in enumerate(products[:3]):
+                    if i == 0:
+                        response += f"First, {product['name']} costs {product['price']} taka"
+                    elif i == 1:
+                        response += f", then {product['name']} for {product['price']} taka"
+                    else:
+                        response += f", and {product['name']} for {product['price']} taka"
+                
+                response += ". "
+                
+                if total > 3:
+                    response += f"We have {total - 3} more options available. "
             
-            for i, product in enumerate(products[:3], 1):
-                response += f"【{i}】 {product['name']}\n"
-                response += f"   💰 Price: {product['price']}"
+            # Add stock information naturally  
+            available_products = [p for p in products[:3] if p['available']]
+            if available_products:
+                response += "All products are in stock. "
+            else:
+                response += "Some products may be out of stock, but you can pre-order. "
                 
-                if product['discount'] > 0:
-                    response += f" ({product['discount']}% OFF)"
-                
-                response += f"\n   📦 Status: {product['stock_status']}"
-                
-                if product['available']:
-                    response += " ✓"
-                else:
-                    response += " ✗"
-                
-                if product['seller'] != 'BDStall':
-                    response += f"\n   🏪 Seller: {product['seller']}"
-                
-                response += "\n\n"
-            
-            if total > 3:
-                response += f"{total - 3} more products available.\n"
-            
-            response += "\nVisit www.bdstall.com for details and to order."
+            response += "Visit www.bdstall.com for more details and to place an order."
         
         return response
     

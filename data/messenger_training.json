@@ -1,38 +1,30 @@
 {
   "metadata": {
-    "source": "https://ai.bdstall.com/rest_api/item/chatbot_grouped?limit=1000",
+    "source": "https://ai.bdstall.com/rest_api/item/chatbot_grouped",
     "total_conversations": 107,
-    "training_pairs": 175,
-    "processed_at": "2026-02-13T03:31:58.736046"
+    "training_pairs": 170,
+    "processed_at": "2026-02-23T12:55:47.425669"
   },
   "conversations": [
     {
-      "user_message": "আমি একটা কাজ খুজছি,আপনাদের এখানে কাজের কোন সুযোগ তাকলে একটা কল দিবেন।০১৭২৮৪৫৭২৯৫",
-      "admin_response": "Noted."
-    },
-    {
-      "user_message": "Refurbished Original Nokia 6500 Classic 6500C Unlocked Mobile Phone 3G Quad- Band. \nWant to buy.",
-      "admin_response": "Dear Sir\n\nNokia 6500 is not currently listed.\n\nThank you"
+      "user_message": "Refurbished Original Nokia 6500 Classic 6500C Unlocked Mobile Phone 3G Quad- Band. Want to buy.",
+      "admin_response": "Dear Sir Nokia 6500 is not currently listed. Thank you"
     },
     {
       "user_message": "When will I get that product?",
-      "admin_response": "No estimated time.\n\nThank you"
+      "admin_response": "No estimated time. Thank you"
     },
     {
-      "user_message": "01673675056",
-      "admin_response": "Please call at 0190-464-2489."
+      "user_message": "[PHONE]",
+      "admin_response": "Please call at [PHONE]."
     },
     {
       "user_message": "Tds meter achey.",
-      "admin_response": "Dear Sir,\nPlease call at 0176-488-5269 for TDS meter."
+      "admin_response": "Dear Sir, Please call at [PHONE] for TDS meter."
     },
     {
       "user_message": "Hello",
       "admin_response": "this product is not available at the moment.. thank you"
-    },
-    {
-      "user_message": "koto",
-      "admin_response": "You sent an attachment."
     },
     {
       "user_message": "Eta ki vhabe nibo ar order korte gayle ki korte hobe",
@@ -40,15 +32,11 @@
     },
     {
       "user_message": "আমি আপনাদের মাধ্যমে আমার পন্য বিক্রি করতে চাই",
-      "admin_response": "Okay Bhaiya\nAmi Stall Support er number diye dicchi \n01305686876"
+      "admin_response": "Okay Bhaiya Ami Stall Support er number diye dicchi [PHONE]"
     },
     {
-      "user_message": "আপনাদের এইখানে আগে একাউন্ট খুলতে  হবে তারপর স্টল কিভাবে খুলতে হবে ?",
+      "user_message": "আপনাদের এইখানে আগে একাউন্ট খুলতে হবে তারপর স্টল কিভাবে খুলতে হবে ?",
       "admin_response": "bhaiya ei number e call dilei apnake details e bole dibe"
-    },
-    {
-      "user_message": "???",
-      "admin_response": "bhaiya details e likha ache"
     },
     {
       "user_message": "এটার কোন ভিডিও রিভিউ আছে",
@@ -61,10 +49,6 @@
     {
       "user_message": "Ai phnta available?",
       "admin_response": "Sorry mam"
-    },
-    {
-      "user_message": "Thankyou ????",
-      "admin_response": "wlc"
     },
     {
       "user_message": "1c monitor lagbe akta",
@@ -92,7 +76,7 @@
     },
     {
       "user_message": "????",
-      "admin_response": "01765542331\n01765542332"
+      "admin_response": "[PHONE]"
     },
     {
       "user_message": "Apnader showroom kothay",
@@ -111,15 +95,11 @@
       "admin_response": "new condition but refurbished"
     },
     {
-      "user_message": "Helo",
-      "admin_response": "You sent an attachment."
+      "user_message": "আমার একটি ডিজিটাল ওয়েট মেশিন লাগবে। [PHONE]",
+      "admin_response": "আমাদের শো রুমের নাম্বারে যোগাযোগ করে নিতে পারবেন [PHONE]"
     },
     {
-      "user_message": "আমার একটি ডিজিটাল ওয়েট মেশিন লাগবে।\n০১৭২৬-০৫১৬১৬",
-      "admin_response": "আমাদের শো রুমের নাম্বারে যোগাযোগ করে নিতে পারবেন  01718555596\n01922297160"
-    },
-    {
-      "user_message": "আমার একটি ডিজিটাল ওয়েট মেশিন লাগবে।\n০১৭২৬-০৫১৬১৬",
+      "user_message": "আমার একটি ডিজিটাল ওয়েট মেশিন লাগবে। [PHONE]",
       "admin_response": "উপরে দেওয়া নাম্বারে যোগাযোগ করে আপনার চাহিদা অনুযায়ী মেশিন নিতে পারবেন"
     },
     {
@@ -131,7 +111,7 @@
       "admin_response": "এখান থেকে অর্ডার করুন https://www.bdstall.com/details/40-watt-uva-tube-mosquito-pest-killer-84020/"
     },
     {
-      "user_message": "Customer Name:Akkas mollah\nMobile Number:01631743206\nAddress: Shadhinata Sharani, Jamtola, North Badda, Dhaka 1212\nRahat sondha maloti opposite of usman madrasa.building owner name Ajibur saheb. Plot No. 296, House No. 1, Ward No. 8,\n3 tala lift er 2,lift theke neme hater baam e.\nOrder confirmed",
+      "user_message": "Customer Name:Akkas mollah Mobile Number:[PHONE] Address: Shadhinata Sharani, Jamtola, North Badda, Dhaka 1212 Rahat sondha maloti opposite of usman madrasa.building owner name Ajibur saheb. Plot No. 296, House No. 1, Ward No. 8, 3 tala lift er 2,lift theke neme hater baam e. Order confirmed",
       "admin_response": "order confirmed"
     },
     {
@@ -184,15 +164,15 @@
     },
     {
       "user_message": "Already kena hoye geche",
-      "admin_response": "ওহ আচ্ছা, ঠিক আছে  স্যার"
+      "admin_response": "ওহ আচ্ছা, ঠিক আছে স্যার"
     },
     {
       "user_message": "ata 40,000/- dao jabe ..",
-      "admin_response": "Please call our showroom number  55/B, Purana Paltan, Noakhali Tower, 4th Floor\nPurana Paltan, Dhaka, Bangladesh\nMR. Abu Kalam\nHotline1\n0171-830-1384\nHotline2\n0197-900-0054\n Thank you"
+      "admin_response": "Please call our showroom number 55/B, Purana Paltan, Noakhali Tower, 4th Floor Purana Paltan, Dhaka, Bangladesh MR. Abu Kalam Hotline[PHONE] Hotline[PHONE] Thank you"
     },
     {
       "user_message": "Ata ki kom kora jabe ..?",
-      "admin_response": "বিস্তারিত জানতে শোরুমের দেয়া নাম্বারে যোগাযোগ করুন। আমাদের শোরুমের নাম্বারঃ 01780009000 অথবা 01738793388"
+      "admin_response": "বিস্তারিত জানতে শোরুমের দেয়া নাম্বারে যোগাযোগ করুন। আমাদের শোরুমের নাম্বারঃ [PHONE] অথবা [PHONE]"
     },
     {
       "user_message": "ফোনে 3d দেখার জন্য একটা 3dসানগ্লাস লাগবে",
@@ -211,7 +191,7 @@
       "admin_response": "ঢাকা সিটির ভিতরে হলে অগ্রীম কোনো টাকা দিতে হবে না, আর ঢাকা সিটির বাইরে হলে ডেলিভারি চার্জ অগ্রীম দিতে হবে।"
     },
     {
-      "user_message": "ভাই আমি সানগ্লাস টি আর্ডার করেছি কালকে 2টার দিকে পাঠিয়ে দিয়ন আমার নাম মাহদি  ঠিকানা  আগারগাঁও ইসলামি ফাউন্ডেশন",
+      "user_message": "ভাই আমি সানগ্লাস টি আর্ডার করেছি কালকে 2টার দিকে পাঠিয়ে দিয়ন আমার নাম মাহদি ঠিকানা আগারগাঁও ইসলামি ফাউন্ডেশন",
       "admin_response": "আপনাকে কল করা হবে শোরুম থেকে তখন সময়টা বলে দিবেন।"
     },
     {
@@ -287,7 +267,7 @@
       "admin_response": "আপনার অর্ডার আইডিটি বলুন"
     },
     {
-      "user_message": "01931132596",
+      "user_message": "[PHONE]",
       "admin_response": "নিচের লিঙ্কে প্রবেশ করে ছবি গুলো দেখতে পারেন, https://www.bdstall.com/details/m10-newest-digital-indicator-true-wireless-headset-72159/"
     },
     {
@@ -332,7 +312,7 @@
     },
     {
       "user_message": "Kmnea kintea parmuo",
-      "admin_response": "শোরুমের নাম্বারে কল করুন 01534773860"
+      "admin_response": "শোরুমের নাম্বারে কল করুন [PHONE]"
     },
     {
       "user_message": "Air mouse",
@@ -376,7 +356,7 @@
     },
     {
       "user_message": "Apnader kase Epson L3110 Purge unit pawa jabe?",
-      "admin_response": "সরাসরি এখান থেকে অর্ডার করে নিতে পারবেন  37, New Elephent Road, Motiya Vaban, 2nd Floor\nElephantRoad, Dhaka, Bangladesh\n01766637581\n01830538152"
+      "admin_response": "সরাসরি এখান থেকে অর্ডার করে নিতে পারবেন 37, New Elephent Road, Motiya Vaban, 2nd Floor ElephantRoad, Dhaka, Bangladesh [PHONE]"
     },
     {
       "user_message": "Price koto",
@@ -395,11 +375,11 @@
       "admin_response": "used or refurbished"
     },
     {
-      "user_message": "2 jon jabo  children nai  Dhaka hote DEC ar last a  khorcha pati kemon hobe discount diye",
+      "user_message": "2 jon jabo children nai Dhaka hote DEC ar last a khorcha pati kemon hobe discount diye",
       "admin_response": "জ্বি স্যার দেওয়া যাবে"
     },
     {
-      "user_message": "01772599360 WhatsApp",
+      "user_message": "[PHONE] WhatsApp",
       "admin_response": "okay.. thanks"
     },
     {
@@ -412,7 +392,7 @@
     },
     {
       "user_message": "Price",
-      "admin_response": "বর্তমান দাম  ৳ 5,100"
+      "admin_response": "বর্তমান দাম ৳ 5,100"
     },
     {
       "user_message": "Home delivery Hobe",
@@ -440,11 +420,11 @@
     },
     {
       "user_message": "Camera Pacific Hobe",
-      "admin_response": "জী স্যার আছে।আমাদের শো-রুমের সাথে সরাসরি  যোগাযোগ করুন।"
+      "admin_response": "জী স্যার আছে।আমাদের শো-রুমের সাথে সরাসরি যোগাযোগ করুন।"
     },
     {
       "user_message": "Toshiba e-studio 2523A bd price",
-      "admin_response": "বর্তমান দাম ৪৩,০০০ টাকা। সররাসরি শো রুমের  নাম্বারে যোগাযোগ করুন  Sheba Noorjahan Eycon Center 60, Purana Paltan\nMotijheel, Dhaka, Bangladesh\n01716354319\n01713289544"
+      "admin_response": "বর্তমান দাম ৪৩,০০০ টাকা। সররাসরি শো রুমের নাম্বারে যোগাযোগ করুন Sheba Noorjahan Eycon Center 60, Purana Paltan Motijheel, Dhaka, Bangladesh [PHONE]"
     },
     {
       "user_message": "ব্রাদার প্রিন্টার টি ৭২০ দাম কত",
@@ -479,8 +459,8 @@
       "admin_response": "জ্বি না স্যার লাগবে নাহ ।"
     },
     {
-      "user_message": "আপনাদের website এ  binding machine dekhlam",
-      "admin_response": "সরাসরি শো রুমের নাম্বারে যোগাযোগ করে নিতে পারবেন  Shop: 06, Chowdhury Complex, Purana Paltan\nDhaka, Bangladesh\n01707743185\n01859858475"
+      "user_message": "আপনাদের website এ binding machine dekhlam",
+      "admin_response": "সরাসরি শো রুমের নাম্বারে যোগাযোগ করে নিতে পারবেন Shop: 06, Chowdhury Complex, Purana Paltan Dhaka, Bangladesh [PHONE]"
     },
     {
       "user_message": "আসসালামু আলাইকুম",
@@ -508,10 +488,10 @@
     },
     {
       "user_message": "মিনি এয়ারকুলার কোনটা ভালো?",
-      "admin_response": "বিস্তারিত জানতে আমাদের শো রুমে সরাসরি কল করুন Shop-129, Motalab Plaza, Ground Floor\nElephantRoad, Dhaka, Bangladesh\n 01406707055"
+      "admin_response": "বিস্তারিত জানতে আমাদের শো রুমে সরাসরি কল করুন Shop-129, Motalab Plaza, Ground Floor ElephantRoad, Dhaka, Bangladesh [PHONE]"
     },
     {
-      "user_message": "assalamualaikum\nSamsung galaxy watch 4  strap available ?",
+      "user_message": "assalamualaikum Samsung galaxy watch 4 strap available ?",
       "admin_response": "নেই"
     },
     {
@@ -536,7 +516,7 @@
     },
     {
       "user_message": "Mi 3",
-      "admin_response": "জ্বি স্যার আছে।  অর্ডার করুন এখান থেকে https://www.bdstall.com/details/xiaomi-mi-3-mobile-phone-5-quad-core-13mp-camera-2gb-ram-21107/"
+      "admin_response": "জ্বি স্যার আছে। অর্ডার করুন এখান থেকে https://www.bdstall.com/details/xiaomi-mi-3-mobile-phone-5-quad-core-13mp-camera-2gb-ram-21107/"
     },
     {
       "user_message": "Price??",
@@ -560,7 +540,7 @@
     },
     {
       "user_message": "Kon brand er ki cemera kivabe bujbo Bhai",
-      "admin_response": "এটি নিতে ও বিস্তারিত জানতে আমাদের শো রুমের এই ঠিকানায় সরাসরি কল করুন Shop-740, Level-7, ECS Computer City, Multiplan Centre, 69-71, New Elephant Road\nElephantRoad, Dhaka, Bangladesh\n 01619212122\n 01721358987"
+      "admin_response": "এটি নিতে ও বিস্তারিত জানতে আমাদের শো রুমের এই ঠিকানায় সরাসরি কল করুন Shop-740, Level-7, ECS Computer City, Multiplan Centre, 69-71, New Elephant Road ElephantRoad, Dhaka, Bangladesh [PHONE]"
     },
     {
       "user_message": "Apni model ar brand er nam ta bolen",
@@ -580,11 +560,11 @@
     },
     {
       "user_message": "কত দাম",
-      "admin_response": "আমাদের শো রুমের নাম্বারে যোগাযোগ করে নিতে পারবেন Shop-129, Motalab Plaza, Ground Floor\nElephantRoad, Dhaka, Bangladesh\n01406707055"
+      "admin_response": "আমাদের শো রুমের নাম্বারে যোগাযোগ করে নিতে পারবেন Shop-129, Motalab Plaza, Ground Floor ElephantRoad, Dhaka, Bangladesh [PHONE]"
     },
     {
       "user_message": "এটা",
-      "admin_response": "আমাদের শো রুমের নাম্বারে যোগাযোগ করে জেনে নিতে পারবেন Shop No : 319 & 319A, 2nd Floor, Alpona Plaza, New Elephent Road.\nElephantRoad, Dhaka, Bangladesh\n01602269517\n01833685828"
+      "admin_response": "আমাদের শো রুমের নাম্বারে যোগাযোগ করে জেনে নিতে পারবেন Shop No : 319 & 319A, 2nd Floor, Alpona Plaza, New Elephent Road. ElephantRoad, Dhaka, Bangladesh [PHONE]"
     },
     {
       "user_message": "হ্যালো",
@@ -624,7 +604,7 @@
     },
     {
       "user_message": "ডেট কত পর্যন্ত ব্যবহার করা যাবে ?",
-      "admin_response": "ম্যাম  ডেটটা উল্লেখ করানাই"
+      "admin_response": "ম্যাম ডেটটা উল্লেখ করানাই"
     },
     {
       "user_message": "বোতলের নিচে ডেট উল্লেখ করা থাকে",
@@ -643,7 +623,7 @@
       "admin_response": "ম্যাম অর্ডারের বিষয়গুলি আমাদের যিনি দেখেন উনি আমাকে এই রিপোর্ট ই দিয়েছে"
     },
     {
-      "user_message": "Ami apnader page e ei tap ta order diyechi. Plz same ei rokom tap e diben jate pipe  connection ta pichoner dike thake .plz",
+      "user_message": "Ami apnader page e ei tap ta order diyechi. Plz same ei rokom tap e diben jate pipe connection ta pichoner dike thake .plz",
       "admin_response": "ম্যাম যেহেতু আপনি ঢাকার বাহিরে ডেলিভারি চার্জটা অগ্রিম দিতে হবে"
     },
     {
@@ -652,7 +632,7 @@
     },
     {
       "user_message": "Number din",
-      "admin_response": "01797927168 বিকাশ পেমেন্ট অপশন থেকে পেমেন্ট করবেন"
+      "admin_response": "[PHONE] বিকাশ পেমেন্ট অপশন থেকে পেমেন্ট করবেন"
     },
     {
       "user_message": "Ami ki delivery fee ta diye dibo?",
@@ -679,12 +659,12 @@
       "admin_response": "জ্বি ম্যাম"
     },
     {
-      "user_message": "Sharmin Reza Eva \nMirpur DOHS \nAvenue 4\nRoad 10\nHouse 651\nMob: 01763141525",
+      "user_message": "Sharmin Reza Eva Mirpur DOHS Avenue 4 Road 10 House 651 Mob: [PHONE]",
       "admin_response": "ধন্যবাদ ম্যাম"
     },
     {
       "user_message": "সাদাটা আছে?",
-      "admin_response": "01760676767"
+      "admin_response": "[PHONE]"
     },
     {
       "user_message": "এফ ওয়ান নাইন সিক্স মডেলের দাম কত",
@@ -704,22 +684,27 @@
     },
     {
       "user_message": "Grantty wrantty tahle ki rkm vabe hbe",
-      "admin_response": "7 days parts\n1 year service warranty"
+      "admin_response": "7 days parts 1 year service warranty"
     }
   ],
   "query_categories": {
     "product_inquiry": [
-      "Refurbished Original Nokia 6500 Classic 6500C Unlocked Mobile Phone 3G Quad- Band. \nWant to buy.",
+      "Refurbished Original Nokia 6500 Classic 6500C Unlocked Mobile Phone 3G Quad- Band. Want to buy.",
       "When will I get that product?",
+      "[PHONE]",
       "Ami iphone 6s ta nibo",
+      "আমার একটি ডিজিটাল ওয়েট মেশিন লাগবে। [PHONE]",
+      "আমার একটি ডিজিটাল ওয়েট মেশিন লাগবে। [PHONE]",
       "Phone e kono somossa hobenato?",
       "Mi 3 phone ta ki ase",
+      "[PHONE]",
       "With box carger hat phone black clower incitive",
+      "[PHONE] WhatsApp",
       "Ekta product powchaite jodi eto din lage apnara customer handal koren kivabe?",
+      "Sharmin Reza Eva Mirpur DOHS Avenue 4 Road 10 House 651 Mob: [PHONE]",
       "I phone 5s hbe ki"
     ],
     "price_inquiry": [
-      "koto",
       "6s koto vai",
       "Amra apnake valo price dibo",
       "টাকা কি আগে দিতে হবে",
@@ -753,7 +738,7 @@
       "iPhone 5s আছে",
       "Mini computerআছে",
       "WiWU 14 inch Laptop Tote Bag for Women available ?",
-      "assalamualaikum\nSamsung galaxy watch 4  strap available ?",
+      "assalamualaikum Samsung galaxy watch 4 strap available ?",
       "Available ?",
       "Etar charger ache",
       "ei power bank ta ki ache?",
@@ -773,18 +758,14 @@
     "order_status": [
       "Eta ki vhabe nibo ar order korte gayle ki korte hobe",
       "Want to order",
-      "Customer Name:Akkas mollah\nMobile Number:01631743206\nAddress: Shadhinata Sharani, Jamtola, North Badda, Dhaka 1212\nRahat sondha maloti opposite of usman madrasa.building owner name Ajibur saheb. Plot No. 296, House No. 1, Ward No. 8,\n3 tala lift er 2,lift theke neme hater baam e.\nOrder confirmed",
-      "Ami apnader page e ei tap ta order diyechi. Plz same ei rokom tap e diben jate pipe  connection ta pichoner dike thake .plz"
+      "Customer Name:Akkas mollah Mobile Number:[PHONE] Address: Shadhinata Sharani, Jamtola, North Badda, Dhaka 1212 Rahat sondha maloti opposite of usman madrasa.building owner name Ajibur saheb. Plot No. 296, House No. 1, Ward No. 8, 3 tala lift er 2,lift theke neme hater baam e. Order confirmed",
+      "Ami apnader page e ei tap ta order diyechi. Plz same ei rokom tap e diben jate pipe connection ta pichoner dike thake .plz"
     ],
     "general": [
-      "আমি একটা কাজ খুজছি,আপনাদের এখানে কাজের কোন সুযোগ তাকলে একটা কল দিবেন।০১৭২৮৪৫৭২৯৫",
-      "01673675056",
       "Hello",
       "আমি আপনাদের মাধ্যমে আমার পন্য বিক্রি করতে চাই",
-      "আপনাদের এইখানে আগে একাউন্ট খুলতে  হবে তারপর স্টল কিভাবে খুলতে হবে ?",
-      "???",
+      "আপনাদের এইখানে আগে একাউন্ট খুলতে হবে তারপর স্টল কিভাবে খুলতে হবে ?",
       "link den",
-      "Thankyou ????",
       "1c monitor lagbe akta",
       "Xiaomi 1c monitor",
       "Ar kivabe ami pabo?",
@@ -794,9 +775,6 @@
       "????",
       "Apnader showroom kothay",
       "Naki use kora",
-      "Helo",
-      "আমার একটি ডিজিটাল ওয়েট মেশিন লাগবে।\n০১৭২৬-০৫১৬১৬",
-      "আমার একটি ডিজিটাল ওয়েট মেশিন লাগবে।\n০১৭২৬-০৫১৬১৬",
       "Total kto?",
       "Emergency please reply my msg",
       "Hello?",
@@ -810,7 +788,7 @@
       "Ata ki kom kora jabe ..?",
       "ফোনে 3d দেখার জন্য একটা 3dসানগ্লাস লাগবে",
       "এটা দিয়ে কি ফোনে 3d video দেখা যাবে",
-      "ভাই আমি সানগ্লাস টি আর্ডার করেছি কালকে 2টার দিকে পাঠিয়ে দিয়ন আমার নাম মাহদি  ঠিকানা  আগারগাঁও ইসলামি ফাউন্ডেশন",
+      "ভাই আমি সানগ্লাস টি আর্ডার করেছি কালকে 2টার দিকে পাঠিয়ে দিয়ন আমার নাম মাহদি ঠিকানা আগারগাঁও ইসলামি ফাউন্ডেশন",
       "কোই ফোন তো করলোনা",
       "Taka ki age dite hobe",
       "Ami dhaka Gazipur Thaki tahole ki charg age dite hobe",
@@ -823,7 +801,6 @@
       "তাহলে গাজীপুর থেকে ওর্ডার দিলে",
       "ওর্ডার দিছি",
       "দয়া করে ব্লটু গুলোর ছবি দিতে পারবেন",
-      "01931132596",
       "ধন্যবাদ",
       "আমার পন্য এখনো পাই নাই",
       "hollo",
@@ -844,8 +821,7 @@
       "Vai apna der kase Cameo 4 Vinyl cutting machine ase?",
       "Apnader kase Epson L3110 Purge unit pawa jabe?",
       "Hoba",
-      "2 jon jabo  children nai  Dhaka hote DEC ar last a  khorcha pati kemon hobe discount diye",
-      "01772599360 WhatsApp",
+      "2 jon jabo children nai Dhaka hote DEC ar last a khorcha pati kemon hobe discount diye",
       "Apnader kono response nai, evabei behave koren customer der sathe",
       "মোবাইলটা কি পাটিয়ে দিয়েছেন",
       "41068",
@@ -858,7 +834,7 @@
       "Assa bujlam",
       "Debo?",
       "Er jnno ki extra kono charge lagbe?",
-      "আপনাদের website এ  binding machine dekhlam",
+      "আপনাদের website এ binding machine dekhlam",
       "আসসালামু আলাইকুম",
       "Can I make a purchase?",
       "মিনি এয়ারকুলার কোনটা ভালো?",
@@ -890,7 +866,6 @@
       "Apnadar kasa ke 700d ta hoba new",
       "ভাই",
       "Eta te ki chul kalo hobe?",
-      "Sharmin Reza Eva \nMirpur DOHS \nAvenue 4\nRoad 10\nHouse 651\nMob: 01763141525",
       "Condition ki rkm",
       "Jegula Cel kren",
       "Grantty wrantty tahle ki rkm vabe hbe"

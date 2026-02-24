@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class MessengerTrainer:
-    def __init__(self, api_url: str):
+    def __init__(self, api_url: str, page_size: int = 1000, max_pages: int = 30):
         """
         Initialize messenger trainer
         
@@ -20,7 +20,7 @@ class MessengerTrainer:
             api_url: URL of messenger API endpoint
         """
         self.api_url = api_url
-        self.loader = MessengerAPILoader(api_url)
+        self.loader = MessengerAPILoader(api_url, page_size=page_size, max_pages=max_pages, use_paging=True)
         self.rag_store = RAGStore()
     
     def load_and_train(self) -> bool:
@@ -102,10 +102,10 @@ def main():
     print("=" * 60)
     
     # API URL
-    api_url = "https://ai.bdstall.com/rest_api/item/chatbot_grouped?limit=1000"
+    api_url = "https://ai.bdstall.com/rest_api/item/chatbot_grouped"
     
     # Initialize trainer
-    trainer = MessengerTrainer(api_url)
+    trainer = MessengerTrainer(api_url, page_size=1000, max_pages=30)
     
     # Load and train
     print("\nStarting training process...")

@@ -1,0 +1,37 @@
+{
+  "user_input": "bhalo laptop ase",
+  "detected_intent": "product_inquiry",
+  "confidence": 0.3333333333333333,
+  "search_keywords": "laptop",
+  "products_found": 20,
+  "top_products": [
+    {
+      "title": "Asus X453MA-N3530 14\" Pentium Quad Core 4GB RAM Laptop",
+      "price": 9990,
+      "url": "https://www.bdstall.com/details/18357/",
+      "description": "",
+      "brand": null,
+      "model": null,
+      "listing_id": "18357"
+    },
+    {
+      "title": "Asus VivoBook Pro Core i7 6th Gen 16GB DDR4 RAM",
+      "price": 34000,
+      "url": "https://www.bdstall.com/details/24495/",
+      "description": "",
+      "brand": null,
+      "model": null,
+      "listing_id": "24495"
+    },
+    {
+      "title": "Asus X441UA Core i3 6th Gen 8GB RAM & 128GB SSD",
+      "price": 14500,
+      "url": "https://www.bdstall.com/details/31292/",
+      "description": "",
+      "brand": null,
+      "model": null,
+      "listing_id": "31292"
+    }
+  ],
+  "chatbot_response": "আমরা 3টি পণ্য পেয়েছি:\\n\\n1. Asus X453MA-N3530 14\" Pentium Quad Core 4GB RAM La - 9990 টাকা\\n2. Asus VivoBook Pro Core i7 6th Gen 16GB DDR4 RAM - 34000 টাকা\\n3. Asus X441UA Core i3 6th Gen 8GB RAM & 128GB SSD - 14500 টাকা\\n\\nকোনটি নিয়ে জানতে চান?"
+}
