@@ -113,8 +113,11 @@ def webhook():
                                 }
                             )
                             
-                            response_text = result.get("response", "দুঃখিত, কিছু সমস্যা হয়েছে।")
-                            send_message(sender_id, response_text)
+                            if result.get("handover"):
+                                logger.info(f"Handover active for {sender_id}; skipping AI reply")
+                            else:
+                                response_text = result.get("response", "দুঃখিত, কিছু সমস্যা হয়েছে।")
+                                send_message(sender_id, response_text)
                     
                     # Handle postbacks (button clicks)
                     elif messaging_event.get('postback'):
@@ -132,8 +135,11 @@ def webhook():
                             }
                         )
                         
-                        response_text = result.get("response", "ধন্যবাদ!")
-                        send_message(sender_id, response_text)
+                        if result.get("handover"):
+                            logger.info(f"Handover active for {sender_id}; skipping AI reply")
+                        else:
+                            response_text = result.get("response", "ধন্যবাদ!")
+                            send_message(sender_id, response_text)
         
         return 'OK', 200
         
@@ -177,6 +183,15 @@ def chat():
             }
         )
         
+        if result.get("handover"):
+            return jsonify({
+                "response": "",
+                "handover": True,
+                "user_id": user_id,
+                "processing_info": result.get("processing_info", {}),
+                "success": True
+            }), 200
+
         if result["success"]:
             return jsonify({
                 "response": result["response"],

@@ -118,17 +118,18 @@ class BengaliDatabaseHandler:
         q_lower = question.lower()
         a_lower = answer.lower()
         
+        # Delivery related FIRST (includes romanized Bengali) - Check before pricing since both can have "কত"
+        if any(word in q_lower for word in ['ডেলিভারি', 'delivery', 'পৌঁছাবে', 'পৌঁছায়', 'shipping']):
+            if any(word in q_lower for word in ['কবে', 'কত দিন', 'কত', 'koy din', 'koto din', 'koto', 'lagbe', 'ashbe', 'somoy', 'din', 'দিন', 'সময়']):
+                return 'delivery'
+        
         # Pricing related (includes romanized Bengali)
-        if any(word in q_lower for word in ['দাম', 'প্রাইস', 'price', 'কত', 'টাকা', 'cost', 'dam', 'taka', 'koto']):
+        if any(word in q_lower for word in ['দাম', 'প্রাইস', 'price', 'কত', 'টাকা', 'cost', 'dam', 'taka', 'koto', 'budget', 'বাজেট', 'kom budget', 'affordable', 'সাশ্রয়ী']):
             return 'pricing'
         
         # Ordering related (includes romanized Bengali)
         elif any(word in q_lower for word in ['অর্ডার', 'order', 'কিভাবে', 'কিনব', 'buy', 'purchase', 'kibabe', 'kivabe', 'kemne', 'korbo']):
             return 'ordering'
-        
-        # Delivery related (includes romanized Bengali)
-        elif any(word in q_lower for word in ['ডেলিভারি', 'delivery', 'পৌঁছাবে', 'সময়', 'কবে', 'কত দিন', 'koy din', 'koto din', 'lagbe', 'ashbe', 'modde', 'somoy']):
-            return 'delivery'
         
         # Stock related (includes romanized Bengali)
         elif any(word in q_lower for word in ['স্টক', 'stock', 'available', 'আছে', 'পাওয়া যাবে', 'ache', 'pawa', 'jabe']):

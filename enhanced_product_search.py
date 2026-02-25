@@ -177,7 +177,7 @@ class EnhancedProductSearch:
             ai_response = self.groq.generate_response(
                 user_message=prompt,
                 temperature=0.7,
-                max_length=200
+                max_length=400
             )
             
             response = ai_response.strip() if ai_response else self._simple_product_response(products, user_query)

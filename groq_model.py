@@ -39,7 +39,7 @@ class GroqAIModel:
         user_message: str,
         context: Optional[str] = None,
         conversation_history: Optional[List[Dict[str, str]]] = None,
-        max_length: int = 150,
+        max_length: int = 300,
         temperature: float = 0.6,
         top_p: float = 0.9
     ) -> str:

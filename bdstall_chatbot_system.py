@@ -71,7 +71,8 @@ class BDStallChatbotSystem:
             logger.info("✓ Decision Router initialized")
             
             self.response_composer = ResponseComposer(
-                enable_personalization=True
+                enable_personalization=True,
+                max_response_length=1200
             )
             logger.info("✓ Response Composer initialized")
             
@@ -155,6 +156,25 @@ class BDStallChatbotSystem:
                 except Exception as ctx_error:
                     logger.warning(f"Context update failed: {ctx_error}")
                 
+                if self._is_handover_response(db_result['response']):
+                    logger.info("🔁 Handover triggered by database response")
+                    return {
+                        "success": True,
+                        "response": "",
+                        "handover": True,
+                        "processing_info": {
+                            "processing_time_seconds": processing_time,
+                            "source": "bengali_database",
+                            "category": db_result['category'],
+                            "similarity_score": db_result['similarity'],
+                            "question_matched": db_result.get('question_matched', ''),
+                            "intent": nlp_result.intent.value,
+                            "language": "bengali",
+                            "timestamp": datetime.now().isoformat(),
+                            "handover": True
+                        }
+                    }
+
                 return {
                     "success": True,
                     "response": db_result['response'],  # Always Bengali from database
@@ -338,6 +358,29 @@ class BDStallChatbotSystem:
             "customer_service": ChannelType.CUSTOMER_SERVICE
         }
         return channel_mapping.get(channel.lower(), ChannelType.WEB)
+
+    def _is_handover_response(self, response_text: str) -> bool:
+        """Check if a response should trigger human handover."""
+        if not response_text:
+            return False
+
+        trigger_messages = [
+            (
+                "BDStall.com-এ আপনাকে স্বাগতম। পণ্যের দাম জানতে আমাদের ওয়েবসাইট দেখুন অথবা "
+                "কাস্টমার সার্ভিসে যোগাযোগ করুন। (যোগাযোগের সময় সকাল ১০ টা থেকে সন্ধ্যা ৬ টা)।"
+            ),
+            (
+                "মিঠুন চন্দ্র বর্মন ,BDStall.com-এ আপনাকে স্বাগতম। আপনার মেসেজ এর জন্য ধন্যবাদ। "
+                "খুব শীঘ্রই BDStall.com এর একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবে। "
+                "(যোগাযোগের সময় সকাল ১০ টা থেকে সন্ধ্যা ৬ টা) ।"
+            )
+        ]
+
+        def normalize(text: str) -> str:
+            return " ".join(text.strip().split())
+
+        normalized_response = normalize(response_text)
+        return any(normalized_response == normalize(msg) for msg in trigger_messages)
     
     def _build_comprehensive_context(
         self,

@@ -418,7 +418,8 @@ class ResponseComposer:
                 ai_response = self.ai_model.generate_response(
                     user_message=query,
                     context=rag_context,
-                    conversation_history=[]
+                    conversation_history=[],
+                    max_length=300
                 )
             else:
                 # Fallback to simple response when AI model not available
