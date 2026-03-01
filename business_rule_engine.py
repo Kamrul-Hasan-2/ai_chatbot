@@ -42,7 +42,6 @@ class RulePriority(Enum):
     MEDIUM = "medium"
     LOW = "low"
 
-
 class RuleStatus(Enum):
     """Status of rules"""
     ACTIVE = "active"

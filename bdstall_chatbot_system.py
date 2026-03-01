@@ -26,6 +26,7 @@ from decision_router import DecisionRouter, RoutingDecision
 from response_composer import ResponseComposer, GeneratedResponse
 from bengali_database_handler import BengaliDatabaseHandler
 from groq_3step_search import Groq3StepSearch
+from human_handoff_manager import HumanHandoffManager, HandoffReason
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -80,6 +81,14 @@ class BDStallChatbotSystem:
             self.groq_3step_search = Groq3StepSearch()
             logger.info("✓ Groq 3-Step Search initialized")
             
+            # Initialize Human Handoff Manager
+            self.handoff_manager = HumanHandoffManager(
+                confidence_threshold=0.5,
+                max_failed_attempts=3,
+                session_timeout_minutes=30
+            )
+            logger.info("✓ Human Handoff Manager initialized")
+            
             logger.info("🚀 BDStall Chatbot System fully initialized")
             
         except Exception as e:
@@ -107,6 +116,20 @@ class BDStallChatbotSystem:
         """
         try:
             processing_start = datetime.now()
+            
+            # Step 0: Check if conversation is in human mode
+            if self.handoff_manager.is_in_human_mode(user_id):
+                logger.info(f"👤 User {user_id} is in HUMAN MODE - not processing with AI")
+                return {
+                    "success": True,
+                    "response": "",  # No AI response
+                    "in_human_mode": True,
+                    "processing_info": {
+                        "mode": "human_mode",
+                        "message": "Conversation is being handled by human agent",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                }
             
             # Step 1: Channel Adapter - Normalize input message
             logger.info(f"🔄 Processing message from {user_id} via {channel}")
@@ -186,6 +209,39 @@ class BDStallChatbotSystem:
                         "question_matched": db_result.get('question_matched', ''),
                         "intent": nlp_result.intent.value,
                         "language": "bengali",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                }
+            
+            # Step 2.6: Check if handoff needed (database didn't find good match)
+            db_similarity = db_result.get('similarity', 0.0)
+            should_handoff, handoff_reason = self.handoff_manager.should_trigger_handoff(
+                user_id=user_id,
+                confidence=db_similarity,
+                match_found=db_result['success'],
+                message=message
+            )
+            
+            if should_handoff:
+                logger.info(f"🔔 Triggering handoff for {user_id}: {handoff_reason}")
+                handoff_response = self.handoff_manager.trigger_handoff(
+                    user_id=user_id,
+                    message=message,
+                    reason=handoff_reason
+                )
+                
+                processing_time = (datetime.now() - processing_start).total_seconds()
+                
+                return {
+                    "success": True,
+                    "response": handoff_response['response'],
+                    "handoff_triggered": True,
+                    "processing_info": {
+                        "processing_time_seconds": processing_time,
+                        "handoff_reason": handoff_reason.value,
+                        "mode": "handoff_triggered",
+                        "similarity_score": db_similarity,
+                        "intent": nlp_result.intent.value,
                         "timestamp": datetime.now().isoformat()
                     }
                 }

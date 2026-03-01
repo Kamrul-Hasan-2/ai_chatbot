@@ -423,7 +423,10 @@ if __name__ == '__main__':
     print("• GET /analytics - System analytics")
     print("• GET /conversation_history/<user_id> - User history")
     print("=" * 60)
+    print(f"Server starting on port {os.getenv('PORT', 5000)}...")
+    print(f"Webhook URL: http://localhost:{os.getenv('PORT', 5000)}/webhook")
+    print("=" * 60)
     
     # Run Flask app
-    port = int(os.getenv('PORT', 8000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    port = int(os.getenv('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=True)
