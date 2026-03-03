@@ -545,18 +545,39 @@ Examples:
         
         try:
             if database_message and products:
-                # Product search response
-                prompt = f"""তুমি একজন বন্ধুত্বপূর্ণ বাংলা চ্যাটবট। 
-
-গ্রাহকের প্রশ্ন: {original_message}
-
-ডাটাবেস থেকে পাওয়া পণ্য:
-{database_message}
-
-এই তথ্য ব্যবহার করে একটি সুন্দর, বন্ধুত্বপূর্ণ বাংলা উত্তর দাও। সংক্ষিপ্ত এবং সহায়ক হও।
-"""
+                # Product search response - Use custom formatting with greeting
+                response_text = "স্যার, আপনার পছন্দের কিছু প্রোডাক্ট আমাদের কাছে এসে গেছে। প্রোডাক্টগুলোর বিস্তারিত নিচে দেওয়া হলো:\n\n"
+                
+                # Format each product with details
+                for idx, product in enumerate(products[:5], 1):  # Show top 5 products
+                    title = product.get('title', 'N/A')
+                    price = product.get('price', 'N/A')
+                    url = product.get('url', '')
+                    description = product.get('description', '')
+                    
+                    # Clean up description (first 100 chars)
+                    if description and len(description) > 100:
+                        description = description[:100] + "..."
+                    
+                    response_text += f"{idx}. {title}\n"
+                    response_text += f"💰 মূল্য: {price}\n"
+                    
+                    if description:
+                        response_text += f"📝 বিবরণ: {description}\n"
+                    
+                    if url:
+                        response_text += f"🔗 লিংক: {url}\n"
+                    
+                    response_text += "\n"
+                
+                response_text += "আরও তথ্যের জন্য আমাদের সাথে যোগাযোগ করুন। ধন্যবাদ! 🙏"
+                
+                return {
+                    'success': True,
+                    'response': response_text
+                }
             else:
-                # General query
+                # General query - Use AI
                 prompt = f"""তুমি একজন বন্ধুত্বপূর্ণ বাংলা চ্যাটবট। BDStall.com এর হয়ে উত্তর দাও।
 
 প্রশ্ন: {original_message}
@@ -564,19 +585,19 @@ Examples:
 একটি সুন্দর, সংক্ষিপ্ত বাংলা উত্তর দাও।
 """
             
-            response = self.groq_client.chat.completions.create(
-                model=self.groq_model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.7,
-                max_tokens=500
-            )
-            
-            ai_response = response.choices[0].message.content.strip()
-            
-            return {
-                'success': True,
-                'response': ai_response
-            }
+                response = self.groq_client.chat.completions.create(
+                    model=self.groq_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.7,
+                    max_tokens=500
+                )
+                
+                ai_response = response.choices[0].message.content.strip()
+                
+                return {
+                    'success': True,
+                    'response': ai_response
+                }
         
         except Exception as e:
             logger.error(f"❌ AI formatting failed: {e}")
