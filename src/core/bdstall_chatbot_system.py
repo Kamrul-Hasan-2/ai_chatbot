@@ -13,20 +13,51 @@ This module brings together:
 Following the BDStall Chatbot System Architecture
 """
 import logging
+import sys
+import os
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 import json
 
+# Add paths for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+
 # Import architectural components
-from channel_adapter import ChannelAdapter, ChannelType, ChannelMessage
-from intent_entity_detector import IntentEntityDetector, NLPProcessingResult, Intent
-from context_router import ContextRouter, ContextType, ContextPriority
-from business_rule_engine import BusinessRuleEngine
-from decision_router import DecisionRouter, RoutingDecision
-from response_composer import ResponseComposer, GeneratedResponse
-from bengali_database_handler import BengaliDatabaseHandler
-from groq_3step_search import Groq3StepSearch
-from human_handoff_manager import HumanHandoffManager, HandoffReason
+try:
+    # Try relative imports first (when running as package)
+    from utils.channel_adapter import ChannelAdapter, ChannelType, ChannelMessage
+    from core.intent_entity_detector import IntentEntityDetector, NLPProcessingResult, Intent
+    from core.context_router import ContextRouter, ContextType, ContextPriority
+    from core.business_rule_engine import BusinessRuleEngine
+    from core.decision_router import DecisionRouter, RoutingDecision
+    from core.response_composer import ResponseComposer, GeneratedResponse
+    from handlers.bengali_database_handler import BengaliDatabaseHandler
+    from utils.groq_3step_search import Groq3StepSearch
+    from handlers.human_handoff_manager import HumanHandoffManager, HandoffReason
+except ImportError:
+    # Fallback to direct imports (when running standalone)
+    try:
+        from src.utils.channel_adapter import ChannelAdapter, ChannelType, ChannelMessage
+        from src.core.intent_entity_detector import IntentEntityDetector, NLPProcessingResult, Intent
+        from src.core.context_router import ContextRouter, ContextType, ContextPriority
+        from src.core.business_rule_engine import BusinessRuleEngine
+        from src.core.decision_router import DecisionRouter, RoutingDecision
+        from src.core.response_composer import ResponseComposer, GeneratedResponse
+        from src.handlers.bengali_database_handler import BengaliDatabaseHandler
+        from src.utils.groq_3step_search import Groq3StepSearch
+        from src.handlers.human_handoff_manager import HumanHandoffManager, HandoffReason
+    except ImportError:
+        # Last fallback: assume files are in same directory or PYTHONPATH
+        from channel_adapter import ChannelAdapter, ChannelType, ChannelMessage
+        from intent_entity_detector import IntentEntityDetector, NLPProcessingResult, Intent
+        from context_router import ContextRouter, ContextType, ContextPriority
+        from business_rule_engine import BusinessRuleEngine
+        from decision_router import DecisionRouter, RoutingDecision
+        from response_composer import ResponseComposer, GeneratedResponse
+        from bengali_database_handler import BengaliDatabaseHandler
+        from groq_3step_search import Groq3StepSearch
+        from human_handoff_manager import HumanHandoffManager, HandoffReason
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -214,13 +245,29 @@ class BDStallChatbotSystem:
                 }
             
             # Step 2.6: Check if handoff needed (database didn't find good match)
+            # BUT: Don't trigger handoff for simple greetings or general queries
             db_similarity = db_result.get('similarity', 0.0)
-            should_handoff, handoff_reason = self.handoff_manager.should_trigger_handoff(
-                user_id=user_id,
-                confidence=db_similarity,
-                match_found=db_result['success'],
-                message=message
-            )
+            
+            # Intents that should NOT trigger handoff even if no database match
+            # These are simple conversational intents that the AI can handle
+            safe_intents = [
+                Intent.GREETING, 
+                Intent.GOODBYE, 
+                Intent.UNKNOWN,  # Let AI try to answer unknown intents
+                Intent.FAQ  # FAQ should be handled by AI
+            ]
+            
+            should_handoff = False
+            handoff_reason = None
+            
+            # Only check for handoff if it's NOT a simple conversational intent
+            if nlp_result.intent not in safe_intents:
+                should_handoff, handoff_reason = self.handoff_manager.should_trigger_handoff(
+                    user_id=user_id,
+                    confidence=db_similarity,
+                    match_found=db_result['success'],
+                    message=message
+                )
             
             if should_handoff:
                 logger.info(f"🔔 Triggering handoff for {user_id}: {handoff_reason}")
@@ -426,7 +473,7 @@ class BDStallChatbotSystem:
                 "কাস্টমার সার্ভিসে যোগাযোগ করুন। (যোগাযোগের সময় সকাল ১০ টা থেকে সন্ধ্যা ৬ টা)।"
             ),
             (
-                "মিঠুন চন্দ্র বর্মন ,BDStall.com-এ আপনাকে স্বাগতম। আপনার মেসেজ এর জন্য ধন্যবাদ। "
+                "BDStall.com-এ আপনাকে স্বাগতম। আপনার মেসেজ এর জন্য ধন্যবাদ। "
                 "খুব শীঘ্রই BDStall.com এর একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবে। "
                 "(যোগাযোগের সময় সকাল ১০ টা থেকে সন্ধ্যা ৬ টা) ।"
             )

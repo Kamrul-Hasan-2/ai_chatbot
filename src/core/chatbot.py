@@ -4,14 +4,35 @@ Handles conversation management and data integration with RAG
 """
 import json
 import os
+import sys
 from typing import Dict, List, Optional
 from datetime import datetime
 import logging
-from gemini_model import GeminiAIModel
-from fallback_handler import FallbackResponder
-from database_handler import DatabaseHandler
-from rag_store import RAGStore
-from product_search import ProductSearchAPI
+
+# Add paths for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+
+# Import required modules with fallbacks
+try:
+    from models.gemini_model import GeminiAIModel
+    from handlers.fallback_handler import FallbackResponder
+    from handlers.database_handler import DatabaseHandler
+    from utils.rag_store import RAGStore
+    from utils.product_search import ProductSearchAPI
+except ImportError:
+    try:
+        from src.models.gemini_model import GeminiAIModel
+        from src.handlers.fallback_handler import FallbackResponder
+        from src.handlers.database_handler import DatabaseHandler
+        from src.utils.rag_store import RAGStore
+        from src.utils.product_search import ProductSearchAPI
+    except ImportError:
+        from gemini_model import GeminiAIModel
+        from fallback_handler import FallbackResponder
+        from database_handler import DatabaseHandler
+        from rag_store import RAGStore
+        from product_search import ProductSearchAPI
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

@@ -3,14 +3,22 @@ BDStall Chatbot System Integration - Updated Flask App
 Facebook Messenger Integration & Web Chat Interface with Full Architecture
 """
 import os
+import sys
 import logging
 from flask import Flask, request, jsonify, render_template, send_from_directory
 from flask_cors import CORS
 import requests
 from dotenv import load_dotenv
 
+# Add parent directories to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 # Import the new integrated system
-from bdstall_chatbot_system import BDStallChatbotSystem, ChatbotIntegration
+try:
+    from src.core.bdstall_chatbot_system import BDStallChatbotSystem, ChatbotIntegration
+except ImportError:
+    from core.bdstall_chatbot_system import BDStallChatbotSystem, ChatbotIntegration
 
 # Load environment variables
 load_dotenv()
@@ -164,7 +172,9 @@ def webhook():
 def index():
     """Serve the chat HTML interface"""
     try:
-        return send_from_directory('.', 'chat.html')
+        # Try to serve from static folder (new structure)
+        static_path = os.path.join(os.path.dirname(__file__), '..', '..', 'static')
+        return send_from_directory(static_path, 'chat.html')
     except:
         # Fallback if chat.html not found
         return '''
