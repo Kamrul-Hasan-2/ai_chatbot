@@ -98,7 +98,7 @@ class SimpleChatbot:
             return []
     
     def _search_database_faq(self, message: str) -> Optional[str]:
-        """Search database for FAQ response (greetings, common questions)"""
+        """Search database for FAQ response (greetings, common questions, ordering, delivery)"""
         try:
             message_lower = message.lower().strip()
             
@@ -113,6 +113,25 @@ class SimpleChatbot:
                 'আসসালামু আলাইকুম': ['হাই', 'হ্যালো', 'আসসালামু-আলাইকুম']
             }
             
+            # Define ordering query mappings (romanized Bengali)
+            ordering_map = {
+                'kibabe order korbo': 'অর্ডার করবো কিভাবে',
+                'kivabe order korbo': 'অর্ডার করবো কিভাবে',
+                'kemne order korbo': 'অর্ডার করবো কিভাবে',
+                'order kivabe dibo': 'অর্ডার করবো কিভাবে',
+                'order korbo kibabe': 'অর্ডার করবো কিভাবে',
+                'order kivabe korbo': 'অর্ডার করবো কিভাবে',
+                'how to order': 'অর্ডার করবো কিভাবে'
+            }
+            
+            # Define delivery query mappings
+            delivery_map = {
+                'delivery koto din': 'ডেলিভারি চার্জ কত',
+                'koto din lagbe': 'প্রোডাক্ট আসতে কত দিন সময় লাগবে',
+                'delivery time': 'প্রোডাক্ট আসতে কত দিন সময় লাগবে',
+                'koy din': 'প্রোডাক্ট আসতে কত দিন সময় লাগবে'
+            }
+            
             # Check if message is a greeting
             for eng_key, bengali_keys in greeting_map.items():
                 if eng_key in message_lower:
@@ -123,6 +142,32 @@ class SimpleChatbot:
                             if bengali_key in question:
                                 logger.info(f"✅ Greeting match: '{message}' → '{item['answer']}'")
                                 return item['answer']
+            
+            # Check if message is an ordering query
+            for eng_pattern, bengali_query in ordering_map.items():
+                if eng_pattern in message_lower:
+                    # Search for Bengali ordering question in database
+                    for item in self.database:
+                        if bengali_query in item['question'] or 'অর্ডার' in item['question']:
+                            logger.info(f"✅ Ordering match: '{message}' → database")
+                            return item['answer']
+            
+            # Check if message has ordering keywords (Bengali or romanized)
+            if any(word in message_lower for word in ['order', 'অর্ডার', 'korbo', 'করবো', 'kibabe', 'kivabe', 'kemne', 'কিভাবে']):
+                # Search for ordering questions in database
+                for item in self.database:
+                    question = item['question'].lower()
+                    if 'অর্ডার' in question and any(w in question for w in ['কিভাবে', 'কি ভাবে']):
+                        logger.info(f"✅ Ordering keyword match: '{message}' → database")
+                        return item['answer']
+            
+            # Check delivery queries
+            for eng_pattern, bengali_query in delivery_map.items():
+                if eng_pattern in message_lower:
+                    for item in self.database:
+                        if bengali_query in item['question'] or item['question'].lower() in bengali_query.lower():
+                            logger.info(f"✅ Delivery match: '{message}' → database")
+                            return item['answer']
             
             # Check for exact or partial matches
             for item in self.database:
@@ -181,9 +226,9 @@ class SimpleChatbot:
             logger.info(f"🔍 Search Keywords: {search_keywords}")
             
             # Safe intents that should NOT trigger human handoff
-            safe_intents = ['greeting', 'goodbye', 'thank_you', 'thanks', 'faq', 'general', 'question']
+            safe_intents = ['greeting', 'goodbye', 'thank_you', 'thanks', 'faq', 'general', 'question', 'ordering', 'delivery', 'support', 'warranty', 'availability']
             
-            # SPECIAL HANDLING: Check database for FAQ responses first (greetings, common questions)
+            # SPECIAL HANDLING: Check database for FAQ responses first (greetings, common questions, ordering, delivery)
             if intent in safe_intents:
                 database_response = self._search_database_faq(message)
                 if database_response:
@@ -344,14 +389,20 @@ class SimpleChatbot:
         
         try:
             prompt = f"""Analyze this message and extract:
-1. Intent (product_search, price_search, laptop_search, greeting, question, general, unknown)
+1. Intent (product_search, price_search, laptop_search, ordering, delivery, greeting, question, support, warranty, availability, general, unknown)
 2. Search keywords (for product search)
 
-Use "unknown" intent for:
-- Messages that are unclear or confusing
-- Complex requests you can't handle
-- Irrelevant or off-topic messages
-- Complaints or refund requests
+Intents:
+- product_search/laptop_search: Looking for specific products
+- price_search: Asking about prices
+- ordering: Questions about how to order (কিভাবে অর্ডার, order korbo, kibabe, kivabe)
+- delivery: Questions about delivery time, charges, location
+- support: Contact numbers, customer service
+- warranty: Warranty/guarantee questions
+- availability: Stock availability
+- greeting: Hi, hello, salam
+- question: General informational questions
+- unknown: Unclear, complaints, refunds
 
 Message: {message}
 
@@ -361,10 +412,13 @@ Keywords: [keywords]
 
 Examples:
 - "amake ekta 10k er modde laptop dekhan" → Intent: laptop_search, Keywords: laptop 10000 taka
+- "order korbo kibabe" → Intent: ordering, Keywords: none
+- "kivabe order korbo" → Intent: ordering, Keywords: none
+- "delivery koto din lagbe" → Intent: delivery, Keywords: none
 - "mouse er dam koto?" → Intent: price_search, Keywords: mouse price
 - "hello" → Intent: greeting, Keywords: none
+- "customer support number" → Intent: support, Keywords: none
 - "ami amar product ferot dite chai" → Intent: unknown, Keywords: none
-- "asdasd xyz 123" → Intent: unknown, Keywords: none
 """
             
             response = self.groq_client.chat.completions.create(

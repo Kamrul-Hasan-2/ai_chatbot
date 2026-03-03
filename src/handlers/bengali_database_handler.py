@@ -7,6 +7,7 @@ import json
 import logging
 from typing import Dict, List, Optional, Tuple
 from difflib import SequenceMatcher
+from datetime import datetime
 import re
 
 logging.basicConfig(level=logging.INFO)
@@ -20,6 +21,7 @@ class BengaliDatabaseHandler:
         self.qa_pairs = []
         self.categories = {}
         self.bengali_patterns = []
+        self.conversation_state = {}  # Track conversation context per user
         self.load_database()
         self.setup_bengali_matching()
     
@@ -479,6 +481,151 @@ class BengaliDatabaseHandler:
         }
         
         return fallback_responses.get(category, 'দুঃখিত, এই বিষয়ে আমি নিশ্চিত নই। আমাদের কাস্টমার সার্ভিসে যোগাযোগ করুন।')
+    
+    def check_follow_up_response(self, user_id: str, user_message: str, last_response: str = "") -> Optional[Dict]:
+        """
+        Check if user message is a follow-up to a previous question
+        Returns appropriate follow-up response if detected
+        """
+        try:
+            # Pattern 1: AI asked about which product to order
+            # Response: "স্যার, আপনি কোন প্রোডাক্টি অর্ডার করতে চান জানতে পারি কি?"
+            product_inquiry_patterns = [
+                "আপনি কোন প্রোডাক্টি অর্ডার করতে চান",
+                "কোন প্রোডাক্ট অর্ডার করতে চান",
+                "কোন প্রোডাক্ট নিতে চাচ্ছেন",
+                "কোন প্রোডাক্ট এর দাম জানতে চাচ্ছেন",
+                "কোন মডেলটি নিতে চাচ্ছেন"
+            ]
+            
+            # Check if last response was asking about product
+            if last_response and any(pattern in last_response for pattern in product_inquiry_patterns):
+                # Check if current message looks like a product name/response
+                # (not a question, has some content)
+                if len(user_message.strip()) > 3 and '?' not in user_message:
+                    # Additional check: not a common question word
+                    question_words = ['কি', 'কী', 'কিভাবে', 'কেমন', 'কত', 'কবে', 'কোথায়', 'কেন', 'how', 'what', 'when', 'where', 'why']
+                    first_word = user_message.strip().split()[0].lower()
+                    
+                    if first_word not in question_words:
+                        logger.info(f"🔄 Detected follow-up: User mentioned product after inquiry")
+                        return {
+                            'success': True,
+                            'response': 'ধন্যবাদ স্যার, আমাদের প্রতিনিধি কিছুক্ষণের মধ্যেই যোগাযোগ করবে। (যোগাযোগের সময় সকাল ১০ টা থেকে সন্ধ্যা ৬ টা)',
+                            'category': 'product_follow_up',
+                            'similarity': 1.0,
+                            'is_follow_up': True
+                        }
+            
+            # Pattern 2: AI gave full order instructions, and user provides specific product/info
+            # This handles cases where user says a product name after seeing order instructions
+            order_instruction_patterns = [
+                "অর্ডারের জন্য আপনার নাম, ঠিকানা",
+                "ডেলিভারির সময় চেক করে নিতে পারবেন",
+                "হোম ডেলিভারি পাবেন"
+            ]
+            
+            if last_response and any(pattern in last_response for pattern in order_instruction_patterns):
+                # Check if message looks like product name or specific item
+                # Should have some length, not be a question, contain alphanumeric
+                if (len(user_message.strip()) > 3 and 
+                    '?' not in user_message and 
+                    any(c.isalnum() for c in user_message)):
+                    
+                    # Check it's not just asking another question
+                    question_words = ['কি', 'কী', 'কিভাবে', 'কেমন', 'কত', 'কবে', 'কোথায়', 'কেন', 'how', 'what', 'when', 'where', 'why']
+                    first_word = user_message.strip().split()[0].lower()
+                    
+                    if first_word not in question_words:
+                        logger.info(f"🔄 Detected follow-up: User provided product info after order instructions")
+                        return {
+                            'success': True,
+                            'response': 'ধন্যবাদ স্যার, আমাদের প্রতিনিধি কিছুক্ষণের মধ্যেই যোগাযোগ করবে। (যোগাযোগের সময় সকাল ১০ টা থেকে সন্ধ্যা ৬ টা)',
+                            'category': 'product_follow_up',
+                            'similarity': 1.0,
+                            'is_follow_up': True
+                        }
+            
+            # Pattern 3: AI asked about delivery
+            delivery_inquiry_patterns = [
+                "কোথায় ডেলিভারি",
+                "ঠিকানা দিবেন",
+                "আপনার ঠিকানা"
+            ]
+            
+            if last_response and any(pattern in last_response for pattern in delivery_inquiry_patterns):
+                if len(user_message.strip()) > 5:
+                    logger.info(f"🔄 Detected follow-up: User provided address")
+                    return {
+                        'success': True,
+                        'response': 'ধন্যবাদ স্যার। আপনার ঠিকানা নোট করা হয়েছে। আমাদের প্রতিনিধি শীঘ্রই যোগাযোগ করবে।',
+                        'category': 'address_follow_up',
+                        'similarity': 1.0,
+                        'is_follow_up': True
+                    }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error checking follow-up: {e}")
+            return None
+    
+    def update_conversation_state(self, user_id: str, message: str, response: str):
+        """Update conversation state for a user"""
+        try:
+            if user_id not in self.conversation_state:
+                self.conversation_state[user_id] = {
+                    'history': [],
+                    'last_response': '',
+                    'last_category': ''
+                }
+            
+            # Add to history (keep last 5 turns)
+            self.conversation_state[user_id]['history'].append({
+                'message': message,
+                'response': response,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+            # Keep only last 5 exchanges
+            if len(self.conversation_state[user_id]['history']) > 5:
+                self.conversation_state[user_id]['history'] = self.conversation_state[user_id]['history'][-5:]
+            
+            self.conversation_state[user_id]['last_response'] = response
+            
+        except Exception as e:
+            logger.error(f"Error updating conversation state: {e}")
+    
+    def get_last_response(self, user_id: str) -> str:
+        """Get the last response given to a user"""
+        try:
+            if user_id in self.conversation_state:
+                return self.conversation_state[user_id].get('last_response', '')
+            return ''
+        except Exception as e:
+            logger.error(f"Error getting last response: {e}")
+            return ''
+    
+    def search_with_context(self, user_id: str, user_message: str, threshold: float = 0.6) -> Dict:
+        """
+        Enhanced search that considers conversation context
+        """
+        # First check if this is a follow-up response
+        last_response = self.get_last_response(user_id)
+        follow_up = self.check_follow_up_response(user_id, user_message, last_response)
+        
+        if follow_up:
+            # Update state with follow-up
+            self.update_conversation_state(user_id, user_message, follow_up['response'])
+            return follow_up
+        
+        # Otherwise do normal search
+        result = self.search_database(user_message, threshold)
+        
+        # Update conversation state
+        self.update_conversation_state(user_id, user_message, result.get('response', ''))
+        
+        return result
     
     def get_statistics(self) -> Dict:
         """Get database statistics"""

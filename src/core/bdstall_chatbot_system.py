@@ -185,7 +185,7 @@ class BDStallChatbotSystem:
             
             # Step 2.5: Check Bengali Database First (Priority Response)
             logger.info("📋 Checking Bengali database for direct matches")
-            db_result = self.database_handler.search_database(message)
+            db_result = self.database_handler.search_with_context(user_id, message)
             
             if db_result['success']:
                 # Direct database match found - return immediately
