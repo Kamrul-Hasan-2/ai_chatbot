@@ -5,7 +5,7 @@ Cleaner, simpler implementation
 import os
 import sys
 import logging
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from dotenv import load_dotenv
 
@@ -23,8 +23,12 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Get project root
+PROJECT_ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
+STATIC_FOLDER = os.path.join(PROJECT_ROOT, 'static')
+
 # Initialize Flask
-app = Flask(__name__)
+app = Flask(__name__, static_folder=STATIC_FOLDER)
 CORS(app)
 
 # Initialize chatbot
@@ -50,7 +54,8 @@ def index():
             "/health": "GET - Health check",
             "/mode/:user_id": "GET - Get user mode",
             "/mode/:user_id/human": "POST - Switch to human",
-            "/mode/:user_id/ai": "POST - Switch to AI"
+            "/mode/:user_id/ai": "POST - Switch to AI",
+            "/test": "GET - Chat interface (web), POST - Send message"
         }
     }), 200
 
@@ -150,9 +155,11 @@ def switch_to_ai(user_id):
     }), 200
 
 
-@app.route('/test', methods=['POST'])
+@app.route('/test', methods=['GET', 'POST'])
 def test():
-    """Test endpoint - same as /chat"""
+    """Test endpoint - GET for chat interface, POST same as /chat"""
+    if request.method == 'GET':
+        return send_from_directory(STATIC_FOLDER, 'chat.html')
     return chat()
 
 
