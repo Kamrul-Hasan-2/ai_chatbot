@@ -96,8 +96,8 @@ def chat():
                 "mode": "ai"
             }), 400
         
-        # Process message through roadmap
-        result = chatbot.process_message(user_id, message)
+        # Process message through roadmap (with lazy initialization)
+        result = get_chatbot().process_message(user_id, message)
         
         return jsonify(result), 200
     
@@ -114,19 +114,20 @@ def chat():
 @app.route('/health', methods=['GET'])
 def health():
     """Health check"""
+    bot = get_chatbot()
     return jsonify({
         "status": "healthy",
-        "chatbot_loaded": chatbot is not None,
-        "api_configured": bool(chatbot.api_url) if chatbot else False,
-        "database_responses": len(chatbot.database) if chatbot else 0,
-        "groq_available": chatbot.groq_client is not None if chatbot else False
+        "chatbot_ready": bot is not None,
+        "api_configured": bool(bot.api_url) if bot else False,
+        "database_responses": len(bot.database) if bot else 0,
+        "groq_available": bot.groq_client is not None if bot else False
     }), 200
 
 
 @app.route('/mode/<user_id>', methods=['GET'])
 def get_mode(user_id):
     """Get current mode for user"""
-    mode = chatbot.get_user_mode(user_id)
+    mode = get_chatbot().get_user_mode(user_id)
     return jsonify({
         "user_id": user_id,
         "mode": mode
@@ -136,7 +137,7 @@ def get_mode(user_id):
 @app.route('/mode/<user_id>/human', methods=['POST'])
 def switch_to_human(user_id):
     """Manually switch user to HUMAN mode"""
-    chatbot.switch_to_human(user_id)
+    get_chatbot().switch_to_human(user_id)
     return jsonify({
         "user_id": user_id,
         "mode": "human",
@@ -147,7 +148,7 @@ def switch_to_human(user_id):
 @app.route('/mode/<user_id>/ai', methods=['POST'])
 def switch_to_ai(user_id):
     """Manually switch user back to AI mode"""
-    chatbot.switch_to_ai(user_id)
+    get_chatbot().switch_to_ai(user_id)
     return jsonify({
         "user_id": user_id,
         "mode": "ai",
@@ -189,6 +190,14 @@ def initialize():
         raise
 
 
+def get_chatbot():
+    """Get or initialize chatbot (lazy initialization)"""
+    global chatbot
+    if chatbot is None:
+        initialize()
+    return chatbot
+
+
 if __name__ == '__main__':
     # Initialize
     initialize()
@@ -206,3 +215,6 @@ if __name__ == '__main__':
     
     # Run
     app.run(host='0.0.0.0', port=port, debug=False)
+else:
+    # When running with Gunicorn, initialize on module load
+    initialize()
