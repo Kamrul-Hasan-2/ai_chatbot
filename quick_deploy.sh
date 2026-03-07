@@ -21,3 +21,4 @@ cd /root/ai_services/ai_chatbot
 gunicorn -c config/gunicorn_config.py src.api.app_simple:app
 
 # This runs in foreground - press CTRL+C to stop
+
