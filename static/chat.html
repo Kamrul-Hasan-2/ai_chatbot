@@ -353,7 +353,8 @@
     </div>
 
     <script>
-        const API_URL = 'http://localhost:5000';
+        // Use current server URL (works for both localhost and remote servers)
+        const API_URL = window.location.origin;
         const messagesContainer = document.getElementById('messages');
         const messageInput = document.getElementById('messageInput');
         const sendButton = document.getElementById('sendButton');
@@ -372,7 +373,7 @@
                 }
             } catch (error) {
                 statusDiv.className = 'chat-status disconnected';
-                statusDiv.textContent = '✗ Server not running. Please start: python app.py';
+                statusDiv.textContent = '✗ Server not running. Trying to reconnect...';
             }
         }
 
