@@ -5,9 +5,12 @@ Cleaner, simpler implementation
 import os
 import sys
 import logging
+import json
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from dotenv import load_dotenv
+import requests
+from datetime import datetime
 
 # Add paths
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -34,6 +37,129 @@ CORS(app)
 # Initialize chatbot
 chatbot = None
 
+# BDStall chat message save API configuration
+SAVE_MESSAGE_API_URL = os.getenv(
+    'SAVE_MESSAGE_API_URL',
+    'https://www.bdstall.com/api/item/chatbot_save_message/'
+)
+SAVE_MESSAGE_API_KEY = os.getenv('SAVE_MESSAGE_API_KEY', 'mkh677ddd2sxxkkdjff')
+
+
+def _log_api_call(
+    api_name: str,
+    method: str,
+    url: str,
+    request_payload,
+    status_code: int,
+    duration_ms: int,
+    status: str,
+    response_preview: str = ""
+) -> None:
+    """Write outbound API call details to daily API log file."""
+    try:
+        logs_dir = os.path.join(PROJECT_ROOT, 'logs')
+        os.makedirs(logs_dir, exist_ok=True)
+        log_file = os.path.join(logs_dir, f"api_calls_{datetime.now().strftime('%Y-%m-%d')}.log")
+
+        entry = {
+            "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "api_name": api_name,
+            "method": method,
+            "url": url,
+            "request": request_payload,
+            "status_code": status_code,
+            "duration_ms": duration_ms,
+            "result": status,
+            "response_preview": response_preview[:400]
+        }
+
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+        logger.info(
+            "[API_LOG] %s %s %s status=%s result=%s duration_ms=%s",
+            api_name,
+            method,
+            url,
+            status_code,
+            status,
+            duration_ms
+        )
+    except Exception as e:
+        logger.warning("API log write failed: %s", e)
+
+
+def save_chat_message(user_id: str, sender_type: int, message: str) -> bool:
+    """Persist a single chat message to BDStall message history API."""
+    if not message:
+        return False
+
+    payload = {
+        "key": SAVE_MESSAGE_API_KEY,
+        "user_id": str(user_id),
+        "sender_type": int(sender_type),
+        "message": message
+    }
+
+    started = datetime.now()
+
+    try:
+        response = requests.post(SAVE_MESSAGE_API_URL, json=payload, timeout=10)
+        duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+
+        if 200 <= response.status_code < 300:
+            _log_api_call(
+                api_name="chatbot_save_message",
+                method="POST",
+                url=SAVE_MESSAGE_API_URL,
+                request_payload=payload,
+                status_code=response.status_code,
+                duration_ms=duration_ms,
+                status="PASS",
+                response_preview=response.text
+            )
+            return True
+
+        _log_api_call(
+            api_name="chatbot_save_message",
+            method="POST",
+            url=SAVE_MESSAGE_API_URL,
+            request_payload=payload,
+            status_code=response.status_code,
+            duration_ms=duration_ms,
+            status="FAIL",
+            response_preview=response.text
+        )
+
+        logger.warning(
+            "⚠️ Failed to save message (status=%s, sender_type=%s, user_id=%s): %s",
+            response.status_code,
+            sender_type,
+            user_id,
+            response.text
+        )
+        return False
+    except Exception as e:
+        duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+        _log_api_call(
+            api_name="chatbot_save_message",
+            method="POST",
+            url=SAVE_MESSAGE_API_URL,
+            request_payload=payload,
+            status_code=0,
+            duration_ms=duration_ms,
+            status="FAIL",
+            response_preview=str(e)
+        )
+
+        logger.warning(
+            "⚠️ Error saving message (sender_type=%s, user_id=%s): %s",
+            sender_type,
+            user_id,
+            e
+        )
+        return False
+
 
 @app.route('/', methods=['GET'])
 def index():
@@ -51,6 +177,8 @@ def index():
         },
         "endpoints": {
             "/chat": "POST - Send message",
+            "/agent/reply": "POST - Save manual human agent reply",
+            "/save-message": "POST - Save any message (sender_type: 1/2/3)",
             "/health": "GET - Health check",
             "/mode/:user_id": "GET - Get user mode",
             "/mode/:user_id/human": "POST - Switch to human",
@@ -84,7 +212,7 @@ def chat():
     }
     """
     try:
-        data = request.get_json()
+        data = request.get_json() or {}
         
         user_id = data.get('user_id', 'web_user')
         message = data.get('message', '')
@@ -96,8 +224,16 @@ def chat():
                 "mode": "ai"
             }), 400
         
+        # Save visitor message first (3 = Visitor)
+        save_chat_message(user_id=user_id, sender_type=3, message=message)
+
         # Process message through roadmap (with lazy initialization)
         result = get_chatbot().process_message(user_id, message)
+
+        # Save chatbot response (2 = Bot) when available
+        response_text = result.get('response')
+        if response_text:
+            save_chat_message(user_id=user_id, sender_type=2, message=response_text)
         
         return jsonify(result), 200
     
@@ -108,6 +244,83 @@ def chat():
             "error": str(e),
             "response": "দুঃখিত, কিছু সমস্যা হয়েছে।",
             "mode": "human"
+        }), 500
+
+
+@app.route('/agent/reply', methods=['POST'])
+def agent_reply():
+    """Save a manual human-agent message (1 = Human Agent)."""
+    try:
+        data = request.get_json() or {}
+        user_id = data.get('user_id')
+        message = data.get('message', '')
+
+        if not user_id or not message:
+            return jsonify({
+                "success": False,
+                "error": "user_id and message are required"
+            }), 400
+
+        saved = save_chat_message(user_id=user_id, sender_type=1, message=message)
+
+        return jsonify({
+            "success": saved,
+            "user_id": str(user_id),
+            "sender_type": 1,
+            "message": message
+        }), 200 if saved else 502
+
+    except Exception as e:
+        logger.error(f"❌ Agent reply save error: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/save-message', methods=['POST'])
+def save_message_endpoint():
+    """Save a message by sender type: 1=Human Agent, 2=Bot, 3=Visitor."""
+    try:
+        data = request.get_json() or {}
+        user_id = data.get('user_id')
+        message = data.get('message', '')
+        sender_type = data.get('sender_type')
+
+        if not user_id or not message or sender_type is None:
+            return jsonify({
+                "success": False,
+                "error": "user_id, sender_type and message are required"
+            }), 400
+
+        try:
+            sender_type = int(sender_type)
+        except (ValueError, TypeError):
+            return jsonify({
+                "success": False,
+                "error": "sender_type must be integer: 1, 2, or 3"
+            }), 400
+
+        if sender_type not in (1, 2, 3):
+            return jsonify({
+                "success": False,
+                "error": "sender_type must be one of: 1 (Human Agent), 2 (Bot), 3 (Visitor)"
+            }), 400
+
+        saved = save_chat_message(user_id=user_id, sender_type=sender_type, message=message)
+
+        return jsonify({
+            "success": saved,
+            "user_id": str(user_id),
+            "sender_type": sender_type,
+            "message": message
+        }), 200 if saved else 502
+
+    except Exception as e:
+        logger.error(f"❌ Save message endpoint error: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
         }), 500
 
 

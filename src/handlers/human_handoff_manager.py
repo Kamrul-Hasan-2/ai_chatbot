@@ -9,10 +9,12 @@ When AI confidence is low or doesn't understand:
 - Provides interface for human agents to respond
 """
 import logging
+import os
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from enum import Enum
 import json
+import requests
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -121,6 +123,11 @@ class HumanHandoffManager:
         self.confidence_threshold = confidence_threshold
         self.max_failed_attempts = max_failed_attempts
         self.session_timeout_minutes = session_timeout_minutes
+        self.assign_agent_api_url = os.getenv(
+            'ASSIGN_AGENT_API_URL',
+            'https://www.bdstall.com/api/item/chatbot_assign_agent/'
+        )
+        self.assign_agent_api_key = os.getenv('ASSIGN_AGENT_API_KEY', 'mkh677ddd2sxxkkdjff')
         
         # Track active sessions
         self.sessions: Dict[str, ConversationSession] = {}
@@ -260,6 +267,32 @@ class HumanHandoffManager:
         """Activate human mode for a conversation"""
         session = self.get_or_create_session(user_id)
         session.activate_human_mode()
+        self._notify_assign_agent(user_id)
+
+    def _notify_assign_agent(self, user_id: str) -> bool:
+        """Notify BDStall that this user is assigned to a human agent."""
+        payload = {
+            "key": self.assign_agent_api_key,
+            "user_id": str(user_id)
+        }
+
+        try:
+            response = requests.post(self.assign_agent_api_url, json=payload, timeout=10)
+
+            if 200 <= response.status_code < 300:
+                logger.info("✅ assign-agent API called for user %s", user_id)
+                return True
+
+            logger.warning(
+                "⚠️ assign-agent API failed (status=%s, user_id=%s): %s",
+                response.status_code,
+                user_id,
+                response.text
+            )
+            return False
+        except Exception as e:
+            logger.warning("⚠️ assign-agent API call error for user %s: %s", user_id, e)
+            return False
     
     def return_to_ai(self, user_id: str):
         """Return conversation to AI mode"""

@@ -17,6 +17,7 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 import json
 from enum import Enum
+import requests
 
 # Add paths
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -29,6 +30,51 @@ except ImportError:
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def _log_api_call(
+    api_name: str,
+    method: str,
+    url: str,
+    request_payload,
+    status_code: int,
+    duration_ms: int,
+    status: str,
+    response_preview: str = ""
+) -> None:
+    """Write outbound API call details to daily API log file."""
+    try:
+        project_root = os.path.join(os.path.dirname(__file__), '..', '..')
+        logs_dir = os.path.join(project_root, 'logs')
+        os.makedirs(logs_dir, exist_ok=True)
+        log_file = os.path.join(logs_dir, f"api_calls_{datetime.now().strftime('%Y-%m-%d')}.log")
+
+        entry = {
+            "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "api_name": api_name,
+            "method": method,
+            "url": url,
+            "request": request_payload,
+            "status_code": status_code,
+            "duration_ms": duration_ms,
+            "result": status,
+            "response_preview": response_preview[:400]
+        }
+
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+        logger.info(
+            "[API_LOG] %s %s %s status=%s result=%s duration_ms=%s",
+            api_name,
+            method,
+            url,
+            status_code,
+            status,
+            duration_ms
+        )
+    except Exception as e:
+        logger.warning("API log write failed: %s", e)
 
 
 class ChatMode(Enum):
@@ -59,6 +105,11 @@ class SimpleChatbot:
         # BDStall API Configuration
         self.api_url = "https://www.bdstall.com/api/item/ai_search/"
         self.api_key = "mkh677ddd2sxxkkdjff"
+        self.assign_agent_api_url = os.getenv(
+            'ASSIGN_AGENT_API_URL',
+            'https://www.bdstall.com/api/item/chatbot_assign_agent/'
+        )
+        self.assign_agent_api_key = os.getenv('ASSIGN_AGENT_API_KEY', 'mkh677ddd2sxxkkdjff')
         
         # Load database.csv for FAQ responses
         self.database = self._load_database()
@@ -209,6 +260,7 @@ class SimpleChatbot:
             if not intent_result['success']:
                 # If Groq fails, switch to HUMAN mode
                 self.user_modes[user_id] = ChatMode.HUMAN
+                self._notify_assign_agent(user_id)
                 return self._create_response(
                     user_id=user_id,
                     message=message,
@@ -251,6 +303,7 @@ class SimpleChatbot:
                 if intent not in safe_intents:
                     logger.warning("⚠️ Irrelevant message detected - switching to HUMAN mode")
                     self.user_modes[user_id] = ChatMode.HUMAN
+                    self._notify_assign_agent(user_id)
                     return self._create_response(
                         user_id=user_id,
                         message=message,
@@ -269,6 +322,7 @@ class SimpleChatbot:
                 if search_result['products_found'] == 0:
                     # No products found, switch to HUMAN mode
                     self.user_modes[user_id] = ChatMode.HUMAN
+                    self._notify_assign_agent(user_id)
                     return self._create_response(
                         user_id=user_id,
                         message=message,
@@ -291,6 +345,7 @@ class SimpleChatbot:
                 if not final_response['success']:
                     # AI formatting failed, switch to HUMAN
                     self.user_modes[user_id] = ChatMode.HUMAN
+                    self._notify_assign_agent(user_id)
                     return self._create_response(
                         user_id=user_id,
                         message=message,
@@ -341,6 +396,7 @@ class SimpleChatbot:
                 
                 if not ai_response['success']:
                     self.user_modes[user_id] = ChatMode.HUMAN
+                    self._notify_assign_agent(user_id)
                     return self._create_response(
                         user_id=user_id,
                         message=message,
@@ -367,6 +423,7 @@ class SimpleChatbot:
             logger.error(f"❌ Error: {e}")
             # On error, switch to HUMAN mode
             self.user_modes[user_id] = ChatMode.HUMAN
+            self._notify_assign_agent(user_id)
             
             return self._create_response(
                 user_id=user_id,
@@ -464,13 +521,29 @@ Examples:
             logger.info(f"🔍 Searching BDStall API with term: {search_term}")
             
             # Call BDStall API
+            params = {
+                'term': search_term,
+                'key': self.api_key
+            }
+
+            started = datetime.now()
+
             response = requests.get(
                 self.api_url,
-                params={
-                    'term': search_term,
-                    'key': self.api_key
-                },
+                params=params,
                 timeout=10
+            )
+            duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+
+            _log_api_call(
+                api_name="ai_search",
+                method="GET",
+                url=self.api_url,
+                request_payload=params,
+                status_code=response.status_code,
+                duration_ms=duration_ms,
+                status="PASS" if response.status_code == 200 else "FAIL",
+                response_preview=response.text
             )
             
             if response.status_code != 200:
@@ -583,6 +656,16 @@ Examples:
             }
         
         except Exception as e:
+            _log_api_call(
+                api_name="ai_search",
+                method="GET",
+                url=self.api_url,
+                request_payload={"term": keywords, "key": self.api_key},
+                status_code=0,
+                duration_ms=0,
+                status="FAIL",
+                response_preview=str(e)
+            )
             logger.error(f"❌ BDStall API search failed: {e}")
             return {
                 'products_found': 0,
@@ -690,7 +773,56 @@ Examples:
     def switch_to_human(self, user_id: str):
         """Manually switch user to HUMAN mode"""
         self.user_modes[user_id] = ChatMode.HUMAN
+        self._notify_assign_agent(user_id)
         logger.info(f"👤 User {user_id} switched to HUMAN mode")
+
+    def _notify_assign_agent(self, user_id: str) -> bool:
+        """Notify BDStall that a user has been assigned to a human agent."""
+        payload = {
+            "key": self.assign_agent_api_key,
+            "user_id": str(user_id)
+        }
+        started = datetime.now()
+
+        try:
+            response = requests.post(self.assign_agent_api_url, json=payload, timeout=10)
+            duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+            status = "PASS" if 200 <= response.status_code < 300 else "FAIL"
+
+            _log_api_call(
+                api_name="chatbot_assign_agent",
+                method="POST",
+                url=self.assign_agent_api_url,
+                request_payload=payload,
+                status_code=response.status_code,
+                duration_ms=duration_ms,
+                status=status,
+                response_preview=response.text
+            )
+
+            if status == "FAIL":
+                logger.warning(
+                    "⚠️ Failed to assign human agent (status=%s, user_id=%s): %s",
+                    response.status_code,
+                    user_id,
+                    response.text
+                )
+
+            return status == "PASS"
+        except Exception as e:
+            duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+            _log_api_call(
+                api_name="chatbot_assign_agent",
+                method="POST",
+                url=self.assign_agent_api_url,
+                request_payload=payload,
+                status_code=0,
+                duration_ms=duration_ms,
+                status="FAIL",
+                response_preview=str(e)
+            )
+            logger.warning("⚠️ assign-agent API call failed for user %s: %s", user_id, e)
+            return False
     
     def switch_to_ai(self, user_id: str):
         """Manually switch user back to AI mode"""

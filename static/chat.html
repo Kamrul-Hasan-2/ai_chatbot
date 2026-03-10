@@ -481,8 +481,26 @@
         }
 
         // Initialize chat with welcome message
-        function initializeChat() {
-            addMessage('আসসালামু আলাইকুম! আমি কিভাবে আপনাকে সাহায্য করতে পারি?\n\nHello! How can I help you?', false);
+        async function initializeChat() {
+            const welcomeText = 'আসসালামু আলাইকুম! আমি কিভাবে আপনাকে সাহায্য করতে পারি?\n\nHello! How can I help you?';
+            addMessage(welcomeText, false);
+
+            // Save frontend-initialized welcome message as Bot (2)
+            try {
+                await fetch(`${API_URL}/save-message`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        user_id: userId,
+                        sender_type: 2,
+                        message: welcomeText
+                    })
+                });
+            } catch (error) {
+                console.error('Welcome message save failed:', error);
+            }
         }
 
         // Initialize on page load
