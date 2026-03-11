@@ -16,6 +16,7 @@ import logging
 from typing import Dict, Any, Optional
 from datetime import datetime
 import json
+import re
 from enum import Enum
 import requests
 
@@ -101,10 +102,18 @@ class SimpleChatbot:
         
         # Track user modes (AI or HUMAN)
         self.user_modes: Dict[str, ChatMode] = {}
+
+        # Keep latest shown product list per user for follow-up selection (1-5)
+        self.user_product_context: Dict[str, list] = {}
+
+        # Track order form context and partially submitted order fields per user.
+        self.user_order_context: Dict[str, bool] = {}
+        self.user_order_draft: Dict[str, Dict[str, str]] = {}
         
         # BDStall API Configuration
         self.api_url = "https://www.bdstall.com/api/item/ai_search/"
         self.api_key = "mkh677ddd2sxxkkdjff"
+        self.delivery_intent_api_url = "https://www.bdstall.com/api/item/ai_template/"
         self.assign_agent_api_url = os.getenv(
             'ASSIGN_AGENT_API_URL',
             'https://www.bdstall.com/api/item/chatbot_assign_agent/'
@@ -252,6 +261,79 @@ class SimpleChatbot:
             
             logger.info(f"📨 Processing message from {user_id} (Mode: {current_mode.value})")
             logger.info(f"💬 Message: {message}")
+
+            # Handle order detail submission before any other reasoning.
+            incoming_order_fields = self._extract_order_detail_fields(message)
+            order_context_active = self.user_order_context.get(user_id, False)
+
+            if incoming_order_fields or order_context_active:
+                draft = dict(self.user_order_draft.get(user_id, {}))
+                draft.update(incoming_order_fields)
+
+                required_keys = ['name', 'phone_number', 'address', 'product_name', 'quantity']
+                missing = [k for k in required_keys if not draft.get(k)]
+
+                if not missing:
+                    if not re.search(r'\d{10,15}', draft['phone_number']):
+                        self.user_order_context[user_id] = True
+                        self.user_order_draft[user_id] = draft
+                        return self._create_response(
+                            user_id=user_id,
+                            message=message,
+                            response="স্যার, Phone Number টি সঠিক ফরম্যাটে দিন (১০-১৫ ডিজিট)।",
+                            mode=ChatMode.AI,
+                            intent='order_details_incomplete',
+                            products=None,
+                            processing_time=(datetime.now() - start_time).total_seconds()
+                        )
+
+                    # Complete order details found - move to human handoff.
+                    self.user_modes[user_id] = ChatMode.HUMAN
+                    self.user_order_context[user_id] = False
+                    self.user_order_draft.pop(user_id, None)
+                    self._notify_assign_agent(user_id)
+                    return self._create_response(
+                        user_id=user_id,
+                        message=message,
+                        response="ধন্যবাদ স্যার, আমাদের অন্য একজন প্রতিনিধি এসে কথা বলবে।",
+                        mode=ChatMode.HUMAN,
+                        intent='order_details_submission',
+                        products=None,
+                        processing_time=(datetime.now() - start_time).total_seconds()
+                    )
+
+                # If user is filling order form, ask only for missing fields instead of re-running search.
+                if incoming_order_fields or order_context_active:
+                    self.user_order_context[user_id] = True
+                    self.user_order_draft[user_id] = draft
+                    missing_prompt = self._build_missing_order_fields_prompt(missing)
+                    return self._create_response(
+                        user_id=user_id,
+                        message=message,
+                        response=missing_prompt,
+                        mode=ChatMode.AI,
+                        intent='order_details_incomplete',
+                        products=None,
+                        processing_time=(datetime.now() - start_time).total_seconds()
+                    )
+
+            # Handle quick follow-up selection like "4", "5", "product 4" before intent detection.
+            selected_index = self._extract_product_selection(message)
+            user_products = self.user_product_context.get(user_id, [])
+            if selected_index and user_products and len(user_products) >= selected_index:
+                selected_product = user_products[selected_index - 1]
+                selection_response = self._format_selected_product_response(selected_product, selected_index)
+
+                self.user_modes[user_id] = ChatMode.AI
+                return self._create_response(
+                    user_id=user_id,
+                    message=message,
+                    response=selection_response,
+                    mode=ChatMode.AI,
+                    intent='product_selection',
+                    products=user_products,
+                    processing_time=(datetime.now() - start_time).total_seconds()
+                )
             
             # STEP 1: Message → Groq API (Intent Detection)
             logger.info("🚀 STEP 1: Sending to Groq API for intent detection...")
@@ -276,6 +358,36 @@ class SimpleChatbot:
             
             logger.info(f"✅ Intent: {intent}")
             logger.info(f"🔍 Search Keywords: {search_keywords}")
+
+            # Ordering intent should always return the standard order-info template.
+            if intent == 'ordering':
+                self.user_order_context[user_id] = True
+                self.user_order_draft[user_id] = {}
+                self.user_modes[user_id] = ChatMode.AI
+                return self._create_response(
+                    user_id=user_id,
+                    message=message,
+                    response=self._get_order_info_template(),
+                    mode=ChatMode.AI,
+                    intent=intent,
+                    products=None,
+                    processing_time=(datetime.now() - start_time).total_seconds()
+                )
+
+            # Delivery intent should call template API first.
+            if intent == 'delivery':
+                delivery_response = self._fetch_delivery_intent_response()
+                if delivery_response:
+                    self.user_modes[user_id] = ChatMode.AI
+                    return self._create_response(
+                        user_id=user_id,
+                        message=message,
+                        response=delivery_response,
+                        mode=ChatMode.AI,
+                        intent=intent,
+                        products=None,
+                        processing_time=(datetime.now() - start_time).total_seconds()
+                    )
             
             # Safe intents that should NOT trigger human handoff
             safe_intents = ['greeting', 'goodbye', 'thank_you', 'thanks', 'faq', 'general', 'question', 'ordering', 'delivery', 'support', 'warranty', 'availability']
@@ -335,6 +447,9 @@ class SimpleChatbot:
                 
                 database_message = search_result['database_message']
                 products = search_result['products']
+
+                # Save latest result list so user can select 1-5 in follow-up message.
+                self.user_product_context[user_id] = products[:5]
                 
                 logger.info(f"✅ Found {len(products)} products")
                 
@@ -672,6 +787,82 @@ Examples:
                 'products': [],
                 'database_message': ''
             }
+
+    def _fetch_delivery_intent_response(self) -> Optional[str]:
+        """Fetch delivery template text from BDStall intent API."""
+        params = {
+            'intent': 'delivery',
+            'key': self.api_key
+        }
+        started = datetime.now()
+
+        try:
+            response = requests.get(
+                self.delivery_intent_api_url,
+                params=params,
+                timeout=10
+            )
+            duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+            status = "PASS" if response.status_code == 200 else "FAIL"
+
+            _log_api_call(
+                api_name="ai_template_delivery",
+                method="GET",
+                url=self.delivery_intent_api_url,
+                request_payload=params,
+                status_code=response.status_code,
+                duration_ms=duration_ms,
+                status=status,
+                response_preview=response.text
+            )
+
+            if status == "FAIL":
+                logger.warning(
+                    "⚠️ Delivery intent API failed with status %s",
+                    response.status_code
+                )
+                return None
+
+            data = response.json()
+
+            if isinstance(data, str):
+                return data.strip() or None
+
+            if isinstance(data, dict):
+                for key in [
+                    'response',
+                    'message',
+                    'template',
+                    'text',
+                    'content',
+                    'data'
+                ]:
+                    value = data.get(key)
+                    if isinstance(value, str) and value.strip():
+                        return value.strip()
+
+                if len(data) == 1:
+                    only_value = next(iter(data.values()))
+                    if isinstance(only_value, str) and only_value.strip():
+                        return only_value.strip()
+
+            logger.warning("⚠️ Delivery intent API returned unexpected payload format")
+            return None
+
+        except Exception as e:
+            duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+            _log_api_call(
+                api_name="ai_template_delivery",
+                method="GET",
+                url=self.delivery_intent_api_url,
+                request_payload=params,
+                status_code=0,
+                duration_ms=duration_ms,
+                status="FAIL",
+                response_preview=str(e)
+            )
+            logger.warning("⚠️ Delivery intent API call failed: %s", e)
+            return None
     
     def _step4_ai_format(self, original_message: str, database_message: Optional[str], products: Optional[list]) -> Dict[str, Any]:
         """
@@ -739,6 +930,158 @@ Examples:
         except Exception as e:
             logger.error(f"❌ AI formatting failed: {e}")
             return {'success': False, 'error': str(e)}
+
+    def _get_order_info_template(self) -> str:
+        """Standard template to collect order details from user."""
+        return (
+            "Sir, আপনি যদি প্রোডাক্টটি অর্ডার করতে চান, তাহলে দয়া করে নিচের তথ্যগুলো দিন:\n\n"
+            "Name:\n"
+            "Phone Number:\n"
+            "Address:\n"
+            "Product Name:\n"
+            "Quantity:\n\n"
+            "এই তথ্যগুলো দিলে আমরা আপনার অর্ডারটি কনফার্ম করে দেব।"
+        )
+
+    def _extract_product_selection(self, message: str) -> Optional[int]:
+        """Extract product selection number (1-5) from short follow-up messages."""
+        normalized = str(message or "").strip()
+        if not normalized:
+            return None
+
+        # Do not treat order-form style text as a product-selection message.
+        if self._extract_order_detail_fields(normalized):
+            return None
+
+        # Support Bangla numerals in user input.
+        bangla_to_ascii = str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")
+        normalized = normalized.translate(bangla_to_ascii)
+        normalized_lower = normalized.lower()
+
+        # Direct single-number selection, e.g. "4" or "5".
+        direct_match = re.fullmatch(r"\s*([1-5])\s*", normalized_lower)
+        if direct_match:
+            return int(direct_match.group(1))
+
+        number_matches = re.findall(r"\b([1-5])\b", normalized_lower)
+        if len(number_matches) != 1:
+            return None
+
+        # Require selection cues for longer messages to avoid false positives.
+        selection_cues = [
+            'number', 'no', 'option', 'choose', 'select', 'selected', 'pick',
+            'নম্বর', 'নাম্বার', 'পছন্দ', 'নিবো', 'নেবো', 'নিচ্ছি', 'নিলাম'
+        ]
+        if len(normalized_lower.split()) <= 3 or any(cue in normalized_lower for cue in selection_cues):
+            return int(number_matches[0])
+
+        return None
+
+    def _format_selected_product_response(self, product: Dict[str, Any], selected_index: int) -> str:
+        """Build a conversational response after user selects a product by number."""
+        title = product.get('title', 'N/A')
+        price = product.get('price', 'N/A')
+        description = product.get('description', '')
+        url = product.get('url', '')
+
+        response_text = f"দারুণ পছন্দ স্যার। আপনি {selected_index} নম্বর প্রোডাক্টটি নির্বাচন করেছেন।\n\n"
+        response_text += f"{selected_index}. {title}\n"
+        response_text += f"💰 মূল্য: {price}\n"
+
+        if description:
+            response_text += f"📝 বিবরণ: {description}\n"
+
+        if url:
+            response_text += f"🔗 লিংক: {url}\n"
+
+        response_text += "\nআপনি চাইলে আমি এখন এই প্রোডাক্টটি অর্ডার করার ধাপগুলোও বলে দিতে পারি।"
+        return response_text
+
+    def _extract_order_detail_fields(self, message: str) -> Dict[str, str]:
+        """Extract any order-detail fields from a message.
+
+        Supports compact input where fields may be adjacent, e.g.
+        'Phone Number: 017...Address: Uttara'.
+        Supports separators: ':', ';', '=' and '-'.
+        """
+        text = str(message or "").strip()
+        if not text:
+            return {}
+
+        # Keep longer labels first so "product name" is matched before "name".
+        label_to_key = [
+            (r'product\s*name', 'product_name'),
+            (r'phone\s*number', 'phone_number'),
+            (r'quantity', 'quantity'),
+            (r'address', 'address'),
+            (r'mobile', 'phone_number'),
+            (r'phone', 'phone_number'),
+            (r'qty', 'quantity'),
+            (r'পণ্যের\s*নাম', 'product_name'),
+            (r'প্রোডাক্ট', 'product_name'),
+            (r'ঠিকানা', 'address'),
+            (r'নাম্বার', 'phone_number'),
+            (r'নম্বর', 'phone_number'),
+            (r'পরিমাণ', 'quantity'),
+            (r'name', 'name')
+        ]
+
+        labels_regex = "|".join(label for label, _ in label_to_key)
+        pattern = re.compile(rf'(?i)(?P<label>{labels_regex})\s*[:;=\-]\s*', re.DOTALL)
+
+        matches = list(pattern.finditer(text))
+        if not matches:
+            return {}
+
+        extracted: Dict[str, str] = {}
+        for idx, match in enumerate(matches):
+            raw_label = match.group('label').strip().lower()
+            start = match.end()
+            end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+            value = re.sub(r'\s+', ' ', text[start:end]).strip()
+            if not value:
+                continue
+
+            mapped_key = None
+            for label_regex, key in label_to_key:
+                if re.fullmatch(label_regex, raw_label, flags=re.IGNORECASE):
+                    mapped_key = key
+                    break
+
+            if mapped_key and mapped_key not in extracted:
+                extracted[mapped_key] = value
+
+        return extracted
+
+    def _extract_order_details(self, message: str) -> Optional[Dict[str, str]]:
+        """Extract complete order details from a single message."""
+        extracted = self._extract_order_detail_fields(message)
+
+        required_keys = ['name', 'phone_number', 'address', 'product_name', 'quantity']
+        if not all(k in extracted and extracted[k] for k in required_keys):
+            return None
+
+        if not re.search(r'\d{10,15}', extracted['phone_number']):
+            return None
+
+        return extracted
+
+    def _build_missing_order_fields_prompt(self, missing_keys: list) -> str:
+        """Return a clear prompt with only missing order fields."""
+        labels = {
+            'name': 'Name',
+            'phone_number': 'Phone Number',
+            'address': 'Address',
+            'product_name': 'Product Name',
+            'quantity': 'Quantity'
+        }
+        missing_lines = "\n".join(f"{labels[k]}:" for k in missing_keys if k in labels)
+
+        return (
+            "স্যার, অর্ডার কনফার্ম করার জন্য নিচের বাকি তথ্যগুলো দিন:\n\n"
+            f"{missing_lines}\n\n"
+            "সব তথ্য দিলে আমরা আপনার অর্ডারটি কনফার্ম করে দেব।"
+        )
     
     def _create_response(
         self,
@@ -764,7 +1107,7 @@ Examples:
             "intent": intent,
             "search_keywords": search_keywords,
             "products_found": len(products) if products else 0,
-            "products": products[:3] if products else None,  # Return top 3
+            "products": products[:5] if products else None,  # Keep top 5 for follow-up selection
             "processing_time_seconds": round(processing_time, 2),
             "timestamp": datetime.now().isoformat(),
             "error": error
