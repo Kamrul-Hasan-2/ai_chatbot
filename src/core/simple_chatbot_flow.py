@@ -84,6 +84,10 @@ class ChatMode(Enum):
     HUMAN = "human"
 
 
+AI_ACTIVE_STATUS = "AI Active"
+HUMAN_SUPPORT_REQUIRED_STATUS = "Human Support Required"
+
+
 class SimpleChatbot:
     """
     Simple Chatbot following your exact roadmap
@@ -102,9 +106,13 @@ class SimpleChatbot:
         
         # Track user modes (AI or HUMAN)
         self.user_modes: Dict[str, ChatMode] = {}
+        self.user_conversation_status: Dict[str, str] = {}
 
         # Keep latest shown product list per user for follow-up selection (1-5)
         self.user_product_context: Dict[str, list] = {}
+
+        # Track the latest selected product so short confirmations can trigger order intent API.
+        self.user_selected_product: Dict[str, Dict[str, Any]] = {}
 
         # Track order form context and partially submitted order fields per user.
         self.user_order_context: Dict[str, bool] = {}
@@ -114,6 +122,7 @@ class SimpleChatbot:
         self.api_url = "https://www.bdstall.com/api/item/ai_search/"
         self.api_key = "mkh677ddd2sxxkkdjff"
         self.delivery_intent_api_url = "https://www.bdstall.com/api/item/ai_template/"
+        self.order_intent_api_url = "https://www.bdstall.com/api/item/ai_template/"
         self.assign_agent_api_url = os.getenv(
             'ASSIGN_AGENT_API_URL',
             'https://www.bdstall.com/api/item/chatbot_assign_agent/'
@@ -258,9 +267,41 @@ class SimpleChatbot:
             
             # Get current mode for this user
             current_mode = self.user_modes.get(user_id, ChatMode.AI)
+            current_status = self.user_conversation_status.get(user_id, AI_ACTIVE_STATUS)
             
             logger.info(f"📨 Processing message from {user_id} (Mode: {current_mode.value})")
             logger.info(f"💬 Message: {message}")
+
+            # Once handed over, stop automated reasoning until a human resets the conversation.
+            if current_mode == ChatMode.HUMAN and current_status == HUMAN_SUPPORT_REQUIRED_STATUS:
+                return self._create_response(
+                    user_id=user_id,
+                    message=message,
+                    response="",
+                    mode=ChatMode.HUMAN,
+                    intent='human_support_required',
+                    products=None,
+                    processing_time=(datetime.now() - start_time).total_seconds(),
+                    conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
+                )
+
+            # If user confirms after selecting a specific product, call order template API with listing ID.
+            selected_product = self.user_selected_product.get(user_id)
+            if selected_product and self._is_order_confirmation_message(message):
+                listing_id = self._extract_listing_id_from_url(selected_product.get('url', ''))
+                if listing_id:
+                    order_template = self._fetch_order_intent_response(listing_id)
+                    if order_template:
+                        self.user_modes[user_id] = ChatMode.AI
+                        return self._create_response(
+                            user_id=user_id,
+                            message=message,
+                            response=order_template,
+                            mode=ChatMode.AI,
+                            intent='order',
+                            products=None,
+                            processing_time=(datetime.now() - start_time).total_seconds()
+                        )
 
             # Handle order detail submission before any other reasoning.
             incoming_order_fields = self._extract_order_detail_fields(message)
@@ -288,18 +329,14 @@ class SimpleChatbot:
                         )
 
                     # Complete order details found - move to human handoff.
-                    self.user_modes[user_id] = ChatMode.HUMAN
                     self.user_order_context[user_id] = False
                     self.user_order_draft.pop(user_id, None)
-                    self._notify_assign_agent(user_id)
-                    return self._create_response(
+                    return self._handoff_to_human(
                         user_id=user_id,
                         message=message,
-                        response="ধন্যবাদ স্যার, আমাদের অন্য একজন প্রতিনিধি এসে কথা বলবে।",
-                        mode=ChatMode.HUMAN,
+                        start_time=start_time,
                         intent='order_details_submission',
-                        products=None,
-                        processing_time=(datetime.now() - start_time).total_seconds()
+                        response_text="ধন্যবাদ স্যার, আমাদের অন্য একজন প্রতিনিধি এসে কথা বলবে।"
                     )
 
                 # If user is filling order form, ask only for missing fields instead of re-running search.
@@ -323,6 +360,7 @@ class SimpleChatbot:
             if selected_index and user_products and len(user_products) >= selected_index:
                 selected_product = user_products[selected_index - 1]
                 selection_response = self._format_selected_product_response(selected_product, selected_index)
+                self.user_selected_product[user_id] = selected_product
 
                 self.user_modes[user_id] = ChatMode.AI
                 return self._create_response(
@@ -341,16 +379,11 @@ class SimpleChatbot:
             
             if not intent_result['success']:
                 # If Groq fails, switch to HUMAN mode
-                self.user_modes[user_id] = ChatMode.HUMAN
-                self._notify_assign_agent(user_id)
-                return self._create_response(
+                return self._handoff_to_human(
                     user_id=user_id,
                     message=message,
-                    response="স্যার, এই বিষয়ে আমাদের আরেকজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন",
-                    mode=ChatMode.HUMAN,
-                    intent=None,
-                    products=None,
-                    processing_time=(datetime.now() - start_time).total_seconds()
+                    start_time=start_time,
+                    intent='system_fallback'
                 )
             
             intent = intent_result['intent']
@@ -414,16 +447,12 @@ class SimpleChatbot:
                 # If it's a safe intent (like greeting), don't switch to human
                 if intent not in safe_intents:
                     logger.warning("⚠️ Irrelevant message detected - switching to HUMAN mode")
-                    self.user_modes[user_id] = ChatMode.HUMAN
-                    self._notify_assign_agent(user_id)
-                    return self._create_response(
+                    return self._handoff_to_human(
                         user_id=user_id,
                         message=message,
-                        response="স্যার, এই বিষয়ে আমাদের আরেকজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন",
-                        mode=ChatMode.HUMAN,
+                        start_time=start_time,
                         intent=intent,
-                        products=None,
-                        processing_time=(datetime.now() - start_time).total_seconds()
+                        response_text=self._get_irrelevant_handoff_message()
                     )
             
             # STEP 2 & 3: Search API → Database Format
@@ -433,16 +462,11 @@ class SimpleChatbot:
                 
                 if search_result['products_found'] == 0:
                     # No products found, switch to HUMAN mode
-                    self.user_modes[user_id] = ChatMode.HUMAN
-                    self._notify_assign_agent(user_id)
-                    return self._create_response(
+                    return self._handoff_to_human(
                         user_id=user_id,
                         message=message,
-                        response="স্যার, এই বিষয়ে আমাদের আরেকজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন",
-                        mode=ChatMode.HUMAN,
-                        intent=intent,
-                        products=None,
-                        processing_time=(datetime.now() - start_time).total_seconds()
+                        start_time=start_time,
+                        intent=intent
                     )
                 
                 database_message = search_result['database_message']
@@ -459,16 +483,12 @@ class SimpleChatbot:
                 
                 if not final_response['success']:
                     # AI formatting failed, switch to HUMAN
-                    self.user_modes[user_id] = ChatMode.HUMAN
-                    self._notify_assign_agent(user_id)
-                    return self._create_response(
+                    return self._handoff_to_human(
                         user_id=user_id,
                         message=message,
-                        response="স্যার, এই বিষয়ে আমাদের আরেকজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন",
-                        mode=ChatMode.HUMAN,
+                        start_time=start_time,
                         intent=intent,
-                        products=products,
-                        processing_time=(datetime.now() - start_time).total_seconds()
+                        products=products
                     )
                 
                 # Success! Keep in AI mode
@@ -510,16 +530,11 @@ class SimpleChatbot:
                 ai_response = self._step4_ai_format(message, None, None)
                 
                 if not ai_response['success']:
-                    self.user_modes[user_id] = ChatMode.HUMAN
-                    self._notify_assign_agent(user_id)
-                    return self._create_response(
+                    return self._handoff_to_human(
                         user_id=user_id,
                         message=message,
-                        response="স্যার, এই বিষয়ে আমাদের আরেকজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন",
-                        mode=ChatMode.HUMAN,
-                        intent=intent,
-                        products=None,
-                        processing_time=(datetime.now() - start_time).total_seconds()
+                        start_time=start_time,
+                        intent=intent
                     )
                 
                 self.user_modes[user_id] = ChatMode.AI
@@ -537,17 +552,11 @@ class SimpleChatbot:
         except Exception as e:
             logger.error(f"❌ Error: {e}")
             # On error, switch to HUMAN mode
-            self.user_modes[user_id] = ChatMode.HUMAN
-            self._notify_assign_agent(user_id)
-            
-            return self._create_response(
+            return self._handoff_to_human(
                 user_id=user_id,
                 message=message,
-                response="স্যার, এই বিষয়ে আমাদের আরেকজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন",
-                mode=ChatMode.HUMAN,
-                intent=None,
-                products=None,
-                processing_time=0,
+                start_time=start_time if 'start_time' in locals() else datetime.now(),
+                intent='system_error',
                 error=str(e)
             )
     
@@ -863,6 +872,84 @@ Examples:
             )
             logger.warning("⚠️ Delivery intent API call failed: %s", e)
             return None
+
+    def _fetch_order_intent_response(self, listing_id: str) -> Optional[str]:
+        """Fetch order template text from BDStall intent API using selected product listing ID."""
+        params = {
+            'intent': 'order',
+            'id': listing_id,
+            'key': self.api_key
+        }
+        started = datetime.now()
+
+        try:
+            response = requests.get(
+                self.order_intent_api_url,
+                params=params,
+                timeout=10
+            )
+            duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+            status = "PASS" if response.status_code == 200 else "FAIL"
+
+            _log_api_call(
+                api_name="ai_template_order",
+                method="GET",
+                url=self.order_intent_api_url,
+                request_payload=params,
+                status_code=response.status_code,
+                duration_ms=duration_ms,
+                status=status,
+                response_preview=response.text
+            )
+
+            if status == "FAIL":
+                logger.warning(
+                    "⚠️ Order intent API failed with status %s for listing_id=%s",
+                    response.status_code,
+                    listing_id
+                )
+                return None
+
+            data = response.json()
+
+            if isinstance(data, str):
+                return data.strip() or None
+
+            if isinstance(data, dict):
+                for key in [
+                    'response',
+                    'message',
+                    'template',
+                    'text',
+                    'content',
+                    'data'
+                ]:
+                    value = data.get(key)
+                    if isinstance(value, str) and value.strip():
+                        return value.strip()
+
+                if len(data) == 1:
+                    only_value = next(iter(data.values()))
+                    if isinstance(only_value, str) and only_value.strip():
+                        return only_value.strip()
+
+            logger.warning("⚠️ Order intent API returned unexpected payload format")
+            return None
+
+        except Exception as e:
+            duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+            _log_api_call(
+                api_name="ai_template_order",
+                method="GET",
+                url=self.order_intent_api_url,
+                request_payload=params,
+                status_code=0,
+                duration_ms=duration_ms,
+                status="FAIL",
+                response_preview=str(e)
+            )
+            logger.warning("⚠️ Order intent API call failed: %s", e)
+            return None
     
     def _step4_ai_format(self, original_message: str, database_message: Optional[str], products: Optional[list]) -> Dict[str, Any]:
         """
@@ -943,6 +1030,42 @@ Examples:
             "এই তথ্যগুলো দিলে আমরা আপনার অর্ডারটি কনফার্ম করে দেব।"
         )
 
+    def _get_irrelevant_handoff_message(self) -> str:
+        """Bangla handoff message for irrelevant or out-of-scope customer queries."""
+        return (
+            "ধন্যবাদ আপনার মেসেজের জন্য। মনে হচ্ছে আপনার বিষয়টি আমাদের সাপোর্ট টিম সরাসরি দেখলে ভালো হবে। "
+            "অনুগ্রহ করে কিছুক্ষণ অপেক্ষা করুন, আমাদের একজন প্রতিনিধি খুব শীঘ্রই আপনাকে সহায়তা করবেন।"
+        )
+
+    def _handoff_to_human(
+        self,
+        user_id: str,
+        message: str,
+        start_time: datetime,
+        intent: Optional[str],
+        products: Optional[list] = None,
+        response_text: Optional[str] = None,
+        error: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Switch a conversation to human support and return standardized response."""
+        self.user_modes[user_id] = ChatMode.HUMAN
+        self.user_conversation_status[user_id] = HUMAN_SUPPORT_REQUIRED_STATUS
+        self.user_order_context[user_id] = False
+        self.user_order_draft.pop(user_id, None)
+        self._notify_assign_agent(user_id)
+
+        return self._create_response(
+            user_id=user_id,
+            message=message,
+            response=response_text or "স্যার, এই বিষয়ে আমাদের আরেকজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন",
+            mode=ChatMode.HUMAN,
+            intent=intent,
+            products=products,
+            processing_time=(datetime.now() - start_time).total_seconds(),
+            error=error,
+            conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
+        )
+
     def _extract_product_selection(self, message: str) -> Optional[int]:
         """Extract product selection number (1-5) from short follow-up messages."""
         normalized = str(message or "").strip()
@@ -974,6 +1097,51 @@ Examples:
         ]
         if len(normalized_lower.split()) <= 3 or any(cue in normalized_lower for cue in selection_cues):
             return int(number_matches[0])
+
+        return None
+
+    def _is_order_confirmation_message(self, message: str) -> bool:
+        """Detect short confirmation replies after product selection."""
+        text = str(message or "").strip().lower()
+        if not text:
+            return False
+
+        positive_tokens = {
+            'yes', 'y', 'ok', 'okay', 'hea', 'hya', 'ha', 'nibo', 'nib', 'nibo.',
+            'nibo!', 'nibo?', 'dekhan', 'dekhao', 'dekhun', 'lagbe', 'nei', 'nibo bhai',
+            'yes please', 'please', 'ji', 'jii', 'hmm', 'hm', 'sure'
+        }
+
+        if text in positive_tokens:
+            return True
+
+        confirmation_patterns = [
+            r'\b(yes|ok|okay|sure|please)\b',
+            r'\b(hea|hya|ha|ji)\b',
+            r'\b(nibo|nib|lagbe|dekhan|dekhao|dekhun)\b',
+            r'\b(নে[বভ]|নিব|নিবো|লাগবে|দেখান|দেখাও|দেখুন)\b'
+        ]
+
+        return any(re.search(pattern, text) for pattern in confirmation_patterns)
+
+    def _extract_listing_id_from_url(self, url: str) -> Optional[str]:
+        """Extract trailing numeric listing ID from BDStall details URL.
+
+        Example:
+        https://www.bdstall.com/details/hp-15s-du1014tu-core-i3-10th-gen-156-1tb-hdd-laptop-48723/
+        -> 48723
+        """
+        normalized_url = str(url or "").strip()
+        if not normalized_url:
+            return None
+
+        match = re.search(r'-(\d+)(?:/)?$', normalized_url)
+        if match:
+            return match.group(1)
+
+        fallback_match = re.search(r'(\d+)(?:/)?$', normalized_url)
+        if fallback_match:
+            return fallback_match.group(1)
 
         return None
 
@@ -1093,7 +1261,8 @@ Examples:
         products: Optional[list],
         search_keywords: Optional[str] = None,
         processing_time: float = 0.0,
-        error: Optional[str] = None
+        error: Optional[str] = None,
+        conversation_status: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Create standardized JSON response with mode
@@ -1108,6 +1277,10 @@ Examples:
             "search_keywords": search_keywords,
             "products_found": len(products) if products else 0,
             "products": products[:5] if products else None,  # Keep top 5 for follow-up selection
+            "conversation_status": conversation_status or self.user_conversation_status.get(
+                user_id,
+                HUMAN_SUPPORT_REQUIRED_STATUS if mode == ChatMode.HUMAN else AI_ACTIVE_STATUS
+            ),
             "processing_time_seconds": round(processing_time, 2),
             "timestamp": datetime.now().isoformat(),
             "error": error
@@ -1116,6 +1289,7 @@ Examples:
     def switch_to_human(self, user_id: str):
         """Manually switch user to HUMAN mode"""
         self.user_modes[user_id] = ChatMode.HUMAN
+        self.user_conversation_status[user_id] = HUMAN_SUPPORT_REQUIRED_STATUS
         self._notify_assign_agent(user_id)
         logger.info(f"👤 User {user_id} switched to HUMAN mode")
 
@@ -1170,6 +1344,9 @@ Examples:
     def switch_to_ai(self, user_id: str):
         """Manually switch user back to AI mode"""
         self.user_modes[user_id] = ChatMode.AI
+        self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+        self.user_order_context[user_id] = False
+        self.user_order_draft.pop(user_id, None)
         logger.info(f"🤖 User {user_id} switched to AI mode")
     
     def get_user_mode(self, user_id: str) -> str:

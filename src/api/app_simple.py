@@ -44,6 +44,10 @@ SAVE_MESSAGE_API_URL = os.getenv(
 )
 SAVE_MESSAGE_API_KEY = os.getenv('SAVE_MESSAGE_API_KEY', 'mkh677ddd2sxxkkdjff')
 
+# Facebook Messenger configuration
+PAGE_ACCESS_TOKEN = os.getenv('PAGE_ACCESS_TOKEN', '')
+VERIFY_TOKEN = os.getenv('VERIFY_TOKEN', 'my_verify_token_12345')
+
 
 def _log_api_call(
     api_name: str,
@@ -161,6 +165,33 @@ def save_chat_message(user_id: str, sender_type: int, message: str) -> bool:
         return False
 
 
+def send_facebook_message(recipient_id: str, message_text: str) -> bool:
+    """Send a plain text response to a Facebook Messenger user."""
+    if not PAGE_ACCESS_TOKEN:
+        logger.warning("PAGE_ACCESS_TOKEN not set; cannot send Messenger reply")
+        return False
+
+    url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
+    payload = {
+        "recipient": {"id": recipient_id},
+        "message": {"text": message_text}
+    }
+
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        if 200 <= response.status_code < 300:
+            return True
+        logger.warning(
+            "Messenger send failed (status=%s): %s",
+            response.status_code,
+            response.text
+        )
+        return False
+    except Exception as e:
+        logger.warning("Messenger send error: %s", e)
+        return False
+
+
 @app.route('/', methods=['GET'])
 def index():
     """API Info"""
@@ -180,6 +211,8 @@ def index():
             "/agent/reply": "POST - Save manual human agent reply",
             "/save-message": "POST - Save any message (sender_type: 1/2/3)",
             "/health": "GET - Health check",
+            "/webhook": "GET/POST - Facebook Messenger webhook",
+            "/chatbot/webhook": "GET/POST - Facebook webhook (proxy-safe path)",
             "/mode/:user_id": "GET - Get user mode",
             "/mode/:user_id/human": "POST - Switch to human",
             "/mode/:user_id/ai": "POST - Switch to AI",
@@ -245,6 +278,51 @@ def chat():
             "response": "দুঃখিত, কিছু সমস্যা হয়েছে।",
             "mode": "human"
         }), 500
+
+
+@app.route('/webhook', methods=['GET'])
+@app.route('/chatbot/webhook', methods=['GET'])
+def verify_webhook():
+    """Verify Facebook webhook challenge."""
+    mode = request.args.get('hub.mode')
+    token = request.args.get('hub.verify_token')
+    challenge = request.args.get('hub.challenge')
+
+    if mode == 'subscribe' and token == VERIFY_TOKEN:
+        logger.info("Webhook verified successfully")
+        return challenge or '', 200
+
+    logger.warning("Webhook verification failed (mode=%s, token_match=%s)", mode, token == VERIFY_TOKEN)
+    return 'Forbidden', 403
+
+
+@app.route('/webhook', methods=['POST'])
+@app.route('/chatbot/webhook', methods=['POST'])
+def messenger_webhook():
+    """Handle incoming Facebook Messenger events using the simple chatbot flow."""
+    try:
+        data = request.get_json() or {}
+
+        if data.get('object') != 'page':
+            return jsonify({"status": "ignored"}), 200
+
+        for entry in data.get('entry', []):
+            for event in entry.get('messaging', []):
+                sender_id = (event.get('sender') or {}).get('id')
+                message_text = ((event.get('message') or {}).get('text') or '').strip()
+
+                if not sender_id or not message_text:
+                    continue
+
+                result = get_chatbot().process_message(sender_id, message_text)
+                response_text = result.get('response') or 'দুঃখিত, কিছু সমস্যা হয়েছে।'
+                send_facebook_message(sender_id, response_text)
+
+        return jsonify({"status": "ok"}), 200
+
+    except Exception as e:
+        logger.error("❌ Webhook error: %s", e)
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 @app.route('/agent/reply', methods=['POST'])

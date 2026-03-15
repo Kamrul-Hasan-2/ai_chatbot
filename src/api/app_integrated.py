@@ -142,7 +142,7 @@ def webhook():
                             send_message(sender_id, response_text)
         
         return 'OK', 200
-        
+       
     except Exception as e:
         logger.error(f"Error processing webhook: {e}")
         return 'Internal Server Error', 500
@@ -240,6 +240,7 @@ def get_conversation_history(user_id):
     except Exception as e:
         logger.error(f"Error getting conversation history: {e}")
         return jsonify({"error": str(e)}), 500
+
 
 
 @app.route('/system_health', methods=['GET'])
