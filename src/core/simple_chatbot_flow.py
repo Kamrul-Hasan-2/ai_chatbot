@@ -268,12 +268,36 @@ class SimpleChatbot:
             # Get current mode for this user
             current_mode = self.user_modes.get(user_id, ChatMode.AI)
             current_status = self.user_conversation_status.get(user_id, AI_ACTIVE_STATUS)
+            normalized_message = str(message or '').strip().lower()
+            greeting_tokens = {
+                'hi', 'hello', 'hey', 'salam', 'assalamualaikum', 'as-salamu alaikum',
+                'হাই', 'হ্যালো', 'হেলো', 'সালাম', 'আসসালামু আলাইকুম', 'আসসালামুয়ালাইকুম'
+            }
             
             logger.info(f"📨 Processing message from {user_id} (Mode: {current_mode.value})")
             logger.info(f"💬 Message: {message}")
 
             # Once handed over, stop automated reasoning until a human resets the conversation.
             if current_mode == ChatMode.HUMAN and current_status == HUMAN_SUPPORT_REQUIRED_STATUS:
+                if normalized_message in greeting_tokens:
+                    # Auto-recover simple Messenger greetings from stale handoff state.
+                    self.user_modes[user_id] = ChatMode.AI
+                    self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+                    greeting_response = self._search_database_faq(message) or (
+                        "আসসালামু আলাইকুম স্যার। BDStall এ আপনাকে স্বাগতম। "
+                        "আপনি কোন প্রোডাক্ট খুঁজছেন জানালে আমি সাহায্য করতে পারি।"
+                    )
+                    return self._create_response(
+                        user_id=user_id,
+                        message=message,
+                        response=greeting_response,
+                        mode=ChatMode.AI,
+                        intent='greeting',
+                        products=None,
+                        processing_time=(datetime.now() - start_time).total_seconds(),
+                        conversation_status=AI_ACTIVE_STATUS
+                    )
+
                 return self._create_response(
                     user_id=user_id,
                     message=message,
@@ -285,11 +309,6 @@ class SimpleChatbot:
                     conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
                 )
 
-            normalized_message = str(message or '').strip().lower()
-            greeting_tokens = {
-                'hi', 'hello', 'hey', 'salam', 'assalamualaikum', 'as-salamu alaikum',
-                'হাই', 'হ্যালো', 'হেলো', 'সালাম', 'আসসালামু আলাইকুম', 'আসসালামুয়ালাইকুম'
-            }
             # Handle common greetings early to avoid unnecessary human handoff on Messenger.
             if normalized_message in greeting_tokens:
                 greeting_response = self._search_database_faq(message) or (

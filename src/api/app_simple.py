@@ -277,7 +277,7 @@ def chat():
         return jsonify({
             "success": False,
             "error": str(e),
-            "response": "দুঃখিত, কিছু সমস্যা হয়েছে।",
+            "response": "দুঃখিত স্যার, এই মুহূর্তে উত্তর দিতে সমস্যা হচ্ছে। অনুগ্রহ করে আপনার প্রশ্নটি আবার লিখুন বা প্রোডাক্টের নাম/বাজেট বলুন।",
             "mode": "human"
         }), 500
 
@@ -319,6 +319,10 @@ def messenger_webhook():
 
                 sender_id = (event.get('sender') or {}).get('id')
                 message_text = (message_obj.get('text') or '').strip()
+                if not message_text:
+                    quick_reply_payload = ((message_obj.get('quick_reply') or {}).get('payload') or '').strip()
+                    postback_payload = ((event.get('postback') or {}).get('payload') or '').strip()
+                    message_text = quick_reply_payload or postback_payload
 
                 logger.info("[WEBHOOK] Event sender_id=%s has_text=%s", sender_id, bool(message_text))
 

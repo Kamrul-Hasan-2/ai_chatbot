@@ -674,7 +674,10 @@ class ChatbotIntegration:
         """
         try:
             result = self.chatbot_system.process_message(user_id, message, channel)
-            return result.get("response", "দুঃখিত, কিছু সমস্যা হয়েছে।")
+            return result.get(
+                "response",
+                "আপনার মেসেজটি পেয়েছি। অনুগ্রহ করে প্রোডাক্টের নাম বা বাজেট লিখে বলুন, আমি সাহায্য করছি।"
+            )
         except Exception as e:
             logger.error(f"Error in get_response: {e}")
             return "দুঃখিত, আমি এই মুহূর্তে আপনাকে সাহায্য করতে পারছি না।"

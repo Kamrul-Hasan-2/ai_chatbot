@@ -693,7 +693,7 @@ class ResponseComposer:
     def _generate_error_response(self, error_msg: str) -> GeneratedResponse:
         """Generate error response"""
         return GeneratedResponse(
-            content="দুঃখিত, কিছু সমস্যা হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।",
+            content="টেকনিক্যাল সমস্যার কারণে এখনই সম্পূর্ণ উত্তর দিতে পারছি না। অনুগ্রহ করে আবার চেষ্টা করুন।",
             response_type=ResponseType.ERROR_RESPONSE,
             quality_score=0.3,
             personalization_level=PersonalizationLevel.NONE,
