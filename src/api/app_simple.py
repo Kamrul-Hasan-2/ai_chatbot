@@ -312,8 +312,13 @@ def messenger_webhook():
 
         for entry in data.get('entry', []):
             for event in entry.get('messaging', []):
+                message_obj = event.get('message') or {}
+                if message_obj.get('is_echo'):
+                    logger.info("[WEBHOOK] Skipping echo event")
+                    continue
+
                 sender_id = (event.get('sender') or {}).get('id')
-                message_text = ((event.get('message') or {}).get('text') or '').strip()
+                message_text = (message_obj.get('text') or '').strip()
 
                 logger.info("[WEBHOOK] Event sender_id=%s has_text=%s", sender_id, bool(message_text))
 
@@ -321,7 +326,18 @@ def messenger_webhook():
                     continue
 
                 result = get_chatbot().process_message(sender_id, message_text)
-                response_text = result.get('response') or 'দুঃখিত, কিছু সমস্যা হয়েছে।'
+                response_text = (result.get('response') or '').strip()
+
+                # In HUMAN handoff mode, chatbot intentionally returns empty response.
+                if not response_text:
+                    logger.info(
+                        "[WEBHOOK] No bot reply for sender_id=%s (mode=%s, status=%s)",
+                        sender_id,
+                        result.get('mode'),
+                        result.get('conversation_status')
+                    )
+                    continue
+
                 logger.info("[WEBHOOK] Sending reply to sender_id=%s", sender_id)
                 send_facebook_message(sender_id, response_text)
 
