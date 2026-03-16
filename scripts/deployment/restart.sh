@@ -26,7 +26,7 @@ nginx
 # Start Gunicorn
 echo "Starting Gunicorn..."
 cd /root/ai_chatbot
-nohup gunicorn -c gunicorn_config.py app:app > logs/gunicorn.log 2>&1 &
+nohup gunicorn -c config/gunicorn_config.py src.api.app_simple:app > logs/gunicorn.log 2>&1 &
 GUNICORN_PID=$!
 echo $GUNICORN_PID > /tmp/gunicorn.pid
 

@@ -31,4 +31,4 @@ ENV FLASK_ENV=production
 ENV PYTHONUNBUFFERED=1
 
 # Run with gunicorn
-CMD ["gunicorn", "-c", "gunicorn_config.py", "app:app"]
+CMD ["gunicorn", "-c", "config/gunicorn_config.py", "src.api.app_simple:app"]

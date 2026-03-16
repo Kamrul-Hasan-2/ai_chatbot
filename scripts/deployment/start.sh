@@ -30,11 +30,11 @@ pip install -r requirements.txt
 
 # Initialize the chatbot (if needed)
 echo "Initializing chatbot and RAG system..."
-python -c "from app import initialize_chatbot; initialize_chatbot()" || echo "Initialization will happen on first request"
+python -c "from src.api.app_simple import initialize; initialize()" || echo "Initialization will happen on first request"
 
 # Start the application with Gunicorn
 echo "Starting Gunicorn server on port $PORT..."
-gunicorn -c gunicorn_config.py app:app
+gunicorn -c config/gunicorn_config.py src.api.app_simple:app
 
 # Alternative: Use Flask development server (not recommended for production)
 # python app.py

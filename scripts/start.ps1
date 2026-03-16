@@ -30,4 +30,4 @@ pip install -r requirements.txt
 
 # Start the application with Gunicorn
 Write-Host "Starting Gunicorn server on port $env:PORT..." -ForegroundColor Cyan
-gunicorn -c gunicorn_config.py app:app
+gunicorn -c config/gunicorn_config.py src.api.app_simple:app

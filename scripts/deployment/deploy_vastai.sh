@@ -90,9 +90,9 @@ else
 fi
 
 print_info "Step 8: Testing application..."
-python3 -c "from app import app; print('OK')" 2>&1 | grep -q "OK" && print_success "Application imports successfully" || {
+python3 -c "from src.api.app_simple import app; print('OK')" 2>&1 | grep -q "OK" && print_success "Application imports successfully" || {
     print_error "Application import failed"
-    python3 -c "from app import app"
+    python3 -c "from src.api.app_simple import app"
     exit 1
 }
 
@@ -103,7 +103,7 @@ sleep 2
 
 # Start gunicorn in background
 cd "$PROJECT_DIR"
-nohup gunicorn -c gunicorn_config.py app:app > logs/gunicorn.log 2>&1 &
+nohup gunicorn -c config/gunicorn_config.py src.api.app_simple:app > logs/gunicorn.log 2>&1 &
 GUNICORN_PID=$!
 
 # Wait a bit for startup

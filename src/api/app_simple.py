@@ -442,6 +442,27 @@ def health():
     }), 200
 
 
+@app.route('/debug/messenger', methods=['GET'])
+def debug_messenger():
+    """Runtime diagnostics for Messenger integration."""
+    bot = get_chatbot()
+    return jsonify({
+        "ok": True,
+        "entrypoint": "src.api.app_simple:app",
+        "webhook_paths": ["/webhook", "/chatbot/webhook"],
+        "verify_token_configured": bool(VERIFY_TOKEN),
+        "page_access_token_configured": bool(PAGE_ACCESS_TOKEN),
+        "page_access_token_prefix": PAGE_ACCESS_TOKEN[:12] if PAGE_ACCESS_TOKEN else "",
+        "chatbot_initialized": bot is not None,
+        "groq_available": bool(bot.groq_client) if bot else False,
+        "database_responses": len(bot.database) if bot else 0,
+        "notes": [
+            "If page_access_token_configured is false, Messenger replies cannot be sent.",
+            "Webhook in Meta must point to /webhook or /chatbot/webhook on this server."
+        ]
+    }), 200
+
+
 @app.route('/mode/<user_id>', methods=['GET'])
 def get_mode(user_id):
     """Get current mode for user"""
