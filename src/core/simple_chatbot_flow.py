@@ -298,16 +298,22 @@ class SimpleChatbot:
                         conversation_status=AI_ACTIVE_STATUS
                     )
 
-                return self._create_response(
-                    user_id=user_id,
-                    message=message,
-                    response="",
-                    mode=ChatMode.HUMAN,
-                    intent='human_support_required',
-                    products=None,
-                    processing_time=(datetime.now() - start_time).total_seconds(),
-                    conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
-                )
+                if self._looks_like_product_query(message):
+                    # Resume AI automatically when user sends a new product request.
+                    self.user_modes[user_id] = ChatMode.AI
+                    self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+                    logger.info("🔄 Resuming AI mode from HUMAN for product query user_id=%s", user_id)
+                else:
+                    return self._create_response(
+                        user_id=user_id,
+                        message=message,
+                        response="",
+                        mode=ChatMode.HUMAN,
+                        intent='human_support_required',
+                        products=None,
+                        processing_time=(datetime.now() - start_time).total_seconds(),
+                        conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
+                    )
 
             # Handle common greetings early to avoid unnecessary human handoff on Messenger.
             if normalized_message in greeting_tokens:
@@ -414,31 +420,47 @@ class SimpleChatbot:
                     products=user_products,
                     processing_time=(datetime.now() - start_time).total_seconds()
                 )
+
+            # Heuristic fallback: route obvious product queries directly to search.
+            forced_product_intent = False
+            if self._looks_like_product_query(message):
+                intent = 'product_search'
+                search_keywords = self._build_product_search_keywords(message)
+                forced_product_intent = True
+                logger.info("🧭 Heuristic product intent detected for message: %s", message)
+            else:
+                # STEP 1: Message → Groq API (Intent Detection)
+                logger.info("🚀 STEP 1: Sending to Groq API for intent detection...")
+                intent_result = self._step1_groq_intent(message)
+                
+                if not intent_result['success']:
+                    logger.warning("⚠️ Intent detection failed; using AI-safe fallback response")
+                    fallback_response = self._search_database_faq(message) or (
+                        "দুঃখিত স্যার, আমি এখনই আপনার মেসেজ পুরোপুরি বুঝতে পারিনি। "
+                        "আপনি প্রোডাক্টের নাম বা বাজেট লিখে বলুন, আমি সাহায্য করছি।"
+                    )
+                    self.user_modes[user_id] = ChatMode.AI
+                    return self._create_response(
+                        user_id=user_id,
+                        message=message,
+                        response=fallback_response,
+                        mode=ChatMode.AI,
+                        intent='general',
+                        products=None,
+                        processing_time=(datetime.now() - start_time).total_seconds(),
+                        conversation_status=AI_ACTIVE_STATUS
+                    )
+                
+                intent = intent_result['intent']
+                search_keywords = intent_result['search_keywords']
             
-            # STEP 1: Message → Groq API (Intent Detection)
-            logger.info("🚀 STEP 1: Sending to Groq API for intent detection...")
-            intent_result = self._step1_groq_intent(message)
-            
-            if not intent_result['success']:
-                logger.warning("⚠️ Intent detection failed; using AI-safe fallback response")
-                fallback_response = self._search_database_faq(message) or (
-                    "দুঃখিত স্যার, আমি এখনই আপনার মেসেজ পুরোপুরি বুঝতে পারিনি। "
-                    "আপনি প্রোডাক্টের নাম বা বাজেট লিখে বলুন, আমি সাহায্য করছি।"
-                )
-                self.user_modes[user_id] = ChatMode.AI
-                return self._create_response(
-                    user_id=user_id,
-                    message=message,
-                    response=fallback_response,
-                    mode=ChatMode.AI,
-                    intent='general',
-                    products=None,
-                    processing_time=(datetime.now() - start_time).total_seconds(),
-                    conversation_status=AI_ACTIVE_STATUS
-                )
-            
-            intent = intent_result['intent']
-            search_keywords = intent_result['search_keywords']
+            if not forced_product_intent and intent in ['unknown', 'irrelevant'] and self._looks_like_product_query(message):
+                intent = 'product_search'
+                search_keywords = self._build_product_search_keywords(message)
+                logger.info("🧭 Recovered unknown intent as product_search using heuristic")
+
+            if intent in ['product_search', 'price_search', 'laptop_search'] and str(search_keywords).strip().lower() in ['none', 'না', 'নেই', '']:
+                search_keywords = self._build_product_search_keywords(message)
             
             logger.info(f"✅ Intent: {intent}")
             logger.info(f"🔍 Search Keywords: {search_keywords}")
@@ -672,12 +694,26 @@ Examples:
             # Parse result
             intent = "general"
             keywords = message
-            
-            for line in result.split('\n'):
-                if line.startswith('Intent:'):
-                    intent = line.split(':', 1)[1].strip().lower()
-                elif line.startswith('Keywords:'):
-                    keywords = line.split(':', 1)[1].strip()
+
+            # Parse leniently to handle LLM formatting variations.
+            intent_match = re.search(r'(?im)^\s*intent\s*[:\-]\s*(.+?)\s*$', result)
+            if intent_match:
+                intent = intent_match.group(1).strip().lower()
+
+            keywords_match = re.search(r'(?im)^\s*keywords\s*[:\-]\s*(.+?)\s*$', result)
+            if keywords_match:
+                keywords = keywords_match.group(1).strip()
+
+            if keywords.strip().lower() in {'none', 'na', 'n/a', 'নেই', 'না'} and self._looks_like_product_query(message):
+                keywords = self._build_product_search_keywords(message)
+
+            valid_intents = {
+                'product_search', 'price_search', 'laptop_search', 'ordering', 'delivery',
+                'greeting', 'question', 'support', 'warranty', 'availability', 'general',
+                'unknown', 'irrelevant', 'faq', 'goodbye', 'thank_you', 'thanks'
+            }
+            if intent not in valid_intents:
+                intent = 'product_search' if self._looks_like_product_query(message) else 'general'
             
             return {
                 'success': True,
@@ -689,6 +725,67 @@ Examples:
         except Exception as e:
             logger.error(f"❌ Groq intent detection failed: {e}")
             return {'success': False, 'error': str(e)}
+
+    def _looks_like_product_query(self, message: str) -> bool:
+        """Heuristic detector for short product requests in English/Bangla transliteration."""
+        text = str(message or '').strip().lower()
+        if not text:
+            return False
+
+        product_terms = [
+            'laptop', 'phone', 'mobile', 'pc', 'computer', 'monitor', 'mouse', 'keyboard',
+            'headphone', 'ssd', 'ram', 'printer', 'camera', 'router', 'charger',
+            'ল্যাপটপ', 'মোবাইল', 'ফোন', 'কম্পিউটার', 'মাউস', 'কিবোর্ড', 'হেডফোন'
+        ]
+        brand_terms = [
+            'hp', 'dell', 'lenovo', 'asus', 'acer', 'apple', 'iphone', 'samsung', 'xiaomi',
+            'realme', 'oppo', 'vivo', 'msi', 'huawei'
+        ]
+        buying_cues = [
+            'price', 'dam', 'tk', 'taka', 'budget', 'modde', 'within', 'under',
+            'ase', 'ache', 'pawa', 'kase', 'kache', 'lagbe', 'chai',
+            'দাম', 'টাকা', 'হাজার', 'আছে', 'কাছে', 'বাজেট'
+        ]
+
+        has_product = any(term in text for term in product_terms)
+        has_brand = any(term in text for term in brand_terms)
+        has_cue = any(cue in text for cue in buying_cues)
+        has_number = bool(re.search(r'\b\d+\s*(k|tk|taka|টাকা|হাজার)?\b', text))
+
+        if has_product and (has_brand or has_cue or has_number):
+            return True
+
+        # Short brand+product queries such as "hp laptop" should always search.
+        if has_product and len(text.split()) <= 4:
+            return True
+
+        return False
+
+    def _build_product_search_keywords(self, message: str) -> str:
+        """Build cleaner search keywords from informal user queries."""
+        text = str(message or '').strip().lower()
+        if not text:
+            return ''
+
+        # Support Bangla digits in user input.
+        text = text.translate(str.maketrans('০১২৩৪৫৬৭৮৯', '0123456789'))
+
+        stop_words = [
+            'ase', 'ache', 'apnar', 'amar', 'kase', 'kache', 'pls', 'please', 'need',
+            'den', 'dao', 'diben', 'ase?', 'ache?', 'ki', 'dorkar', 'ekta', 'akta',
+            'kindly', 'bhai', 'sir', 'স্যার', 'ভাই', 'আমার', 'আপনার', 'কাছে', 'আছে',
+            'একটা', 'দেন', 'কি'
+        ]
+
+        words = []
+        for token in re.split(r'\s+', text):
+            clean = re.sub(r'[^a-z0-9\u0980-\u09ff]', '', token)
+            if not clean or clean in stop_words:
+                continue
+            words.append(clean)
+
+        keywords = ' '.join(words).strip()
+        return keywords or text
     
     def _step2_search_database(self, keywords: str) -> Dict[str, Any]:
         """

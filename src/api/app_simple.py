@@ -194,6 +194,42 @@ def send_facebook_message(recipient_id: str, message_text: str) -> bool:
         return False
 
 
+def _process_user_message(user_id: str, message: str, source: str = "web") -> dict:
+    """Run the same chatbot pipeline for web and Messenger inputs."""
+    clean_message = (message or '').strip()
+    if not clean_message:
+        return {
+            "success": False,
+            "user_id": str(user_id),
+            "message": message,
+            "response": "",
+            "mode": "ai",
+            "error": "No message provided"
+        }
+
+    # Save visitor message first (3 = Visitor)
+    save_chat_message(user_id=user_id, sender_type=3, message=clean_message)
+
+    # Process message through roadmap
+    result = get_chatbot().process_message(user_id, clean_message)
+
+    response_text = (result.get('response') or '').strip()
+    if response_text:
+        # Save chatbot response (2 = Bot) when available
+        save_chat_message(user_id=user_id, sender_type=2, message=response_text)
+
+    logger.info(
+        "[PIPELINE] source=%s user_id=%s mode=%s intent=%s has_response=%s",
+        source,
+        user_id,
+        result.get('mode'),
+        result.get('intent'),
+        bool(response_text)
+    )
+
+    return result
+
+
 @app.route('/', methods=['GET'])
 def index():
     """API Info"""
@@ -259,16 +295,7 @@ def chat():
                 "mode": "ai"
             }), 400
         
-        # Save visitor message first (3 = Visitor)
-        save_chat_message(user_id=user_id, sender_type=3, message=message)
-
-        # Process message through roadmap (with lazy initialization)
-        result = get_chatbot().process_message(user_id, message)
-
-        # Save chatbot response (2 = Bot) when available
-        response_text = result.get('response')
-        if response_text:
-            save_chat_message(user_id=user_id, sender_type=2, message=response_text)
+        result = _process_user_message(user_id=user_id, message=message, source='web')
         
         return jsonify(result), 200
     
@@ -310,6 +337,8 @@ def messenger_webhook():
             logger.info("[WEBHOOK] Ignored non-page object: %s", data.get('object'))
             return jsonify({"status": "ignored"}), 200
 
+        processed_count = 0
+        replied_count = 0
         for entry in data.get('entry', []):
             for event in entry.get('messaging', []):
                 message_obj = event.get('message') or {}
@@ -329,7 +358,9 @@ def messenger_webhook():
                 if not sender_id or not message_text:
                     continue
 
-                result = get_chatbot().process_message(sender_id, message_text)
+                processed_count += 1
+
+                result = _process_user_message(user_id=sender_id, message=message_text, source='messenger')
                 response_text = (result.get('response') or '').strip()
 
                 # In HUMAN handoff mode, chatbot intentionally returns empty response.
@@ -343,9 +374,10 @@ def messenger_webhook():
                     continue
 
                 logger.info("[WEBHOOK] Sending reply to sender_id=%s", sender_id)
-                send_facebook_message(sender_id, response_text)
+                if send_facebook_message(sender_id, response_text):
+                    replied_count += 1
 
-        return jsonify({"status": "ok"}), 200
+            return jsonify({"status": "ok", "processed": processed_count, "replied": replied_count}), 200
 
     except Exception as e:
         logger.error("❌ Webhook error: %s", e)
