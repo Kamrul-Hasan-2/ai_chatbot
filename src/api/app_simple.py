@@ -304,8 +304,10 @@ def messenger_webhook():
     """Handle incoming Facebook Messenger events using the simple chatbot flow."""
     try:
         data = request.get_json() or {}
+        logger.info("[WEBHOOK] Payload received: %s", json.dumps(data, ensure_ascii=False)[:1000])
 
         if data.get('object') != 'page':
+            logger.info("[WEBHOOK] Ignored non-page object: %s", data.get('object'))
             return jsonify({"status": "ignored"}), 200
 
         for entry in data.get('entry', []):
@@ -313,11 +315,14 @@ def messenger_webhook():
                 sender_id = (event.get('sender') or {}).get('id')
                 message_text = ((event.get('message') or {}).get('text') or '').strip()
 
+                logger.info("[WEBHOOK] Event sender_id=%s has_text=%s", sender_id, bool(message_text))
+
                 if not sender_id or not message_text:
                     continue
 
                 result = get_chatbot().process_message(sender_id, message_text)
                 response_text = result.get('response') or 'দুঃখিত, কিছু সমস্যা হয়েছে।'
+                logger.info("[WEBHOOK] Sending reply to sender_id=%s", sender_id)
                 send_facebook_message(sender_id, response_text)
 
         return jsonify({"status": "ok"}), 200
@@ -509,5 +514,6 @@ if __name__ == '__main__':
     # Run
     app.run(host='0.0.0.0', port=port, debug=False)
 else:
-    # When running with Gunicorn, initialize on module load
-    initialize()
+    # Under Gunicorn, lazily initialize on first request via get_chatbot().
+    # This avoids hard startup failures if external services are temporarily unavailable.
+    pass

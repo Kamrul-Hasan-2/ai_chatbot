@@ -9,9 +9,10 @@ bind = f"0.0.0.0:{os.getenv('PORT', '5000')}"
 backlog = 2048
 
 # Worker processes
-workers = int(os.getenv('GUNICORN_WORKERS', multiprocessing.cpu_count() * 2 + 1))
-worker_class = 'gevent'
-worker_connections = 1000
+# Keep defaults conservative to avoid startup crashes on small servers.
+workers = int(os.getenv('GUNICORN_WORKERS', '2'))
+worker_class = os.getenv('GUNICORN_WORKER_CLASS', 'sync')
+worker_connections = int(os.getenv('GUNICORN_WORKER_CONNECTIONS', '200'))
 timeout = 120
 keepalive = 5
 
