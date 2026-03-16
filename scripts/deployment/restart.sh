@@ -5,6 +5,8 @@
 
 echo "Restarting AI Chatbot..."
 
+APP_DIR="/root/ai_services/ai_chatbot"
+
 # Colors
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -18,6 +20,12 @@ fi
 pkill gunicorn || true
 sleep 2
 
+echo "Switching to app directory: $APP_DIR"
+cd "$APP_DIR" || {
+    echo -e "${RED}✗ App directory not found: $APP_DIR${NC}"
+    exit 1
+}
+
 echo "Clearing Python cache..."
 find . -type d -name "__pycache__" -prune -exec rm -rf {} + || true
 find . -type f -name "*.pyc" -delete || true
@@ -29,7 +37,6 @@ nginx
 
 # Start Gunicorn
 echo "Starting Gunicorn..."
-cd /root/ai_chatbot
 nohup gunicorn -c config/gunicorn_config.py src.api.app_simple:app > logs/gunicorn.log 2>&1 &
 GUNICORN_PID=$!
 echo $GUNICORN_PID > /tmp/gunicorn.pid
