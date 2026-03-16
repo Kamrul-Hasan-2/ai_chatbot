@@ -171,15 +171,17 @@ def send_facebook_message(recipient_id: str, message_text: str) -> bool:
         logger.warning("PAGE_ACCESS_TOKEN not set; cannot send Messenger reply")
         return False
 
-    url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
+    url = f"https://graph.facebook.com/v25.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
     payload = {
         "recipient": {"id": recipient_id},
+        "messaging_type": "RESPONSE",
         "message": {"text": message_text}
     }
 
     try:
         response = requests.post(url, json=payload, timeout=10)
         if 200 <= response.status_code < 300:
+            logger.info("✅ Messenger reply sent to %s", recipient_id)
             return True
         logger.warning(
             "Messenger send failed (status=%s): %s",
