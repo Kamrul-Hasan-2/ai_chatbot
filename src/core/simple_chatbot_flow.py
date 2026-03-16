@@ -285,6 +285,29 @@ class SimpleChatbot:
                     conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
                 )
 
+            normalized_message = str(message or '').strip().lower()
+            greeting_tokens = {
+                'hi', 'hello', 'hey', 'salam', 'assalamualaikum', 'as-salamu alaikum',
+                'হাই', 'হ্যালো', 'হেলো', 'সালাম', 'আসসালামু আলাইকুম', 'আসসালামুয়ালাইকুম'
+            }
+            # Handle common greetings early to avoid unnecessary human handoff on Messenger.
+            if normalized_message in greeting_tokens:
+                greeting_response = self._search_database_faq(message) or (
+                    "আসসালামু আলাইকুম স্যার। BDStall এ আপনাকে স্বাগতম। "
+                    "আপনি কোন প্রোডাক্ট খুঁজছেন জানালে আমি সাহায্য করতে পারি।"
+                )
+                self.user_modes[user_id] = ChatMode.AI
+                return self._create_response(
+                    user_id=user_id,
+                    message=message,
+                    response=greeting_response,
+                    mode=ChatMode.AI,
+                    intent='greeting',
+                    products=None,
+                    processing_time=(datetime.now() - start_time).total_seconds(),
+                    conversation_status=AI_ACTIVE_STATUS
+                )
+
             # If user confirms after selecting a specific product, call order template API with listing ID.
             selected_product = self.user_selected_product.get(user_id)
             if selected_product and self._is_order_confirmation_message(message):
@@ -378,12 +401,21 @@ class SimpleChatbot:
             intent_result = self._step1_groq_intent(message)
             
             if not intent_result['success']:
-                # If Groq fails, switch to HUMAN mode
-                return self._handoff_to_human(
+                logger.warning("⚠️ Intent detection failed; using AI-safe fallback response")
+                fallback_response = self._search_database_faq(message) or (
+                    "দুঃখিত স্যার, আমি এখনই আপনার মেসেজ পুরোপুরি বুঝতে পারিনি। "
+                    "আপনি প্রোডাক্টের নাম বা বাজেট লিখে বলুন, আমি সাহায্য করছি।"
+                )
+                self.user_modes[user_id] = ChatMode.AI
+                return self._create_response(
                     user_id=user_id,
                     message=message,
-                    start_time=start_time,
-                    intent='system_fallback'
+                    response=fallback_response,
+                    mode=ChatMode.AI,
+                    intent='general',
+                    products=None,
+                    processing_time=(datetime.now() - start_time).total_seconds(),
+                    conversation_status=AI_ACTIVE_STATUS
                 )
             
             intent = intent_result['intent']
@@ -444,15 +476,22 @@ class SimpleChatbot:
             # Check if intent is unknown or irrelevant - switch to HUMAN
             # BUT skip handoff for safe intents like greetings
             if intent in ['unknown', 'irrelevant'] or search_keywords.lower() in ['none', 'না', 'নেই', '']:
-                # If it's a safe intent (like greeting), don't switch to human
+                # Keep AI mode for unclear messages; ask user for product details instead of immediate handoff.
                 if intent not in safe_intents:
-                    logger.warning("⚠️ Irrelevant message detected - switching to HUMAN mode")
-                    return self._handoff_to_human(
+                    clarification = self._search_database_faq(message) or (
+                        "স্যার, আপনি কোন প্রোডাক্ট বা বাজেট জানতে চান তা একটু বিস্তারিত বলুন। "
+                        "যেমন: '২০ হাজার টাকার মধ্যে ফোন' বা 'ডেলিভারি চার্জ কত'।"
+                    )
+                    self.user_modes[user_id] = ChatMode.AI
+                    return self._create_response(
                         user_id=user_id,
                         message=message,
-                        start_time=start_time,
-                        intent=intent,
-                        response_text=self._get_irrelevant_handoff_message()
+                        response=clarification,
+                        mode=ChatMode.AI,
+                        intent='clarification_required',
+                        products=None,
+                        processing_time=(datetime.now() - start_time).total_seconds(),
+                        conversation_status=AI_ACTIVE_STATUS
                     )
             
             # STEP 2 & 3: Search API → Database Format
