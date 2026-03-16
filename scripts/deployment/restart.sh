@@ -18,6 +18,10 @@ fi
 pkill gunicorn || true
 sleep 2
 
+echo "Clearing Python cache..."
+find . -type d -name "__pycache__" -prune -exec rm -rf {} + || true
+find . -type f -name "*.pyc" -delete || true
+
 echo "Restarting Nginx..."
 pkill nginx || true
 sleep 1

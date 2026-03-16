@@ -646,7 +646,13 @@ class SimpleChatbot:
         Extract: intent & search keywords
         """
         if not self.groq_client:
-            return {'success': False, 'error': 'Groq not available'}
+            local_intent, local_keywords = self._local_intent_fallback(message)
+            return {
+                'success': True,
+                'intent': local_intent,
+                'search_keywords': local_keywords,
+                'raw_response': 'LOCAL_FALLBACK'
+            }
         
         try:
             prompt = f"""Analyze this message and extract:
@@ -696,13 +702,20 @@ Examples:
             keywords = message
 
             # Parse leniently to handle LLM formatting variations.
-            intent_match = re.search(r'(?im)^\s*intent\s*[:\-]\s*(.+?)\s*$', result)
+            # Works for:
+            # - "Intent: product_search\nKeywords: hp laptop"
+            # - "Intent: product_search, Keywords: hp laptop"
+            intent_match = re.search(r'(?is)intent\s*[:\-]\s*([^\n,;|]+)', result)
             if intent_match:
                 intent = intent_match.group(1).strip().lower()
 
-            keywords_match = re.search(r'(?im)^\s*keywords\s*[:\-]\s*(.+?)\s*$', result)
+            keywords_match = re.search(r'(?is)keywords\s*[:\-]\s*([^\n]+)', result)
             if keywords_match:
-                keywords = keywords_match.group(1).strip()
+                keywords = keywords_match.group(1).strip().rstrip(' .;|')
+
+            # If Groq put both values in one line, sanitize intent tail.
+            if any(sep in intent for sep in [',', ';', '|']):
+                intent = re.split(r'[,;|]', intent, maxsplit=1)[0].strip()
 
             if keywords.strip().lower() in {'none', 'na', 'n/a', 'নেই', 'না'} and self._looks_like_product_query(message):
                 keywords = self._build_product_search_keywords(message)
@@ -713,7 +726,10 @@ Examples:
                 'unknown', 'irrelevant', 'faq', 'goodbye', 'thank_you', 'thanks'
             }
             if intent not in valid_intents:
-                intent = 'product_search' if self._looks_like_product_query(message) else 'general'
+                local_intent, local_keywords = self._local_intent_fallback(message)
+                intent = local_intent
+                if (not keywords) or keywords == message:
+                    keywords = local_keywords
             
             return {
                 'success': True,
@@ -724,7 +740,34 @@ Examples:
         
         except Exception as e:
             logger.error(f"❌ Groq intent detection failed: {e}")
-            return {'success': False, 'error': str(e)}
+            local_intent, local_keywords = self._local_intent_fallback(message)
+            return {
+                'success': True,
+                'intent': local_intent,
+                'search_keywords': local_keywords,
+                'raw_response': f'LOCAL_FALLBACK_ON_ERROR: {str(e)}'
+            }
+
+    def _local_intent_fallback(self, message: str) -> tuple[str, str]:
+        """Deterministic fallback when Groq is unavailable or returns unparsable output."""
+        text = str(message or '').strip().lower()
+
+        if self._looks_like_product_query(message):
+            # Keep laptop intent specific when laptop keyword appears.
+            if 'laptop' in text or 'ল্যাপটপ' in text:
+                return 'laptop_search', self._build_product_search_keywords(message)
+            if any(w in text for w in ['price', 'dam', 'দাম', 'tk', 'taka', 'টাকা']):
+                return 'price_search', self._build_product_search_keywords(message)
+            return 'product_search', self._build_product_search_keywords(message)
+
+        if any(w in text for w in ['order', 'অর্ডার', 'kivabe', 'kibabe']):
+            return 'ordering', 'none'
+        if any(w in text for w in ['delivery', 'ডেলিভারি', 'কত দিন', 'koto din']):
+            return 'delivery', 'none'
+        if any(w in text for w in ['hello', 'hi', 'হাই', 'সালাম', 'আসসালামু']):
+            return 'greeting', 'none'
+
+        return 'general', message
 
     def _looks_like_product_query(self, message: str) -> bool:
         """Heuristic detector for short product requests in English/Bangla transliteration."""
@@ -735,6 +778,7 @@ Examples:
         product_terms = [
             'laptop', 'phone', 'mobile', 'pc', 'computer', 'monitor', 'mouse', 'keyboard',
             'headphone', 'ssd', 'ram', 'printer', 'camera', 'router', 'charger',
+            'gun', 'stun', 'stun gun', 'taser',
             'ল্যাপটপ', 'মোবাইল', 'ফোন', 'কম্পিউটার', 'মাউস', 'কিবোর্ড', 'হেডফোন'
         ]
         brand_terms = [
@@ -752,11 +796,21 @@ Examples:
         has_cue = any(cue in text for cue in buying_cues)
         has_number = bool(re.search(r'\b\d+\s*(k|tk|taka|টাকা|হাজার)?\b', text))
 
+        # Availability style query like "stun gun ase" should trigger search.
+        availability_words = {'ase', 'ache', 'pawa', 'available', 'stock', 'আছে', 'পাওয়া', 'পাওয়া'}
+        compact_tokens = [t for t in re.split(r'\s+', text) if t]
+        has_availability_word = any(t in availability_words for t in compact_tokens)
+        has_candidate_term = len([t for t in compact_tokens if t not in availability_words and len(t) > 1]) >= 1
+
         if has_product and (has_brand or has_cue or has_number):
             return True
 
         # Short brand+product queries such as "hp laptop" should always search.
         if has_product and len(text.split()) <= 4:
+            return True
+
+        # Fallback: generic product availability ask with at least one candidate term.
+        if has_availability_word and has_candidate_term and len(compact_tokens) <= 5:
             return True
 
         return False
@@ -786,6 +840,27 @@ Examples:
 
         keywords = ' '.join(words).strip()
         return keywords or text
+
+    def _extract_search_tokens(self, text: str) -> list[str]:
+        """Extract meaningful query tokens for relevance filtering."""
+        normalized = str(text or '').strip().lower()
+        if not normalized:
+            return []
+
+        normalized = normalized.translate(str.maketrans('০১২৩৪৫৬৭৮৯', '0123456789'))
+        raw_tokens = re.findall(r'[a-z0-9\u0980-\u09ff]+', normalized)
+        stop = {
+            'and', 'or', 'the', 'a', 'an', 'for',
+            'ase', 'ache', 'kase', 'kache', 'apnar', 'amar', 'ami', 'amake',
+            'sir', 'bhai', 'please', 'need', 'ki', 'dorkar', 'ekta', 'akta',
+            'taka', 'tk', 'price', 'dam',
+            'আছে', 'কাছে', 'আপনার', 'আমার', 'একটা', 'দাম', 'টাকা'
+        }
+
+        tokens = [t for t in raw_tokens if len(t) > 1 and t not in stop]
+        # Keep order but remove duplicates.
+        deduped = list(dict.fromkeys(tokens))
+        return deduped
     
     def _step2_search_database(self, keywords: str) -> Dict[str, Any]:
         """
@@ -865,37 +940,74 @@ Examples:
                 else:
                     max_price = price_value
             
-            # Filter products by price if specified
-            filtered_products = []
+            query_tokens = self._extract_search_tokens(search_term)
+
+            # Filter products by query relevance first, then price.
+            scored_products = []
             for product in products_array[:20]:  # Take top 20 first
                 try:
+                    title = str(product.get('ListingTitle', '')).lower()
+                    description = str(product.get('ListingDescription', '')).lower()
+                    haystack = f"{title} {description}"
+
+                    token_hits = 0
+                    if query_tokens:
+                        token_hits = sum(1 for token in query_tokens if token in haystack)
+                        # If we have query tokens, require at least one match to avoid irrelevant listings.
+                        if token_hits == 0:
+                            continue
+
                     product_price = int(product.get('app_ListingPrice', 999999))
-                    
-                    if max_price:
-                        if product_price <= max_price:
-                            filtered_products.append(product)
-                    else:
-                        filtered_products.append(product)
-                        
-                except:
+                    if max_price and product_price > max_price:
+                        continue
+
+                    # Prefer products with more token matches.
+                    scored_products.append((token_hits, product))
+
+                except Exception:
                     continue
-            
+
+            # If no relevant results matched query tokens, return empty to avoid wrong products.
+            if query_tokens and not scored_products:
+                logger.info("⚠️ No relevant product matched query tokens: %s", query_tokens)
+                return {
+                    'products_found': 0,
+                    'products': [],
+                    'database_message': ''
+                }
+
+            # Sort by relevance score desc and take top candidates.
+            scored_products.sort(key=lambda item: item[0], reverse=True)
+            filtered_products = [item[1] for item in scored_products]
+
+            if not query_tokens:
+                # No meaningful tokens - keep behavior close to previous logic with price filtering only.
+                filtered_products = []
+                for product in products_array[:20]:
+                    try:
+                        product_price = int(product.get('app_ListingPrice', 999999))
+                        if max_price and product_price > max_price:
+                            continue
+                        filtered_products.append(product)
+                    except Exception:
+                        continue
+
             # Take top 5
             top_products = filtered_products[:5]
-            
+
             if not top_products:
                 return {
                     'products_found': 0,
                     'products': [],
                     'database_message': ''
                 }
-            
+
             logger.info(f"✅ Found {len(top_products)} products (Total: {total_count})")
-            
+
             # Format as database message
             database_message = f"পণ্য তালিকা (মোট {total_count} পণ্য পাওয়া গেছে):\n\n"
             products_list = []
-            
+
             for i, product in enumerate(top_products, 1):
                 title = product.get('ListingTitle', 'N/A')
                 price = product.get('ListingPrice', 'N/A')
@@ -903,20 +1015,20 @@ Examples:
                 discount = product.get('ListingDiscountPercentage', 0)
                 url = product.get('ListingURL', '')
                 description = product.get('ListingDescription', '')[:100]
-                
+
                 database_message += f"{i}. {title}\n"
                 database_message += f"   মূল্য: {price}"
-                
+
                 if discount > 0:
                     database_message += f" (ছাড় {discount}%)"
-                
+
                 database_message += "\n"
-                
+
                 if description:
                     database_message += f"   বিবরণ: {description}...\n"
-                
+
                 database_message += f"   লিংক: {url}\n\n"
-                
+
                 products_list.append({
                     'title': title,
                     'price': price,
@@ -926,7 +1038,7 @@ Examples:
                     'image': product.get('ListingThumbAvator', ''),
                     'description': description
                 })
-            
+
             return {
                 'products_found': len(top_products),
                 'total_products': total_count,

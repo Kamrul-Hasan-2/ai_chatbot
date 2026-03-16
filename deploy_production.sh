@@ -27,6 +27,11 @@ cd $APP_DIR
 echo -e "${GREEN}Step 1: Creating logs directory...${NC}"
 mkdir -p logs
 
+# Step 1.1: Clear Python bytecode cache to avoid stale runtime behavior
+echo -e "${GREEN}Step 1.1: Clearing Python cache...${NC}"
+find . -type d -name "__pycache__" -prune -exec rm -rf {} + || true
+find . -type f -name "*.pyc" -delete || true
+
 # Step 2: Stop Flask development server if running
 echo -e "${GREEN}Step 2: Stopping any running Flask server...${NC}"
 pkill -f "flask run" || true
