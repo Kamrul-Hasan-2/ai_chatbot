@@ -111,13 +111,15 @@ def webhook():
         if data.get('object') == 'page':
             for entry in data.get('entry', []):
                 for messaging_event in entry.get('messaging', []):
-                    
+                    message = messaging_event.get('message') or {}
+                    if message.get('is_echo'):
+                        logger.info(f"Skipping echo event for sender={messaging_event.get('sender', {}).get('id')}")
+                        continue
+
                     sender_id = messaging_event['sender']['id']
                     
                     # Handle text messages
                     if messaging_event.get('message'):
-                        message = messaging_event['message']
-                        
                         if message.get('text'):
                             message_text = message['text']
                             logger.info(f"Received message from {sender_id}: {message_text}")
@@ -136,7 +138,12 @@ def webhook():
                             if result.get("handover"):
                                 logger.info(f"Handover active for {sender_id}; skipping AI reply")
                             else:
-                                response_text = result.get("response", "দুঃখিত, কিছু সমস্যা হয়েছে।")
+                                response_text = (result.get("response") or "").strip()
+                                if not response_text:
+                                    logger.info(
+                                        f"No bot reply for {sender_id} (handover={result.get('handover')})"
+                                    )
+                                    continue
                                 send_message(sender_id, response_text)
                     
                     # Handle postbacks (button clicks)

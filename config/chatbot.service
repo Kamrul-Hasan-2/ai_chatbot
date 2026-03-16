@@ -7,7 +7,7 @@ Type=simple
 User=root
 WorkingDirectory=/root/ai_chatbot
 Environment="PATH=/usr/local/bin:/usr/bin:/bin"
-ExecStart=/usr/local/bin/gunicorn -c gunicorn_config.py app:app
+ExecStart=/usr/local/bin/gunicorn -c config/gunicorn_config.py src.api.app_simple:app
 Restart=always
 RestartSec=10
 StandardOutput=append:/root/ai_chatbot/logs/service.log
