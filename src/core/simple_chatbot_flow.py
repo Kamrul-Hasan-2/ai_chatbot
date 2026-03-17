@@ -95,6 +95,9 @@ class SimpleChatbot:
     
     def __init__(self):
         """Initialize the simple chatbot"""
+        self.project_root = os.path.join(os.path.dirname(__file__), '..', '..')
+        self.state_file = os.path.join(self.project_root, 'data', 'chatbot_state.json')
+
         # Load Groq API
         groq_api_key = os.getenv('GROQ_API_KEY')
         if groq_api_key and Groq:
@@ -128,6 +131,8 @@ class SimpleChatbot:
             'https://www.bdstall.com/api/item/chatbot_assign_agent/'
         )
         self.assign_agent_api_key = os.getenv('ASSIGN_AGENT_API_KEY', 'mkh677ddd2sxxkkdjff')
+
+        self._load_state()
         
         # Load database.csv for FAQ responses
         self.database = self._load_database()
@@ -135,6 +140,49 @@ class SimpleChatbot:
         logger.info("✅ Simple Chatbot Initialized")
         logger.info(f"🌐 BDStall API: {self.api_url}")
         logger.info(f"📚 Database: {len(self.database)} FAQ responses loaded")
+
+    def _load_state(self) -> None:
+        """Restore lightweight conversation state from disk."""
+        try:
+            if not os.path.exists(self.state_file):
+                return
+
+            with open(self.state_file, 'r', encoding='utf-8') as file_obj:
+                state = json.load(file_obj)
+
+            self.user_modes = {
+                user_id: ChatMode(mode)
+                for user_id, mode in (state.get('user_modes') or {}).items()
+                if mode in {ChatMode.AI.value, ChatMode.HUMAN.value}
+            }
+            self.user_conversation_status = dict(state.get('user_conversation_status') or {})
+            self.user_product_context = dict(state.get('user_product_context') or {})
+            self.user_selected_product = dict(state.get('user_selected_product') or {})
+            self.user_order_context = {
+                user_id: bool(active)
+                for user_id, active in (state.get('user_order_context') or {}).items()
+            }
+            self.user_order_draft = dict(state.get('user_order_draft') or {})
+            logger.info("✅ Restored chatbot state for %s users", len(self.user_modes))
+        except Exception as e:
+            logger.warning("⚠️ Failed to restore chatbot state: %s", e)
+
+    def _save_state(self) -> None:
+        """Persist lightweight conversation state so Messenger survives restarts."""
+        try:
+            os.makedirs(os.path.dirname(self.state_file), exist_ok=True)
+            state = {
+                'user_modes': {user_id: mode.value for user_id, mode in self.user_modes.items()},
+                'user_conversation_status': self.user_conversation_status,
+                'user_product_context': self.user_product_context,
+                'user_selected_product': self.user_selected_product,
+                'user_order_context': self.user_order_context,
+                'user_order_draft': self.user_order_draft,
+            }
+            with open(self.state_file, 'w', encoding='utf-8') as file_obj:
+                json.dump(state, file_obj, ensure_ascii=False)
+        except Exception as e:
+            logger.warning("⚠️ Failed to persist chatbot state: %s", e)
     
     def _load_database(self) -> list:
         """Load database.csv for FAQ responses"""
@@ -1534,6 +1582,7 @@ Examples:
         """
         Create standardized JSON response with mode
         """
+        self._save_state()
         return {
             "success": mode == ChatMode.AI,
             "user_id": user_id,
@@ -1557,6 +1606,7 @@ Examples:
         """Manually switch user to HUMAN mode"""
         self.user_modes[user_id] = ChatMode.HUMAN
         self.user_conversation_status[user_id] = HUMAN_SUPPORT_REQUIRED_STATUS
+        self._save_state()
         self._notify_assign_agent(user_id)
         logger.info(f"👤 User {user_id} switched to HUMAN mode")
 
@@ -1614,6 +1664,7 @@ Examples:
         self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
         self.user_order_context[user_id] = False
         self.user_order_draft.pop(user_id, None)
+        self._save_state()
         logger.info(f"🤖 User {user_id} switched to AI mode")
     
     def get_user_mode(self, user_id: str) -> str:
