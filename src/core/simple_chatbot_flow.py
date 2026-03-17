@@ -363,24 +363,6 @@ class SimpleChatbot:
                         conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
                     )
 
-            # Handle common greetings early to avoid unnecessary human handoff on Messenger.
-            if normalized_message in greeting_tokens:
-                greeting_response = self._search_database_faq(message) or (
-                    "আসসালামু আলাইকুম স্যার। BDStall এ আপনাকে স্বাগতম। "
-                    "আপনি কোন প্রোডাক্ট খুঁজছেন জানালে আমি সাহায্য করতে পারি।"
-                )
-                self.user_modes[user_id] = ChatMode.AI
-                return self._create_response(
-                    user_id=user_id,
-                    message=message,
-                    response=greeting_response,
-                    mode=ChatMode.AI,
-                    intent='greeting',
-                    products=None,
-                    processing_time=(datetime.now() - start_time).total_seconds(),
-                    conversation_status=AI_ACTIVE_STATUS
-                )
-
             # If user confirms after selecting a specific product, call order template API with listing ID.
             selected_product = self.user_selected_product.get(user_id)
             if selected_product and self._is_order_confirmation_message(message):
@@ -469,43 +451,21 @@ class SimpleChatbot:
                     processing_time=(datetime.now() - start_time).total_seconds()
                 )
 
-            # Heuristic fallback: route obvious product queries directly to search.
-            forced_product_intent = False
-            if self._looks_like_product_query(message):
-                intent = 'product_search'
-                search_keywords = self._build_product_search_keywords(message)
-                forced_product_intent = True
-                logger.info("🧭 Heuristic product intent detected for message: %s", message)
-            else:
-                # STEP 1: Message → Groq API (Intent Detection)
-                logger.info("🚀 STEP 1: Sending to Groq API for intent detection...")
-                intent_result = self._step1_groq_intent(message)
-                
-                if not intent_result['success']:
-                    logger.warning("⚠️ Intent detection failed; using AI-safe fallback response")
-                    fallback_response = self._search_database_faq(message) or (
-                        "দুঃখিত স্যার, আমি এখনই আপনার মেসেজ পুরোপুরি বুঝতে পারিনি। "
-                        "আপনি প্রোডাক্টের নাম বা বাজেট লিখে বলুন, আমি সাহায্য করছি।"
-                    )
-                    self.user_modes[user_id] = ChatMode.AI
-                    return self._create_response(
-                        user_id=user_id,
-                        message=message,
-                        response=fallback_response,
-                        mode=ChatMode.AI,
-                        intent='general',
-                        products=None,
-                        processing_time=(datetime.now() - start_time).total_seconds(),
-                        conversation_status=AI_ACTIVE_STATUS
-                    )
-                
-                intent = intent_result['intent']
-                search_keywords = intent_result['search_keywords']
-            
-            if not forced_product_intent and intent in ['unknown', 'irrelevant'] and self._looks_like_product_query(message):
-                intent = 'product_search'
-                search_keywords = self._build_product_search_keywords(message)
-                logger.info("🧭 Recovered unknown intent as product_search using heuristic")
+            # STEP 1: Message → Groq API (Intent Detection)
+            logger.info("🚀 STEP 1: Sending to Groq API for intent detection...")
+            intent_result = self._step1_groq_intent(message)
+
+            if not intent_result['success']:
+                logger.warning("⚠️ Intent detection failed; switching to HUMAN mode")
+                return self._handoff_to_human(
+                    user_id=user_id,
+                    message=message,
+                    start_time=start_time,
+                    intent='intent_detection_failed'
+                )
+
+            intent = intent_result['intent']
+            search_keywords = intent_result['search_keywords']
 
             if intent in ['product_search', 'price_search', 'laptop_search'] and str(search_keywords).strip().lower() in ['none', 'না', 'নেই', '']:
                 search_keywords = self._build_product_search_keywords(message)
@@ -562,26 +522,14 @@ class SimpleChatbot:
                         processing_time=(datetime.now() - start_time).total_seconds()
                     )
             
-            # Check if intent is unknown or irrelevant - switch to HUMAN
-            # BUT skip handoff for safe intents like greetings
-            if intent in ['unknown', 'irrelevant'] or search_keywords.lower() in ['none', 'না', 'নেই', '']:
-                # Keep AI mode for unclear messages; ask user for product details instead of immediate handoff.
-                if intent not in safe_intents:
-                    clarification = self._search_database_faq(message) or (
-                        "স্যার, আপনি কোন প্রোডাক্ট বা বাজেট জানতে চান তা একটু বিস্তারিত বলুন। "
-                        "যেমন: '২০ হাজার টাকার মধ্যে ফোন' বা 'ডেলিভারি চার্জ কত'।"
-                    )
-                    self.user_modes[user_id] = ChatMode.AI
-                    return self._create_response(
-                        user_id=user_id,
-                        message=message,
-                        response=clarification,
-                        mode=ChatMode.AI,
-                        intent='clarification_required',
-                        products=None,
-                        processing_time=(datetime.now() - start_time).total_seconds(),
-                        conversation_status=AI_ACTIVE_STATUS
-                    )
+            # If chatbot does not understand the intent, switch to HUMAN as per roadmap.
+            if intent in ['unknown', 'irrelevant']:
+                return self._handoff_to_human(
+                    user_id=user_id,
+                    message=message,
+                    start_time=start_time,
+                    intent=intent
+                )
             
             # STEP 2 & 3: Search API → Database Format
             if intent in ['product_search', 'price_search', 'laptop_search']:
