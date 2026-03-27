@@ -105,64 +105,79 @@ def save_chat_message(user_id: str, sender_type: int, message: str) -> bool:
         "message": message
     }
 
-    started = datetime.now()
+    def _is_success_response(resp: requests.Response) -> bool:
+        """Treat 2xx as success, with optional JSON 'success' flag validation when present."""
+        if not (200 <= resp.status_code < 300):
+            return False
+        try:
+            data = resp.json()
+            if isinstance(data, dict) and 'success' in data:
+                return bool(data.get('success'))
+        except Exception:
+            pass
+        return True
 
-    try:
-        response = requests.post(SAVE_MESSAGE_API_URL, json=payload, timeout=10)
-        duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+    # Try JSON first, then form-data fallback for stricter external API gateways.
+    attempts = [
+        ("json", lambda: requests.post(SAVE_MESSAGE_API_URL, json=payload, timeout=10)),
+        ("form", lambda: requests.post(SAVE_MESSAGE_API_URL, data=payload, timeout=10))
+    ]
+    last_error = None
 
-        if 200 <= response.status_code < 300:
+    for request_mode, request_fn in attempts:
+        started = datetime.now()
+        try:
+            response = request_fn()
+            duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+            passed = _is_success_response(response)
+
             _log_api_call(
                 api_name="chatbot_save_message",
-                method="POST",
+                method=f"POST[{request_mode}]",
                 url=SAVE_MESSAGE_API_URL,
                 request_payload=payload,
                 status_code=response.status_code,
                 duration_ms=duration_ms,
-                status="PASS",
+                status="PASS" if passed else "FAIL",
                 response_preview=response.text
             )
-            return True
 
-        _log_api_call(
-            api_name="chatbot_save_message",
-            method="POST",
-            url=SAVE_MESSAGE_API_URL,
-            request_payload=payload,
-            status_code=response.status_code,
-            duration_ms=duration_ms,
-            status="FAIL",
-            response_preview=response.text
-        )
+            if passed:
+                return True
 
-        logger.warning(
-            "⚠️ Failed to save message (status=%s, sender_type=%s, user_id=%s): %s",
-            response.status_code,
-            sender_type,
-            user_id,
-            response.text
-        )
-        return False
-    except Exception as e:
-        duration_ms = int((datetime.now() - started).total_seconds() * 1000)
-        _log_api_call(
-            api_name="chatbot_save_message",
-            method="POST",
-            url=SAVE_MESSAGE_API_URL,
-            request_payload=payload,
-            status_code=0,
-            duration_ms=duration_ms,
-            status="FAIL",
-            response_preview=str(e)
-        )
+            logger.warning(
+                "⚠️ Failed to save message via %s (status=%s, sender_type=%s, user_id=%s): %s",
+                request_mode,
+                response.status_code,
+                sender_type,
+                user_id,
+                response.text
+            )
+        except Exception as e:
+            duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+            _log_api_call(
+                api_name="chatbot_save_message",
+                method=f"POST[{request_mode}]",
+                url=SAVE_MESSAGE_API_URL,
+                request_payload=payload,
+                status_code=0,
+                duration_ms=duration_ms,
+                status="FAIL",
+                response_preview=str(e)
+            )
 
-        logger.warning(
-            "⚠️ Error saving message (sender_type=%s, user_id=%s): %s",
-            sender_type,
-            user_id,
-            e
-        )
-        return False
+            logger.warning(
+                "⚠️ Error saving message via %s (sender_type=%s, user_id=%s): %s",
+                request_mode,
+                sender_type,
+                user_id,
+                e
+            )
+            last_error = e
+
+    if last_error:
+        logger.warning("⚠️ Message save ultimately failed after retries for user_id=%s", user_id)
+    return False
 
 
 def send_facebook_message(recipient_id: str, message_text: str) -> bool:
@@ -208,7 +223,13 @@ def _process_user_message(user_id: str, message: str, source: str = "web") -> di
         }
 
     # Save visitor message first (3 = Visitor)
-    save_chat_message(user_id=user_id, sender_type=3, message=clean_message)
+    visitor_saved = save_chat_message(user_id=user_id, sender_type=3, message=clean_message)
+    if not visitor_saved:
+        logger.warning(
+            "[PIPELINE] visitor message not persisted source=%s user_id=%s",
+            source,
+            user_id
+        )
 
     # Process message through roadmap
     result = get_chatbot().process_message(user_id, clean_message)
@@ -216,7 +237,13 @@ def _process_user_message(user_id: str, message: str, source: str = "web") -> di
     response_text = (result.get('response') or '').strip()
     if response_text:
         # Save chatbot response (2 = Bot) when available
-        save_chat_message(user_id=user_id, sender_type=2, message=response_text)
+        bot_saved = save_chat_message(user_id=user_id, sender_type=2, message=response_text)
+        if not bot_saved:
+            logger.warning(
+                "[PIPELINE] bot response not persisted source=%s user_id=%s",
+                source,
+                user_id
+            )
 
     logger.info(
         "[PIPELINE] source=%s user_id=%s mode=%s intent=%s has_response=%s",
@@ -377,7 +404,7 @@ def messenger_webhook():
                 if send_facebook_message(sender_id, response_text):
                     replied_count += 1
 
-            return jsonify({"status": "ok", "processed": processed_count, "replied": replied_count}), 200
+        return jsonify({"status": "ok", "processed": processed_count, "replied": replied_count}), 200
 
     except Exception as e:
         logger.error("❌ Webhook error: %s", e)
