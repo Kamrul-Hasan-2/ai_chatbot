@@ -469,6 +469,18 @@ class SimpleChatbot:
 
             if intent in ['product_search', 'price_search', 'laptop_search'] and str(search_keywords).strip().lower() in ['none', 'না', 'নেই', '']:
                 search_keywords = self._build_product_search_keywords(message)
+
+            # Guardrail: prevent false handoff when LLM mislabels clear product queries.
+            if intent in ['unknown', 'irrelevant'] and self._looks_like_product_query(message):
+                normalized = str(message or '').lower()
+                intent = 'laptop_search' if ('laptop' in normalized or 'ল্যাপটপ' in normalized) else 'product_search'
+                search_keywords = self._build_product_search_keywords(message)
+                logger.info(
+                    "🔁 Overriding %s intent to %s for product-like query user_id=%s",
+                    intent_result.get('intent'),
+                    intent,
+                    user_id
+                )
             
             logger.info(f"✅ Intent: {intent}")
             logger.info(f"🔍 Search Keywords: {search_keywords}")
@@ -817,6 +829,15 @@ Examples:
         if not text:
             return ''
 
+        # Normalize frequent spaced brand/model phrases seen in Messenger typing.
+        phrase_normalizations = {
+            'elite book': 'elitebook',
+            'think pad': 'thinkpad',
+            'mac book': 'macbook'
+        }
+        for old_phrase, new_phrase in phrase_normalizations.items():
+            text = text.replace(old_phrase, new_phrase)
+
         # Support Bangla digits in user input.
         text = text.translate(str.maketrans('০১২৩৪৫৬৭৮৯', '0123456789'))
 
@@ -824,7 +845,9 @@ Examples:
             'ase', 'ache', 'apnar', 'amar', 'kase', 'kache', 'pls', 'please', 'need',
             'den', 'dao', 'diben', 'ase?', 'ache?', 'ki', 'dorkar', 'ekta', 'akta',
             'kindly', 'bhai', 'sir', 'স্যার', 'ভাই', 'আমার', 'আপনার', 'কাছে', 'আছে',
-            'একটা', 'দেন', 'কি'
+            'একটা', 'দেন', 'কি',
+            'apnader', 'amader', 'eikhane', 'ekhane', 'ekhne', 'ekhane?', 'eikhane?',
+            'apnadar', 'apnaderi', 'ekhankar', 'pawa', 'pabo'
         ]
 
         words = []
@@ -1218,9 +1241,6 @@ Examples:
         """
         STEP 4: Send database message to AI for final formatting
         """
-        if not self.groq_client:
-            return {'success': False, 'error': 'Groq not available'}
-        
         try:
             if database_message and products:
                 # Product search response - Use custom formatting with greeting
@@ -1255,6 +1275,9 @@ Examples:
                     'response': response_text
                 }
             else:
+                if not self.groq_client:
+                    return {'success': False, 'error': 'Groq not available'}
+
                 # General query - Use AI
                 prompt = f"""তুমি একজন বন্ধুত্বপূর্ণ বাংলা চ্যাটবট। BDStall.com এর হয়ে উত্তর দাও।
 
