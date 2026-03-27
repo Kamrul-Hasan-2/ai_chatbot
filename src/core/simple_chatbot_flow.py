@@ -547,6 +547,20 @@ class SimpleChatbot:
             if intent in ['product_search', 'price_search', 'laptop_search']:
                 logger.info("🚀 STEP 2-3: Searching database with keywords...")
                 search_result = self._step2_search_database(search_keywords)
+
+                # Retry once with a broader query before switching to HUMAN mode.
+                if search_result['products_found'] == 0:
+                    broader_keywords = self._build_broader_search_keywords(search_keywords, message)
+                    if broader_keywords:
+                        logger.info(
+                            "🔁 No results for '%s'; retrying with broader keywords '%s'",
+                            search_keywords,
+                            broader_keywords
+                        )
+                        retry_result = self._step2_search_database(broader_keywords)
+                        if retry_result['products_found'] > 0:
+                            search_keywords = broader_keywords
+                            search_result = retry_result
                 
                 if search_result['products_found'] == 0:
                     # No products found, switch to HUMAN mode
@@ -880,6 +894,50 @@ Examples:
         # Keep order but remove duplicates.
         deduped = list(dict.fromkeys(tokens))
         return deduped
+
+    def _build_broader_search_keywords(self, keywords: str, original_message: str) -> Optional[str]:
+        """Create a broader query when exact terms return no products."""
+        base_tokens = self._extract_search_tokens(keywords)
+        if not base_tokens:
+            base_tokens = self._extract_search_tokens(original_message)
+        if not base_tokens:
+            return None
+
+        product_terms = {
+            'laptop', 'phone', 'mobile', 'iphone', 'computer', 'pc', 'monitor', 'tablet',
+            'ল্যাপটপ', 'ফোন', 'মোবাইল', 'কম্পিউটার'
+        }
+        brand_terms = {
+            'hp', 'dell', 'lenovo', 'asus', 'acer', 'apple', 'samsung', 'xiaomi',
+            'realme', 'oppo', 'vivo', 'msi', 'huawei'
+        }
+
+        selected: list[str] = []
+        brand = next((token for token in base_tokens if token in brand_terms), None)
+        product = next((token for token in base_tokens if token in product_terms), None)
+
+        if brand:
+            selected.append(brand)
+        if product and product not in selected:
+            selected.append(product)
+
+        for token in base_tokens:
+            if token in selected:
+                continue
+            if len(token) > 2:
+                selected.append(token)
+                break
+
+        if not selected:
+            selected = base_tokens[:2]
+
+        broader = ' '.join(selected).strip()
+        if not broader:
+            return None
+
+        if broader.lower() == str(keywords or '').strip().lower():
+            return None
+        return broader
     
     def _step2_search_database(self, keywords: str) -> Dict[str, Any]:
         """
