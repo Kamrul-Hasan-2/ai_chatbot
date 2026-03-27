@@ -235,6 +235,7 @@ def _process_user_message(user_id: str, message: str, source: str = "web") -> di
     result = get_chatbot().process_message(user_id, clean_message)
 
     response_text = (result.get('response') or '').strip()
+    bot_saved = None
     if response_text:
         # Save chatbot response (2 = Bot) when available
         bot_saved = save_chat_message(user_id=user_id, sender_type=2, message=response_text)
@@ -246,12 +247,14 @@ def _process_user_message(user_id: str, message: str, source: str = "web") -> di
             )
 
     logger.info(
-        "[PIPELINE] source=%s user_id=%s mode=%s intent=%s has_response=%s",
+        "[PIPELINE] source=%s user_id=%s mode=%s intent=%s has_response=%s visitor_saved=%s bot_saved=%s",
         source,
         user_id,
         result.get('mode'),
         result.get('intent'),
-        bool(response_text)
+        bool(response_text),
+        visitor_saved,
+        bot_saved
     )
 
     return result
