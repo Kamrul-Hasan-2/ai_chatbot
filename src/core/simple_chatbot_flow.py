@@ -563,12 +563,23 @@ class SimpleChatbot:
                             search_result = retry_result
                 
                 if search_result['products_found'] == 0:
-                    # No products found, switch to HUMAN mode
-                    return self._handoff_to_human(
+                    # Keep AI mode for product queries even when no exact result is found.
+                    # This avoids premature human handoff for Messenger phrasing/keywords.
+                    self.user_modes[user_id] = ChatMode.AI
+                    self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+                    return self._create_response(
                         user_id=user_id,
                         message=message,
-                        start_time=start_time,
-                        intent=intent
+                        response=(
+                            "স্যার, আপনার কথার সাথে মিলে এই মুহূর্তে নির্দিষ্ট কোনো প্রোডাক্ট পেলাম না। "
+                            "আপনি ব্র্যান্ড/মডেল/বাজেট একটু সহজ করে লিখে দিন, আমি আবার খুঁজে দিচ্ছি।"
+                        ),
+                        mode=ChatMode.AI,
+                        intent='no_products_found',
+                        products=None,
+                        search_keywords=search_keywords,
+                        processing_time=(datetime.now() - start_time).total_seconds(),
+                        conversation_status=AI_ACTIVE_STATUS
                     )
                 
                 database_message = search_result['database_message']
