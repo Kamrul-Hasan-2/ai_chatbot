@@ -25,10 +25,10 @@ class ModeManager:
         try:
             self.chatbot = BDStallChatbotSystem()
             self.handoff_manager = self.chatbot.handoff_manager
-            print("✅ Mode Manager initialized")
+            print(" Mode Manager initialized")
         except Exception as e:
             print(f"⚠️  Warning: Could not initialize full chatbot system")
-            print(f"   Using standalone handoff manager")
+            print(f" ✅  Using standalone handoff manager")
             self.chatbot = None
             self.handoff_manager = HumanHandoffManager()
     

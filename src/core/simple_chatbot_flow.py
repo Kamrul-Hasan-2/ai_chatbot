@@ -131,6 +131,11 @@ class SimpleChatbot:
             'https://www.bdstall.com/api/item/chatbot_assign_agent/'
         )
         self.assign_agent_api_key = os.getenv('ASSIGN_AGENT_API_KEY', 'mkh677ddd2sxxkkdjff')
+        self.responder_api_url = os.getenv(
+            'RESPONDER_API_URL',
+            'https://www.bdstall.com/api/item/chatbot_responder/'
+        )
+        self.responder_api_key = os.getenv('RESPONDER_API_KEY', 'mkh677ddd2sxxkkdjff')
 
         self._load_state()
         
@@ -183,6 +188,52 @@ class SimpleChatbot:
                 json.dump(state, file_obj, ensure_ascii=False)
         except Exception as e:
             logger.warning("⚠️ Failed to persist chatbot state: %s", e)
+    
+    def _check_responder_type(self, user_id: str) -> Optional[str]:
+        """
+        Check user's responder status from BDStall responder API.
+        Returns: 'bot' if bot should respond, 'agent' if agent should respond, None on error
+        """
+        try:
+            import time
+            start_time = time.time()
+            url = f"{self.responder_api_url}?key={self.responder_api_key}&user_id={user_id}"
+            
+            response = requests.get(url, timeout=3)
+            duration_ms = int((time.time() - start_time) * 1000)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('success') and data.get('data'):
+                    responder_label = data['data'].get('responder_label', 'bot')
+                    logger.info(f"Responder check for {user_id}: {responder_label}")
+                    _log_api_call(
+                        'responder_type_check',
+                        'GET',
+                        url,
+                        {'user_id': user_id},
+                        response.status_code,
+                        duration_ms,
+                        'PASS',
+                        json.dumps(data.get('data', {}), ensure_ascii=False)[:200]
+                    )
+                    return responder_label
+            
+            logger.warning(f"⚠️ Responder check failed: status={response.status_code}")
+            _log_api_call(
+                'responder_type_check',
+                'GET',
+                url,
+                {'user_id': user_id},
+                response.status_code,
+                duration_ms,
+                'FAILED',
+                response.text[:200]
+            )
+            return None
+        except Exception as e:
+            logger.warning(f"⚠️ Responder check error: {e}")
+            return None
     
     def _load_database(self) -> list:
         """Load database.csv for FAQ responses"""
@@ -324,6 +375,24 @@ class SimpleChatbot:
             
             logger.info(f"📨 Processing message from {user_id} (Mode: {current_mode.value})")
             logger.info(f"💬 Message: {message}")
+
+            # ✅ NEW: Check user's responder status from BDStall API
+            responder_type = self._check_responder_type(user_id)
+            if responder_type == 'agent':
+                logger.info(f"🤝 User {user_id} is assigned to AGENT mode (responder_type={responder_type})")
+                self.user_modes[user_id] = ChatMode.HUMAN
+                self.user_conversation_status[user_id] = HUMAN_SUPPORT_REQUIRED_STATUS
+                self._save_state()
+                return self._create_response(
+                    user_id=user_id,
+                    message=message,
+                    response="থ্যাঙ্ক ইউ। আমাদের একজন প্রতিনিধি শীঘ্রই আপনার সাথে যোগাযোগ করবেন।",
+                    mode=ChatMode.HUMAN,
+                    intent='agent_assigned',
+                    products=None,
+                    processing_time=(datetime.now() - start_time).total_seconds(),
+                    conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
+                )
 
             # Once handed over, stop automated reasoning until a human resets the conversation.
             if current_mode == ChatMode.HUMAN and current_status == HUMAN_SUPPORT_REQUIRED_STATUS:

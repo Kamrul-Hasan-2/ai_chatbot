@@ -48,7 +48,6 @@ SAVE_MESSAGE_API_KEY = os.getenv('SAVE_MESSAGE_API_KEY', 'mkh677ddd2sxxkkdjff')
 PAGE_ACCESS_TOKEN = os.getenv('PAGE_ACCESS_TOKEN', '')
 VERIFY_TOKEN = os.getenv('VERIFY_TOKEN', 'my_verify_token_12345')
 
-
 def _log_api_call(
     api_name: str,
     method: str,
