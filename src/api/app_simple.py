@@ -254,7 +254,7 @@ def _process_user_message(
             user_id=user_id,
             sender_type=2,
             message=response_text,
-            user_name="BDStall Bot"
+            user_name=user_name
         )
         if not bot_saved:
             logger.warning(
