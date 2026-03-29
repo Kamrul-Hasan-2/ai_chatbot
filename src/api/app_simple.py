@@ -48,6 +48,7 @@ SAVE_MESSAGE_API_KEY = os.getenv('SAVE_MESSAGE_API_KEY', 'mkh677ddd2sxxkkdjff')
 # Facebook Messenger configuration
 PAGE_ACCESS_TOKEN = os.getenv('PAGE_ACCESS_TOKEN', '')
 VERIFY_TOKEN = os.getenv('VERIFY_TOKEN', 'my_verify_token_12345')
+FACEBOOK_GRAPH_API_VERSION = os.getenv('FACEBOOK_GRAPH_API_VERSION', 'v25.0')
 MESSENGER_USER_NAME_CACHE = {}
 
 def _log_api_call(
@@ -225,14 +226,19 @@ def get_messenger_user_name(sender_id: str) -> Optional[str]:
         return None
 
     try:
-        profile_url = f"https://graph.facebook.com/{sender_id}"
+        profile_url = f"https://graph.facebook.com/{FACEBOOK_GRAPH_API_VERSION}/{sender_id}"
         params = {
             "fields": "name,first_name,last_name",
             "access_token": PAGE_ACCESS_TOKEN
         }
         response = requests.get(profile_url, params=params, timeout=10)
         if not (200 <= response.status_code < 300):
-            logger.info("[WEBHOOK] Could not fetch sender name for %s (status=%s)", sender_id, response.status_code)
+            logger.info(
+                "[WEBHOOK] Could not fetch sender name for %s (status=%s): %s",
+                sender_id,
+                response.status_code,
+                (response.text or '')[:300]
+            )
             return None
 
         data = response.json() if response.text else {}
@@ -259,7 +265,7 @@ def _process_user_message(
 ) -> dict:
     """Run the same chatbot pipeline for web and Messenger inputs."""
     clean_message = (message or '').strip()
-    resolved_user_name = (user_name or '').strip() or f"User {user_id}"
+    resolved_user_name = (user_name or '').strip() or None
     if not clean_message:
         return {
             "success": False,
