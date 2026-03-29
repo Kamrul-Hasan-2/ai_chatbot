@@ -48,6 +48,7 @@ SAVE_MESSAGE_API_KEY = os.getenv('SAVE_MESSAGE_API_KEY', 'mkh677ddd2sxxkkdjff')
 # Facebook Messenger configuration
 PAGE_ACCESS_TOKEN = os.getenv('PAGE_ACCESS_TOKEN', '')
 VERIFY_TOKEN = os.getenv('VERIFY_TOKEN', 'my_verify_token_12345')
+MESSENGER_USER_NAME_CACHE = {}
 
 def _log_api_call(
     api_name: str,
@@ -211,6 +212,45 @@ def send_facebook_message(recipient_id: str, message_text: str) -> bool:
         return False
 
 
+def get_messenger_user_name(sender_id: str) -> Optional[str]:
+    """Resolve Facebook sender display name from Graph API with simple in-memory cache."""
+    if not sender_id:
+        return None
+
+    cached_name = MESSENGER_USER_NAME_CACHE.get(str(sender_id))
+    if cached_name:
+        return cached_name
+
+    if not PAGE_ACCESS_TOKEN:
+        return None
+
+    try:
+        profile_url = f"https://graph.facebook.com/{sender_id}"
+        params = {
+            "fields": "name,first_name,last_name",
+            "access_token": PAGE_ACCESS_TOKEN
+        }
+        response = requests.get(profile_url, params=params, timeout=10)
+        if not (200 <= response.status_code < 300):
+            logger.info("[WEBHOOK] Could not fetch sender name for %s (status=%s)", sender_id, response.status_code)
+            return None
+
+        data = response.json() if response.text else {}
+        full_name = (data.get("name") or "").strip()
+        if not full_name:
+            first_name = (data.get("first_name") or "").strip()
+            last_name = (data.get("last_name") or "").strip()
+            full_name = f"{first_name} {last_name}".strip()
+
+        if full_name:
+            MESSENGER_USER_NAME_CACHE[str(sender_id)] = full_name
+            return full_name
+    except Exception as e:
+        logger.info("[WEBHOOK] sender name lookup failed for %s: %s", sender_id, e)
+
+    return None
+
+
 def _process_user_message(
     user_id: str,
     message: str,
@@ -219,10 +259,12 @@ def _process_user_message(
 ) -> dict:
     """Run the same chatbot pipeline for web and Messenger inputs."""
     clean_message = (message or '').strip()
+    resolved_user_name = (user_name or '').strip() or f"User {user_id}"
     if not clean_message:
         return {
             "success": False,
             "user_id": str(user_id),
+            "user_name": resolved_user_name,
             "message": message,
             "response": "",
             "mode": "ai",
@@ -234,7 +276,7 @@ def _process_user_message(
         user_id=user_id,
         sender_type=3,
         message=clean_message,
-        user_name=user_name
+        user_name=resolved_user_name
     )
     if not visitor_saved:
         logger.warning(
@@ -254,7 +296,7 @@ def _process_user_message(
             user_id=user_id,
             sender_type=2,
             message=response_text,
-            user_name=user_name
+            user_name=resolved_user_name
         )
         if not bot_saved:
             logger.warning(
@@ -405,6 +447,8 @@ def messenger_webhook():
                     or (event.get('sender') or {}).get('username')
                     or None
                 )
+                if not sender_name and sender_id:
+                    sender_name = get_messenger_user_name(sender_id)
                 message_text = (message_obj.get('text') or '').strip()
                 if not message_text:
                     quick_reply_payload = ((message_obj.get('quick_reply') or {}).get('payload') or '').strip()
