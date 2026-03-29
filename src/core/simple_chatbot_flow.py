@@ -1382,7 +1382,7 @@ Examples:
         try:
             if database_message and products:
                 # Product search response - Use custom formatting with greeting
-                response_text = "স্যার, আপনার পছন্দের কিছু প্রোডাক্ট আমাদের কাছে এসে গেছে। প্রোডাক্টগুলোর বিস্তারিত নিচে দেওয়া হলো:\n\n"
+                response_text = "স্যার এই প্রোডাক্টগুলা দেখতে পারেন:\n\n"
                 
                 # Format each product with details
                 for idx, product in enumerate(products[:5], 1):  # Show top 5 products
