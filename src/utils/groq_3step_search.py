@@ -6,6 +6,8 @@ This ensures every product-related message goes through:
 1. Groq AI for intent/keyword detection
 2. BDStall API for product search (top 3 results)
 3. Groq AI for beautiful Bengali response formatting
+
+✨ ENHANCED: Now includes dynamic typo correction (works with ANY product!)
 """
 import requests
 import logging
@@ -21,14 +23,31 @@ except ImportError:
     logger.warning("Groq model not available")
     GroqAIModel = None
 
+try:
+    from dynamic_typo_corrector import DynamicTypoCorrector
+except ImportError:
+    logger.warning("Dynamic typo corrector not available (optional)")
+    DynamicTypoCorrector = None
+
 
 class Groq3StepSearch:
     """3-step product search using Groq AI at steps 1 and 3"""
     
     def __init__(self, groq_api_key: str = None, bdstall_api_key: str = "mkh677ddd2sxxkkdjff"):
-        """Initialize Groq 3-step search"""
+        """Initialize Groq 3-step search with dynamic typo correction"""
         self.bdstall_api_key = bdstall_api_key
         self.base_url = "https://www.bdstall.com/api/item/search/"
+        
+        # Initialize dynamic typo corrector (optional enhancement)
+        try:
+            if DynamicTypoCorrector:
+                self.typo_corrector = DynamicTypoCorrector(bdstall_api_key)
+                logger.info("✅ Dynamic Typo Corrector initialized (works with ANY product!)")
+            else:
+                self.typo_corrector = None
+        except Exception as e:
+            logger.warning(f"⚠️ Typo corrector not available: {e}")
+            self.typo_corrector = None
         
         # Initialize Groq AI for intent detection and response formatting
         try:
@@ -397,19 +416,36 @@ Now extract from the customer message above:"""
     
     def _step2_api_search(self, search_terms: str) -> Dict:
         """
-        STEP 2: Search BDStall API for products
+        STEP 2: Search BDStall API for products with dynamic typo correction
         
         Args:
-            search_terms: Optimized search keywords
+            search_terms: Optimized search keywords (may contain typos)
             
         Returns:
             Dictionary with top 3 products
         """
+        # Initialize typo_info outside try block for error handling
+        typo_info = None
+        corrected_terms = search_terms
+        
         try:
             logger.info(f"🔍 Step 2 - API Search for: {search_terms}")
             
+            # NEW: Try typo correction if available
+            if self.typo_corrector:
+                logger.info("💡 Checking for typos with dynamic corrector...")
+                correction_result = self.typo_corrector.intelligent_search_correction(search_terms)
+                
+                if correction_result.get('has_corrections'):
+                    corrected_terms = correction_result['output']
+                    typo_info = correction_result
+                    logger.info(f"✓ Typo corrected: '{search_terms}' → '{corrected_terms}'")
+                else:
+                    logger.info("✓ No typos detected or direct match found")
+            
+            # Use corrected terms for API search
             params = {
-                'term': search_terms,
+                'term': corrected_terms,
                 'key': self.bdstall_api_key
             }
             
@@ -447,7 +483,9 @@ Now extract from the customer message above:"""
                 'success': True,
                 'product_count': len(products),
                 'products': products,
-                'search_terms': search_terms
+                'search_terms': corrected_terms,
+                'original_search_terms': search_terms,
+                'typo_correction': typo_info
             }
             
         except Exception as e:
@@ -456,7 +494,8 @@ Now extract from the customer message above:"""
                 'success': False,
                 'product_count': 0,
                 'products': [],
-                'error': str(e)
+                'error': str(e),
+                'typo_correction': typo_info if typo_info else None
             }
     
     def _step3_groq_format_response(
