@@ -11,6 +11,7 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 import requests
 from datetime import datetime
+from typing import Optional
 
 # Add paths
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -92,7 +93,7 @@ def _log_api_call(
         logger.warning("API log write failed: %s", e)
 
 
-def save_chat_message(user_id: str, sender_type: int, message: str) -> bool:
+def save_chat_message(user_id: str, sender_type: int, message: str, user_name: Optional[str] = None) -> bool:
     """Persist a single chat message to BDStall message history API."""
     if not message:
         return False
@@ -103,6 +104,8 @@ def save_chat_message(user_id: str, sender_type: int, message: str) -> bool:
         "sender_type": int(sender_type),
         "message": message
     }
+    if user_name:
+        payload["user_name"] = str(user_name)
 
     def _is_success_response(resp: requests.Response) -> bool:
         """Treat 2xx as success, with optional JSON 'success' flag validation when present."""
@@ -208,7 +211,12 @@ def send_facebook_message(recipient_id: str, message_text: str) -> bool:
         return False
 
 
-def _process_user_message(user_id: str, message: str, source: str = "web") -> dict:
+def _process_user_message(
+    user_id: str,
+    message: str,
+    source: str = "web",
+    user_name: Optional[str] = None
+) -> dict:
     """Run the same chatbot pipeline for web and Messenger inputs."""
     clean_message = (message or '').strip()
     if not clean_message:
@@ -222,7 +230,12 @@ def _process_user_message(user_id: str, message: str, source: str = "web") -> di
         }
 
     # Save visitor message first (3 = Visitor)
-    visitor_saved = save_chat_message(user_id=user_id, sender_type=3, message=clean_message)
+    visitor_saved = save_chat_message(
+        user_id=user_id,
+        sender_type=3,
+        message=clean_message,
+        user_name=user_name
+    )
     if not visitor_saved:
         logger.warning(
             "[PIPELINE] visitor message not persisted source=%s user_id=%s",
@@ -237,7 +250,12 @@ def _process_user_message(user_id: str, message: str, source: str = "web") -> di
     bot_saved = None
     if response_text:
         # Save chatbot response (2 = Bot) when available
-        bot_saved = save_chat_message(user_id=user_id, sender_type=2, message=response_text)
+        bot_saved = save_chat_message(
+            user_id=user_id,
+            sender_type=2,
+            message=response_text,
+            user_name="BDStall Bot"
+        )
         if not bot_saved:
             logger.warning(
                 "[PIPELINE] bot response not persisted source=%s user_id=%s",
@@ -315,6 +333,7 @@ def chat():
         data = request.get_json() or {}
         
         user_id = data.get('user_id', 'web_user')
+        user_name = data.get('user_name')
         message = data.get('message', '')
         
         if not message:
@@ -324,7 +343,12 @@ def chat():
                 "mode": "ai"
             }), 400
         
-        result = _process_user_message(user_id=user_id, message=message, source='web')
+        result = _process_user_message(
+            user_id=user_id,
+            message=message,
+            source='web',
+            user_name=user_name
+        )
         
         return jsonify(result), 200
     
@@ -376,6 +400,11 @@ def messenger_webhook():
                     continue
 
                 sender_id = (event.get('sender') or {}).get('id')
+                sender_name = (
+                    (event.get('sender') or {}).get('name')
+                    or (event.get('sender') or {}).get('username')
+                    or None
+                )
                 message_text = (message_obj.get('text') or '').strip()
                 if not message_text:
                     quick_reply_payload = ((message_obj.get('quick_reply') or {}).get('payload') or '').strip()
@@ -389,7 +418,12 @@ def messenger_webhook():
 
                 processed_count += 1
 
-                result = _process_user_message(user_id=sender_id, message=message_text, source='messenger')
+                result = _process_user_message(
+                    user_id=sender_id,
+                    message=message_text,
+                    source='messenger',
+                    user_name=sender_name
+                )
                 response_text = (result.get('response') or '').strip()
 
                 # In HUMAN handoff mode, chatbot intentionally returns empty response.
@@ -419,6 +453,7 @@ def agent_reply():
     try:
         data = request.get_json() or {}
         user_id = data.get('user_id')
+        user_name = data.get('user_name', 'Human Agent')
         message = data.get('message', '')
 
         if not user_id or not message:
@@ -427,11 +462,17 @@ def agent_reply():
                 "error": "user_id and message are required"
             }), 400
 
-        saved = save_chat_message(user_id=user_id, sender_type=1, message=message)
+        saved = save_chat_message(
+            user_id=user_id,
+            sender_type=1,
+            message=message,
+            user_name=user_name
+        )
 
         return jsonify({
             "success": saved,
             "user_id": str(user_id),
+            "user_name": user_name,
             "sender_type": 1,
             "message": message
         }), 200 if saved else 502
@@ -450,6 +491,7 @@ def save_message_endpoint():
     try:
         data = request.get_json() or {}
         user_id = data.get('user_id')
+        user_name = data.get('user_name')
         message = data.get('message', '')
         sender_type = data.get('sender_type')
 
@@ -473,11 +515,17 @@ def save_message_endpoint():
                 "error": "sender_type must be one of: 1 (Human Agent), 2 (Bot), 3 (Visitor)"
             }), 400
 
-        saved = save_chat_message(user_id=user_id, sender_type=sender_type, message=message)
+        saved = save_chat_message(
+            user_id=user_id,
+            sender_type=sender_type,
+            message=message,
+            user_name=user_name
+        )
 
         return jsonify({
             "success": saved,
             "user_id": str(user_id),
+            "user_name": user_name,
             "sender_type": sender_type,
             "message": message
         }), 200 if saved else 502
