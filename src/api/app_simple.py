@@ -50,6 +50,10 @@ PAGE_ACCESS_TOKEN = os.getenv('PAGE_ACCESS_TOKEN', '')
 VERIFY_TOKEN = os.getenv('VERIFY_TOKEN', 'my_verify_token_12345')
 FACEBOOK_GRAPH_API_VERSION = os.getenv('FACEBOOK_GRAPH_API_VERSION', 'v25.0')
 MESSENGER_USER_NAME_CACHE = {}
+USER_NAME_MAP_FILE = os.getenv(
+    'USER_NAME_MAP_FILE',
+    os.path.join(PROJECT_ROOT, 'data', 'user_names.json')
+)
 
 def _log_api_call(
     api_name: str,
@@ -93,6 +97,65 @@ def _log_api_call(
         )
     except Exception as e:
         logger.warning("API log write failed: %s", e)
+
+
+def _load_user_name_map() -> dict:
+    """Load persistent user name map from local JSON file."""
+    try:
+        if not os.path.exists(USER_NAME_MAP_FILE):
+            return {}
+        with open(USER_NAME_MAP_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception as e:
+        logger.info("[NAME_MAP] load failed: %s", e)
+        return {}
+
+
+def _save_user_name_map(name_map: dict) -> None:
+    """Persist user name map to local JSON file."""
+    try:
+        folder = os.path.dirname(USER_NAME_MAP_FILE)
+        if folder:
+            os.makedirs(folder, exist_ok=True)
+        with open(USER_NAME_MAP_FILE, 'w', encoding='utf-8') as f:
+            json.dump(name_map, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.info("[NAME_MAP] save failed: %s", e)
+
+
+def get_known_user_name(user_id: str) -> Optional[str]:
+    """Get a previously known display name for this user id."""
+    if not user_id:
+        return None
+
+    # 1) In-memory fast cache
+    cached = MESSENGER_USER_NAME_CACHE.get(str(user_id))
+    if cached:
+        return cached
+
+    # 2) Persistent file cache
+    name_map = _load_user_name_map()
+    known_name = (name_map.get(str(user_id)) or '').strip()
+    if known_name:
+        MESSENGER_USER_NAME_CACHE[str(user_id)] = known_name
+        return known_name
+
+    return None
+
+
+def remember_user_name(user_id: str, user_name: Optional[str]) -> None:
+    """Remember user name in memory and local file for future webhook events."""
+    clean_name = (user_name or '').strip()
+    if not user_id or not clean_name:
+        return
+
+    MESSENGER_USER_NAME_CACHE[str(user_id)] = clean_name
+
+    name_map = _load_user_name_map()
+    if name_map.get(str(user_id)) != clean_name:
+        name_map[str(user_id)] = clean_name
+        _save_user_name_map(name_map)
 
 
 def save_chat_message(user_id: str, sender_type: int, message: str, user_name: Optional[str] = None) -> bool:
@@ -265,7 +328,8 @@ def _process_user_message(
 ) -> dict:
     """Run the same chatbot pipeline for web and Messenger inputs."""
     clean_message = (message or '').strip()
-    resolved_user_name = (user_name or '').strip() or None
+    resolved_user_name = (user_name or '').strip() or get_known_user_name(str(user_id))
+    remember_user_name(str(user_id), resolved_user_name)
     if not clean_message:
         return {
             "success": False,
@@ -455,6 +519,9 @@ def messenger_webhook():
                 )
                 if not sender_name and sender_id:
                     sender_name = get_messenger_user_name(sender_id)
+                if not sender_name and sender_id:
+                    sender_name = get_known_user_name(sender_id)
+                remember_user_name(sender_id, sender_name)
                 message_text = (message_obj.get('text') or '').strip()
                 if not message_text:
                     quick_reply_payload = ((message_obj.get('quick_reply') or {}).get('payload') or '').strip()
