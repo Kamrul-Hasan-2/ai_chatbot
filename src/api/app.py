@@ -42,6 +42,40 @@ PAGE_ACCESS_TOKEN = os.getenv('PAGE_ACCESS_TOKEN')
 VERIFY_TOKEN = os.getenv('VERIFY_TOKEN', 'my_verify_token_12345')
 
 
+def check_responder_type(user_id: str) -> dict:
+    """Check responder mode from BDStall and allow bot reply only in bot mode."""
+    try:
+        api_url = f"https://www.bdstall.com/api/item/chatbot_responder/?key=mkh677ddd2sxxkkdjff&user_id={user_id}"
+        response = requests.get(api_url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("success"):
+                responder_data = data.get("data", {})
+                responder_label = responder_data.get("responder_label", "bot")
+                responder_type = responder_data.get("responder_type", 2)
+                logger.info(
+                    "[RESPONDER CHECK] user_id=%s responder_label=%s responder_type=%s",
+                    user_id,
+                    responder_label,
+                    responder_type,
+                )
+                return {
+                    "is_bot": responder_label == "bot",
+                    "responder_type": responder_type,
+                    "responder_label": responder_label,
+                    "status": responder_data.get("status", 0),
+                }
+    except Exception as e:
+        logger.warning("[RESPONDER CHECK] Failed for %s: %s", user_id, e)
+
+    return {
+        "is_bot": True,
+        "responder_type": 2,
+        "responder_label": "bot",
+        "status": 1,
+    }
+
+
 def send_message(recipient_id: str, message_text: str) -> bool:
     """
     Send a message to a Facebook Messenger user
@@ -123,6 +157,11 @@ def webhook():
                         if message.get('text'):
                             message_text = message['text']
                             logger.info(f"Received message from {sender_id}: {message_text}")
+
+                            responder_check = check_responder_type(sender_id)
+                            if not responder_check["is_bot"]:
+                                logger.info("[HUMAN MODE] %s - skipping AI reply", sender_id)
+                                continue
                             
                             # Use new integrated system for processing
                             result = chatbot_system.process_message(
@@ -150,6 +189,11 @@ def webhook():
                     elif messaging_event.get('postback'):
                         payload = messaging_event['postback']['payload']
                         logger.info(f"Received postback from {sender_id}: {payload}")
+
+                        responder_check = check_responder_type(sender_id)
+                        if not responder_check["is_bot"]:
+                            logger.info("[HUMAN MODE] %s - skipping AI reply", sender_id)
+                            continue
                         
                         # Process postback using new system
                         result = chatbot_system.process_message(
@@ -165,8 +209,9 @@ def webhook():
                         if result.get("handover"):
                             logger.info(f"Handover active for {sender_id}; skipping AI reply")
                         else:
-                            response_text = result.get("response", "ধন্যবাদ!")
-                            send_message(sender_id, response_text)
+                            response_text = (result.get("response") or "").strip()
+                            if response_text:
+                                send_message(sender_id, response_text)
         
         return 'OK', 200
         
@@ -276,6 +321,17 @@ def chat():
         
         if not message:
             return jsonify({"error": "No message provided"}), 400
+
+        responder_check = check_responder_type(user_id)
+        if not responder_check["is_bot"]:
+            logger.info("[HUMAN MODE] %s - no AI response", user_id)
+            return jsonify({
+                "response": "",
+                "handover": True,
+                "user_id": user_id,
+                "responder_label": responder_check["responder_label"],
+                "success": True
+            }), 200
         
         # Use new integrated system
         result = chatbot_system.process_message(
