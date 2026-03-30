@@ -455,6 +455,18 @@ class SimpleChatbot:
             incoming_order_fields = self._extract_order_detail_fields(message)
             order_context_active = self.user_order_context.get(user_id, False)
 
+            # Prevent stale order-form context from hijacking normal chat/search messages.
+            if order_context_active and not incoming_order_fields:
+                if normalized_message in greeting_tokens or self._looks_like_product_query(message):
+                    logger.info(
+                        "🧹 Clearing stale order context for user_id=%s on message='%s'",
+                        user_id,
+                        message,
+                    )
+                    self.user_order_context[user_id] = False
+                    self.user_order_draft.pop(user_id, None)
+                    order_context_active = False
+
             if incoming_order_fields or order_context_active:
                 draft = dict(self.user_order_draft.get(user_id, {}))
                 draft.update(incoming_order_fields)
