@@ -432,6 +432,25 @@ class SimpleChatbot:
                         conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
                     )
 
+            # Keep thank-you replies deterministic and free of sir/mam variants.
+            thank_you_tokens = {
+                'thank you', 'thanks', 'thx', 'thanku', 'thankyou',
+                'ধন্যবাদ', 'অনেক ধন্যবাদ', 'thanks a lot'
+            }
+            if normalized_message in thank_you_tokens:
+                self.user_modes[user_id] = ChatMode.AI
+                self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+                return self._create_response(
+                    user_id=user_id,
+                    message=message,
+                    response="Most welcome",
+                    mode=ChatMode.AI,
+                    intent='thanks',
+                    products=None,
+                    processing_time=(datetime.now() - start_time).total_seconds(),
+                    conversation_status=AI_ACTIVE_STATUS
+                )
+
             # If user confirms after selecting a specific product, call order template API with listing ID.
             # Guard: do not trigger order flow for fresh product-search messages.
             selected_product = self.user_selected_product.get(user_id)
