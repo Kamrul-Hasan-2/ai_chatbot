@@ -11,8 +11,10 @@ This ensures every product-related message goes through:
 """
 import requests
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 import os
+import re
+import json
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -273,11 +275,12 @@ BDStall.com Ltd এর সাথে কেনাকাটা করার জন
         
         search_terms = step1_result['search_terms']
         intent = step1_result.get('intent', 'product_search')
+        search_context = step1_result.get('search_context', {})
         
         logger.info(f"✅ Step 1 Complete - Intent: {intent}, Search Terms: {search_terms}")
         
         # STEP 2: BDStall API Search (get top 3 products)
-        step2_result = self._step2_api_search(search_terms)
+        step2_result = self._step2_api_search(search_terms, search_context=search_context)
         
         logger.info(f"✅ Step 2 Complete - Found {step2_result['product_count']} products")
         
@@ -311,6 +314,7 @@ BDStall.com Ltd এর সাথে কেনাকাটা করার জন
             'step1': step1_result,
             'step2': step2_result,
             'step3': step3_result,
+            'search_context': search_context,
             'workflow': 'groq_3step'
         }
     
@@ -325,53 +329,49 @@ BDStall.com Ltd এর সাথে কেনাকাটা করার জন
             Dictionary with intent and search terms
         """
         if not self.groq:
-            # Fallback: simple keyword extraction
-            logger.info("📍 Step 1 (Fallback) - Simple keyword extraction")
+            # Fallback: regex-based intent metadata extraction
+            logger.info("📍 Step 1 (Fallback) - Regex intent extraction")
+            fallback = self._fallback_intent_metadata(user_message)
             return {
                 'success': True,
-                'intent': 'product_search',
-                'search_terms': user_message.strip(),
-                'confidence': 0.5,
-                'method': 'fallback'
+                'intent': fallback.get('intent', 'product_search'),
+                'search_terms': fallback.get('search_terms', user_message.strip()),
+                'confidence': 0.55,
+                'method': 'fallback',
+                'search_context': fallback
             }
         
         try:
-            # Enhanced prompt for Groq to extract intent and keywords
-            prompt = f"""You are an AI assistant for BDStall.com Ltd, Bangladesh's leading e-commerce platform.
-Your task: Analyze customer messages and extract product search intent with optimized keywords.
+            # Enhanced prompt for dynamic intent + filter extraction
+            prompt = f"""You are an AI assistant for BDStall.com Ltd.
+Extract structured product-search intent from customer message.
 
-=== CUSTOMER MESSAGE ===
+CUSTOMER MESSAGE:
 "{user_message}"
 
-=== YOUR TASK ===
-1. Identify the customer's intent (product_search, price_inquiry, availability_check, specification_request)
-2. Extract ONLY the core product keywords (remove filler words like: lagbe, chai, kinte, ache, diye, koto, etc.)
-3. Keep brand names, product types, and key specifications
-4. Handle Bengali/English mixed input naturally
-5. Optimize keywords for product search API
+Return ONLY valid JSON (no markdown, no explanation):
+{{
+    "intent": "product_search | price_range | max_price | min_price | condition_used | condition_new | sort_cheapest | sort_expensive | sort_popular | sort_latest | context_search | brand_item_search | availability_check | specification_request",
+    "search_terms": "clean core keywords for API term",
+    "brand": "brand name or empty",
+    "context_terms": ["extra context words if relevant"],
+    "price_min": number_or_null,
+    "price_max": number_or_null,
+    "condition": "used | new | any",
+    "sort": "relevance | price_asc | price_desc | popular | latest"
+}}
 
-=== OUTPUT FORMAT (strictly follow) ===
-INTENT: [one of: product_search, price_inquiry, availability_check, specification_request]
-KEYWORDS: [cleaned product search terms]
-
-=== EXAMPLES ===
-Input: "hp laptop cheap price diye ache?"
-INTENT: price_inquiry
-KEYWORDS: hp laptop
-
-Input: "web cam lagbe"
-INTENT: product_search
-KEYWORDS: web cam
-
-Input: "gaming mouse kinte chai"
-INTENT: product_search
-KEYWORDS: gaming mouse
-
-Input: "Premium Office Visitor Chair ache kina?"
-INTENT: availability_check
-KEYWORDS: Premium Office Visitor Chair
-
-Now extract from the customer message above:"""
+Rules:
+1) Keep output language-independent (works for Bangla/English mixed text).
+2) Convert Bangla digits to normal numbers.
+3) For ranges (10000-20000 / between), set both price_min and price_max.
+4) For under/below/within, set price_max.
+5) For above/over/more than, set price_min.
+6) For used/second hand, set condition=used.
+7) For new/brand new/new arrival, set condition=new.
+8) Preserve product type + brand in search_terms.
+9) If unknown, use intent=product_search and sort=relevance.
+"""
             
             logger.info("🧠 Step 1 - Groq Intent Detection (AI-powered)")
             
@@ -381,16 +381,22 @@ Now extract from the customer message above:"""
                 max_length=100
             )
             
-            # Parse the response
-            lines = response.strip().split('\n')
-            intent = 'product_search'
-            keywords = user_message.strip()
-            
-            for line in lines:
-                if line.startswith('INTENT:'):
-                    intent = line.replace('INTENT:', '').strip().lower()
-                elif line.startswith('KEYWORDS:'):
-                    keywords = line.replace('KEYWORDS:', '').strip()
+            parsed = self._parse_step1_json(response)
+            if not parsed:
+                parsed = self._fallback_intent_metadata(user_message)
+
+            intent = (parsed.get('intent') or 'product_search').strip().lower()
+            keywords = (parsed.get('search_terms') or user_message.strip()).strip()
+
+            search_context = {
+                'intent': intent,
+                'brand': (parsed.get('brand') or '').strip(),
+                'context_terms': parsed.get('context_terms') or [],
+                'price_min': self._safe_number(parsed.get('price_min')),
+                'price_max': self._safe_number(parsed.get('price_max')),
+                'condition': (parsed.get('condition') or 'any').strip().lower(),
+                'sort': (parsed.get('sort') or 'relevance').strip().lower()
+            }
             
             logger.info(f"📊 Extracted - Intent: {intent}, Keywords: {keywords}")
             
@@ -400,21 +406,202 @@ Now extract from the customer message above:"""
                 'search_terms': keywords if keywords else user_message.strip(),
                 'confidence': 0.85,
                 'groq_response': response,
-                'method': 'groq_ai'
+                'method': 'groq_ai',
+                'search_context': search_context
             }
             
         except Exception as e:
             logger.error(f"❌ Step 1 Groq failed: {e}")
             # Fallback to simple extraction
+            fallback = self._fallback_intent_metadata(user_message)
             return {
                 'success': True,
-                'intent': 'product_search',
-                'search_terms': user_message.strip(),
+                'intent': fallback.get('intent', 'product_search'),
+                'search_terms': fallback.get('search_terms', user_message.strip()),
                 'confidence': 0.4,
-                'method': 'fallback_due_to_error'
+                'method': 'fallback_due_to_error',
+                'search_context': fallback
             }
     
-    def _step2_api_search(self, search_terms: str) -> Dict:
+    def _normalize_digits(self, text: str) -> str:
+        digit_map = str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")
+        return (text or "").translate(digit_map)
+
+    def _safe_number(self, value: Any) -> Optional[float]:
+        try:
+            if value is None or value == "":
+                return None
+            return float(value)
+        except Exception:
+            return None
+
+    def _parse_step1_json(self, raw_response: str) -> Optional[Dict]:
+        text = (raw_response or "").strip()
+        if not text:
+            return None
+
+        candidates = [text]
+        matches = re.findall(r"\{.*\}", text, flags=re.DOTALL)
+        candidates.extend(matches)
+
+        for candidate in candidates:
+            try:
+                parsed = json.loads(candidate)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                continue
+        return None
+
+    def _fallback_intent_metadata(self, user_message: str) -> Dict:
+        text = self._normalize_digits(user_message.lower())
+
+        price_min = None
+        price_max = None
+        sort_type = 'relevance'
+        condition = 'any'
+        intent = 'product_search'
+
+        range_match = re.search(r'(\d{3,7})\s*(?:-|to|থেকে|between)\s*(\d{3,7})', text)
+        if range_match:
+            price_min = float(range_match.group(1))
+            price_max = float(range_match.group(2))
+            intent = 'price_range'
+
+        if re.search(r'(\bunder\b|\bbelow\b|\bwithin\b|এর\s*নিচে|নিচে|মধ্যে)', text):
+            nums = re.findall(r'\d{3,7}', text)
+            if nums:
+                price_max = float(nums[-1])
+                intent = 'max_price'
+
+        if re.search(r'(\babove\b|\bover\b|\bmore\s+than\b|এর\s*উপরে|উপরে|এর\s*বেশি|বেশি)', text):
+            nums = re.findall(r'\d{3,7}', text)
+            if nums:
+                price_min = float(nums[-1])
+                intent = 'min_price'
+
+        if re.search(r'(\bused\b|\bsecond\s+hand\b|\b2nd\s+hand\b|পুরাতন|সেকেন্ড\s*হ্যান্ড|ব্যবহৃত)', text):
+            condition = 'used'
+            intent = 'condition_used'
+        elif re.search(r'(\bbrand\s+new\b|\bnew\s+arrival\b|\bnew\b|নতুন|ব্র্যান্ড\s*নিউ)', text):
+            condition = 'new'
+            intent = 'condition_new'
+
+        if re.search(r'(\bcheap\b|\blowest\b|\bbudget\b|সস্তা|কম\s*দামে|বাজেট)', text):
+            sort_type = 'price_asc'
+            intent = 'sort_cheapest'
+        elif re.search(r'(\bpremium\b|\bhighest\b|\bexpensive\b|দামি|বেশি\s*দামের)', text):
+            sort_type = 'price_desc'
+            intent = 'sort_expensive'
+        elif re.search(r'(\bpopular\b|\bbest\b|\btop\b|জনপ্রিয়|সেরা|(?<!\S)টপ(?!\S))', text):
+            sort_type = 'popular'
+            intent = 'sort_popular'
+        elif re.search(r'(\blatest\b|\bnewest\b|\brecent\b|সাম্প্রতিক|লেটেস্ট|নতুন\s*আগমন)', text):
+            sort_type = 'latest'
+            intent = 'sort_latest'
+
+        brands = [
+            'hp', 'dell', 'lenovo', 'asus', 'acer', 'apple', 'samsung',
+            'xiaomi', 'huawei', 'oppo', 'vivo', 'sony', 'lg', 'canon', 'nikon'
+        ]
+        brand = ''
+        for b in brands:
+            if re.search(rf'\b{re.escape(b)}\b', text):
+                brand = b
+                intent = 'brand_item_search'
+                break
+
+        context_terms = []
+        context_match = re.search(r'(.+?)\s+(?:for|with|জন্য|সাথে)\s+(.+)', text)
+        if context_match:
+            intent = 'context_search'
+            context_terms = [context_match.group(2).strip()]
+
+        stopwords_pattern = (
+            r'(\bunder\b|\bbelow\b|\bwithin\b|\babove\b|\bover\b|\bmore\s+than\b|\bbetween\b|\bto\b|'
+            r'থেকে|নিচে|উপরে|মধ্যে|বেশি|\bused\b|\bsecond\s+hand\b|\b2nd\s+hand\b|\bnew\b|'
+            r'\bbrand\s+new\b|\bnew\s+arrival\b|\bcheap\b|\blowest\b|\bbudget\b|\bpremium\b|'
+            r'\bhighest\b|\bexpensive\b|\bpopular\b|\bbest\b|\btop\b|\blatest\b|\bnewest\b|\brecent\b|'
+            r'\bfor\b|\bwith\b|জন্য|সাথে|এর|(?<!\S)টপ(?!\S))'
+        )
+        cleaned = re.sub(stopwords_pattern, ' ', text, flags=re.IGNORECASE)
+        cleaned = re.sub(r'[-_,;:]+', ' ', cleaned)
+        cleaned = re.sub(r'\d{3,7}', ' ', cleaned)
+        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+
+        return {
+            'intent': intent,
+            'search_terms': cleaned or user_message.strip(),
+            'brand': brand,
+            'context_terms': context_terms,
+            'price_min': price_min,
+            'price_max': price_max,
+            'condition': condition,
+            'sort': sort_type
+        }
+
+    def _extract_price_value(self, price_text: str) -> Optional[float]:
+        if not price_text:
+            return None
+        text = self._normalize_digits(str(price_text).lower())
+        nums = re.findall(r'\d+(?:\.\d+)?', text.replace(',', ''))
+        if not nums:
+            return None
+        value = float(nums[0])
+        if 'k' in text or 'হাজার' in text:
+            value *= 1000
+        return value
+
+    def _apply_filters_and_sort(self, products: List[Dict], search_context: Optional[Dict]) -> List[Dict]:
+        if not products:
+            return products
+
+        context = search_context or {}
+        price_min = self._safe_number(context.get('price_min'))
+        price_max = self._safe_number(context.get('price_max'))
+        condition = (context.get('condition') or 'any').lower()
+        sort_type = (context.get('sort') or 'relevance').lower()
+
+        for product in products:
+            product['_price_numeric'] = self._extract_price_value(product.get('price', ''))
+
+        filtered = []
+        for product in products:
+            p = product.get('_price_numeric')
+
+            if price_min is not None and p is not None and p < price_min:
+                continue
+            if price_max is not None and p is not None and p > price_max:
+                continue
+
+            if condition in {'used', 'new'}:
+                haystack = f"{product.get('title', '')} {product.get('description', '')}".lower()
+                used_hit = bool(re.search(r'(used|second hand|2nd hand|পুরাতন|ব্যবহৃত|সেকেন্ড\s*হ্যান্ড)', haystack))
+                new_hit = bool(re.search(r'(new|brand new|নতুন|ব্র্যান্ড\s*নিউ)', haystack))
+
+                if condition == 'used' and not used_hit:
+                    continue
+                if condition == 'new' and not new_hit:
+                    continue
+
+            filtered.append(product)
+
+        if sort_type == 'price_asc':
+            filtered.sort(key=lambda x: (x.get('_price_numeric') is None, x.get('_price_numeric') or 10**12))
+        elif sort_type == 'price_desc':
+            filtered.sort(key=lambda x: (x.get('_price_numeric') is None, -(x.get('_price_numeric') or 0)))
+        elif sort_type == 'latest':
+            filtered.sort(key=lambda x: int(str(x.get('listing_id') or '0')) if str(x.get('listing_id') or '').isdigit() else 0, reverse=True)
+        elif sort_type == 'popular':
+            # API does not provide stable popularity signals here; keep API relevance order.
+            pass
+
+        for product in filtered:
+            product.pop('_price_numeric', None)
+
+        return filtered
+
+    def _step2_api_search(self, search_terms: str, search_context: Optional[Dict] = None) -> Dict:
         """
         STEP 2: Search BDStall API for products with dynamic typo correction
         
@@ -443,9 +630,23 @@ Now extract from the customer message above:"""
                 else:
                     logger.info("✓ No typos detected or direct match found")
             
-            # Use corrected terms for API search
+            context_terms = []
+            if search_context and isinstance(search_context.get('context_terms'), list):
+                context_terms = [str(t).strip() for t in search_context.get('context_terms', []) if str(t).strip()]
+
+            brand = ''
+            if search_context:
+                brand = str(search_context.get('brand') or '').strip()
+
+            query_parts = [corrected_terms]
+            if brand and brand.lower() not in corrected_terms.lower():
+                query_parts.insert(0, brand)
+            query_parts.extend(context_terms)
+            query_term = " ".join(part for part in query_parts if part).strip()
+
+            # Use enriched query term for API search
             params = {
-                'term': corrected_terms,
+                'term': query_term or corrected_terms,
                 'key': self.bdstall_api_key
             }
             
@@ -477,15 +678,21 @@ Now extract from the customer message above:"""
                     }
                     products.append(standardized)
             
-            logger.info(f"✅ Found {len(products)} products from API")
+            filtered_products = self._apply_filters_and_sort(products, search_context)
+            top_products = filtered_products[:3]
+
+            logger.info(f"✅ Found {len(products)} raw products from API, {len(filtered_products)} after filters")
             
             return {
                 'success': True,
-                'product_count': len(products),
-                'products': products,
-                'search_terms': corrected_terms,
+                'product_count': len(top_products),
+                'products': top_products,
+                'search_terms': query_term or corrected_terms,
                 'original_search_terms': search_terms,
-                'typo_correction': typo_info
+                'typo_correction': typo_info,
+                'search_context': search_context or {},
+                'raw_product_count': len(products),
+                'filtered_product_count': len(filtered_products)
             }
             
         except Exception as e:
