@@ -34,6 +34,23 @@ PAGE_ACCESS_TOKEN = os.getenv('PAGE_ACCESS_TOKEN')
 VERIFY_TOKEN = os.getenv('VERIFY_TOKEN', 'my_verify_token_12345')
 
 
+def _is_human_or_handover_state(result: dict) -> bool:
+    """Return True when conversation is in human mode or handover state."""
+    if not result:
+        return False
+
+    processing_info = result.get("processing_info") or {}
+    mode = processing_info.get("mode")
+
+    return any([
+        result.get("in_human_mode") is True,
+        result.get("handover") is True,
+        result.get("handoff_triggered") is True,
+        processing_info.get("handover") is True,
+        mode in {"human_mode", "handoff_triggered"}
+    ])
+
+
 def send_message(recipient_id: str, message_text: str) -> bool:
     """Send a message to a Facebook Messenger user"""
     if not PAGE_ACCESS_TOKEN:
@@ -115,13 +132,13 @@ def webhook():
                                 }
                             )
                             
-                            if result.get("handover"):
-                                logger.info(f"Handover active for {sender_id}; skipping AI reply")
+                            if _is_human_or_handover_state(result):
+                                logger.info(f"Human/handover active for {sender_id}; skipping AI reply")
                             else:
                                 response_text = (result.get("response") or "").strip()
                                 if not response_text:
                                     logger.info(
-                                        f"No bot reply for {sender_id} (handover={result.get('handover')})"
+                                        f"No bot reply for {sender_id} (human_or_handover={_is_human_or_handover_state(result)})"
                                     )
                                     continue
                                 send_message(sender_id, response_text)
@@ -142,10 +159,13 @@ def webhook():
                             }
                         )
                         
-                        if result.get("handover"):
-                            logger.info(f"Handover active for {sender_id}; skipping AI reply")
+                        if _is_human_or_handover_state(result):
+                            logger.info(f"Human/handover active for {sender_id}; skipping AI reply")
                         else:
-                            response_text = result.get("response", "ধন্যবাদ!")
+                            response_text = (result.get("response") or "").strip()
+                            if not response_text:
+                                logger.info(f"No bot reply for postback sender={sender_id}")
+                                continue
                             send_message(sender_id, response_text)
         
         return 'OK', 200
@@ -190,7 +210,7 @@ def chat():
             }
         )
         
-        if result.get("handover"):
+        if _is_human_or_handover_state(result):
             return jsonify({
                 "response": "",
                 "handover": True,
