@@ -433,8 +433,9 @@ class SimpleChatbot:
                     )
 
             # If user confirms after selecting a specific product, call order template API with listing ID.
+            # Guard: do not trigger order flow for fresh product-search messages.
             selected_product = self.user_selected_product.get(user_id)
-            if selected_product and self._is_order_confirmation_message(message):
+            if selected_product and (not self._looks_like_product_query(message)) and self._is_order_confirmation_message(message):
                 listing_id = self._extract_listing_id_from_url(selected_product.get('url', ''))
                 if listing_id:
                     order_template = self._fetch_order_intent_response(listing_id)
@@ -1528,6 +1529,14 @@ Examples:
         """Detect short confirmation replies after product selection."""
         text = str(message or "").strip().lower()
         if not text:
+            return False
+
+        # Fresh product-search queries should never be treated as order confirmation.
+        if self._looks_like_product_query(text):
+            return False
+
+        # Confirmation replies are usually short acknowledgements.
+        if len(text.split()) > 4:
             return False
 
         positive_tokens = {
