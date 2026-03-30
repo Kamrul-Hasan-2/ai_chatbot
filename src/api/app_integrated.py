@@ -34,21 +34,41 @@ PAGE_ACCESS_TOKEN = os.getenv('PAGE_ACCESS_TOKEN')
 VERIFY_TOKEN = os.getenv('VERIFY_TOKEN', 'my_verify_token_12345')
 
 
-def _is_human_or_handover_state(result: dict) -> bool:
-    """Return True when conversation is in human mode or handover state."""
-    if not result:
-        return False
-
-    processing_info = result.get("processing_info") or {}
-    mode = processing_info.get("mode")
-
-    return any([
-        result.get("in_human_mode") is True,
-        result.get("handover") is True,
-        result.get("handoff_triggered") is True,
-        processing_info.get("handover") is True,
-        mode in {"human_mode", "handoff_triggered"}
-    ])
+def check_responder_type(user_id: str) -> dict:
+    """
+    Check who should respond (bot or human) by calling BDStall Responder API.
+    Returns: {"is_bot": bool, "responder_type": int, "responder_label": str, "status": int}
+    """
+    try:
+        api_url = f"https://www.bdstall.com/api/item/chatbot_responder/?key=mkh677ddd2sxxkkdjff&user_id={user_id}"
+        response = requests.get(api_url, timeout=5)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("success"):
+                responder_data = data.get("data", {})
+                responder_label = responder_data.get("responder_label", "bot")
+                responder_type = responder_data.get("responder_type", 2)
+                
+                logger.info(f"[RESPONDER CHECK] user_id={user_id}, responder_label={responder_label}, responder_type={responder_type}")
+                
+                return {
+                    "is_bot": responder_label == "bot",
+                    "responder_type": responder_type,
+                    "responder_label": responder_label,
+                    "status": responder_data.get("status", 0),
+                    "user_name": responder_data.get("user_name")
+                }
+    except Exception as e:
+        logger.warning(f"[RESPONDER CHECK] Failed to check responder type for {user_id}: {e}")
+    
+    # Default to bot if API fails (safe fallback)
+    return {
+        "is_bot": True,
+        "responder_type": 2,
+        "responder_label": "bot",
+        "status": 1
+    }
 
 
 def send_message(recipient_id: str, message_text: str) -> bool:
@@ -121,52 +141,58 @@ def webhook():
                             message_text = message['text']
                             logger.info(f"Received message from {sender_id}: {message_text}")
                             
-                            # Use new integrated system for processing
-                            result = chatbot_system.process_message(
-                                user_id=sender_id,
-                                message=message_text,
-                                channel="facebook",
-                                metadata={
-                                    "message_id": message.get("mid"),
-                                    "timestamp": messaging_event.get("timestamp")
-                                }
-                            )
+                            # Check responder type via BDStall API
+                            responder_check = check_responder_type(sender_id)
                             
-                            if _is_human_or_handover_state(result):
-                                logger.info(f"Human/handover active for {sender_id}; skipping AI reply")
-                            else:
+                            # Only process and reply if bot should handle it
+                            if responder_check["is_bot"]:
+                                # Use new integrated system for processing
+                                result = chatbot_system.process_message(
+                                    user_id=sender_id,
+                                    message=message_text,
+                                    channel="facebook",
+                                    metadata={
+                                        "message_id": message.get("mid"),
+                                        "timestamp": messaging_event.get("timestamp")
+                                    }
+                                )
+                                
                                 response_text = (result.get("response") or "").strip()
-                                if not response_text:
-                                    logger.info(
-                                        f"No bot reply for {sender_id} (human_or_handover={_is_human_or_handover_state(result)})"
-                                    )
-                                    continue
-                                send_message(sender_id, response_text)
+                                if response_text:
+                                    send_message(sender_id, response_text)
+                                else:
+                                    logger.info(f"No bot response generated for {sender_id}")
+                            else:
+                                logger.info(f"[HUMAN MODE] {sender_id} - human handling. No AI reply sent.")
                     
                     # Handle postbacks (button clicks)
                     elif messaging_event.get('postback'):
                         payload = messaging_event['postback']['payload']
                         logger.info(f"Received postback from {sender_id}: {payload}")
                         
-                        # Process postback using new system
-                        result = chatbot_system.process_message(
-                            user_id=sender_id,
-                            message=payload,
-                            channel="facebook",
-                            metadata={
-                                "type": "postback",
-                                "title": messaging_event['postback'].get('title')
-                            }
-                        )
+                        # Check responder type via BDStall API
+                        responder_check = check_responder_type(sender_id)
                         
-                        if _is_human_or_handover_state(result):
-                            logger.info(f"Human/handover active for {sender_id}; skipping AI reply")
-                        else:
+                        # Only process and reply if bot should handle it
+                        if responder_check["is_bot"]:
+                            # Process postback using new system
+                            result = chatbot_system.process_message(
+                                user_id=sender_id,
+                                message=payload,
+                                channel="facebook",
+                                metadata={
+                                    "type": "postback",
+                                    "title": messaging_event['postback'].get('title')
+                                }
+                            )
+                            
                             response_text = (result.get("response") or "").strip()
-                            if not response_text:
-                                logger.info(f"No bot reply for postback sender={sender_id}")
-                                continue
-                            send_message(sender_id, response_text)
+                            if response_text:
+                                send_message(sender_id, response_text)
+                            else:
+                                logger.info(f"No bot response generated for postback from {sender_id}")
+                        else:
+                            logger.info(f"[HUMAN MODE] {sender_id} - human handling. No AI reply sent.")
         
         return 'OK', 200
        
@@ -199,6 +225,20 @@ def chat():
         if not message:
             return jsonify({"error": "No message provided"}), 400
         
+        # Check responder type via BDStall API
+        responder_check = check_responder_type(user_id)
+        
+        # Only process if bot should handle it
+        if not responder_check["is_bot"]:
+            logger.info(f"[HUMAN MODE] {user_id} - human handling. No AI reply.")
+            return jsonify({
+                "response": "",
+                "user_id": user_id,
+                "responder_label": responder_check["responder_label"],
+                "message": "Human is now handling this conversation",
+                "success": True
+            }), 200
+        
         # Use new integrated system
         result = chatbot_system.process_message(
             user_id=user_id,
@@ -209,15 +249,6 @@ def chat():
                 "user_agent": request.headers.get('User-Agent')
             }
         )
-        
-        if _is_human_or_handover_state(result):
-            return jsonify({
-                "response": "",
-                "handover": True,
-                "user_id": user_id,
-                "processing_info": result.get("processing_info", {}),
-                "success": True
-            }), 200
 
         if result["success"]:
             return jsonify({
