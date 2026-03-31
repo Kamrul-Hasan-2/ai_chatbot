@@ -586,15 +586,16 @@ class SimpleChatbot:
             logger.info(f"✅ Intent: {intent}")
             logger.info(f"🔍 Search Keywords: {search_keywords}")
 
-            # Ordering intent should always return the standard order-info template.
+            # Ordering intent should call template API first if product selected.
             if intent == 'ordering':
                 self.user_order_context[user_id] = True
                 self.user_order_draft[user_id] = {}
                 self.user_modes[user_id] = ChatMode.AI
+                order_template = self._get_order_info_template(user_id)
                 return self._create_response(
                     user_id=user_id,
                     message=message,
-                    response=self._get_order_info_template(),
+                    response=order_template,
                     mode=ChatMode.AI,
                     intent=intent,
                     products=None,
@@ -1213,9 +1214,6 @@ Examples:
 
                 database_message += "\n"
 
-                if description:
-                    database_message += f"   বিবরণ: {description}...\n"
-
                 database_message += f"   লিংক: {url}\n\n"
 
                 products_list.append({
@@ -1224,8 +1222,7 @@ Examples:
                     'original_price': original_price,
                     'discount': discount,
                     'url': url,
-                    'image': product.get('ListingThumbAvator', ''),
-                    'description': description
+                    'image': product.get('ListingThumbAvator', '')
                 })
 
             return {
@@ -1428,17 +1425,17 @@ Examples:
                         description = description[:100] + "..."
                     
                     response_text += f"{idx}. {title}\n"
-                    response_text += f"💰 মূল্য: {price}\n"
+                    response_text += f"মূল্য: {price}\n"
                     
                     if description:
-                        response_text += f"📝 বিবরণ: {description}\n"
+                        response_text += f"বিবরণ: {description}\n"
                     
                     if url:
-                        response_text += f"🔗 লিংক: {url}\n"
+                        response_text += f"লিংক: {url}\n"
                     
                     response_text += "\n"
                 
-                response_text += "আরও তথ্যের জন্য আমাদের সাথে যোগাযোগ করুন। ধন্যবাদ! 🙏"
+                response_text += "আরও তথ্যের জন্য আমাদের সাথে যোগাযোগ করুন। ধন্যবাদ!"
                 
                 return {
                     'success': True,
@@ -1474,10 +1471,26 @@ Examples:
             logger.error(f"❌ AI formatting failed: {e}")
             return {'success': False, 'error': str(e)}
 
-    def _get_order_info_template(self) -> str:
-        """Standard template to collect order details from user."""
+    def _get_order_info_template(self, user_id: str) -> str:
+        """Fetch order template from BDStall API if product selected, otherwise return standard template."""
+        # Try to get selected product
+        selected_product = self.user_selected_product.get(user_id)
+        
+        if selected_product:
+            # Extract listing ID from product URL
+            listing_id = self._extract_listing_id_from_url(selected_product.get('url', ''))
+            if listing_id:
+                # Fetch template from BDStall API
+                api_template = self._fetch_order_intent_response(listing_id)
+                if api_template:
+                    logger.info(f"✅ Order template fetched from API for listing_id={listing_id}")
+                    return api_template
+                else:
+                    logger.warning(f"⚠️ Order template API returned empty for listing_id={listing_id}, using fallback")
+        
+        # Fallback to standard template
         return (
-            "Sir, আপনি যদি প্রোডাক্টটি অর্ডার করতে চান, তাহলে দয়া করে নিচের তথ্যগুলো দিন:\n\n"
+            "Sir, আপনি যদি প্রোডাক্টটি অর্ডার করতে চান, তাহলে দয়া করে নিচের তথ্যগুলো দিন:\n\n"
             "Name:\n"
             "Phone Number:\n"
             "Address:\n"
@@ -1618,13 +1631,13 @@ Examples:
 
         response_text = f"দারুণ পছন্দ স্যার। আপনি {selected_index} নম্বর প্রোডাক্টটি নির্বাচন করেছেন।\n\n"
         response_text += f"{selected_index}. {title}\n"
-        response_text += f"💰 মূল্য: {price}\n"
+        response_text += f"মূল্য: {price}\n"
 
         if description:
-            response_text += f"📝 বিবরণ: {description}\n"
+            response_text += f"বিবরণ: {description}\n"
 
         if url:
-            response_text += f"🔗 লিংক: {url}\n"
+            response_text += f"লিংক: {url}\n"
 
         response_text += "\nআপনি চাইলে আমি এখন এই প্রোডাক্টটি অর্ডার করার ধাপগুলোও বলে দিতে পারি।"
         return response_text
