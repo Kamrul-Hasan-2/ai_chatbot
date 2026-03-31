@@ -568,6 +568,8 @@ class SimpleChatbot:
             
             logger.info(f"✅ Intent: {intent}")
             logger.info(f"🔍 Search Keywords: {search_keywords}")
+            logger.info("📋 [INTENT_DETECTION] intent=%s keywords=%s looks_like_product=%s", 
+                        intent, search_keywords, self._looks_like_product_query(message))
 
             # Order/buy intent should call template API with dynamic intent + listing id.
             if intent == 'ordering' or self._looks_like_order_buy_message(message):
@@ -635,27 +637,34 @@ class SimpleChatbot:
             # STEP 2 & 3: Search API → Database Format
             if intent in ['product_search', 'price_search', 'laptop_search']:
                 logger.info("🚀 STEP 2-3: Searching database with keywords...")
+                logger.info("🔎 [SEARCH_INITIATED] user_id=%s intent=%s keywords='%s'", user_id, intent, search_keywords)
                 search_result = self._step2_search_database(search_keywords)
+                logger.info("🔎 [SEARCH_RESULT] found=%d products for keywords='%s'", search_result['products_found'], search_keywords)
 
                 # Retry once with a broader query before switching to HUMAN mode.
                 if search_result['products_found'] == 0:
+                    logger.info("🔁 [SEARCH_RETRY] No exact match, trying broader keywords...")
                     broader_keywords = self._build_broader_search_keywords(search_keywords, message)
                     if broader_keywords:
                         logger.info(
-                            "🔁 No results for '%s'; retrying with broader keywords '%s'",
+                            "🔁 [SEARCH_RETRY_ATTEMPT] No results for '%s'; retrying with broader keywords '%s'",
                             search_keywords,
                             broader_keywords
                         )
                         retry_result = self._step2_search_database(broader_keywords)
                         if retry_result['products_found'] > 0:
+                            logger.info("✅ [SEARCH_RETRY_SUCCESS] Found %d products with broader keywords", retry_result['products_found'])
                             search_keywords = broader_keywords
                             search_result = retry_result
+                        else:
+                            logger.info("❌ [SEARCH_RETRY_FAILED] Broader keywords also returned no results")
                 
                 if search_result['products_found'] == 0:
                     # Keep AI mode for product queries even when no exact result is found.
                     # This avoids premature human handoff for Messenger phrasing/keywords.
                     self.user_modes[user_id] = ChatMode.AI
                     self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+                    logger.info("⚠️ [PRODUCT_SEARCH_NO_RESULTS] Returning fallback message for user_id=%s", user_id)
                     return self._create_response(
                         user_id=user_id,
                         message=message,
@@ -678,6 +687,8 @@ class SimpleChatbot:
                 self.user_product_context[user_id] = products[:5]
                 
                 logger.info(f"✅ Found {len(products)} products")
+                logger.info("📦 [PRODUCT_SEARCH_SUCCESS] user_id=%s found %d products from %d total", 
+                            user_id, len(products), search_result.get('total_products', 0))
                 
                 # STEP 4: Database Message → AI (Final Formatting)
                 logger.info("🚀 STEP 4: Sending to AI for final response...")
@@ -685,6 +696,7 @@ class SimpleChatbot:
                 
                 if not final_response['success']:
                     # AI formatting failed, switch to HUMAN
+                    logger.error("❌ [STEP4_FAILED] AI formatting failed for user_id=%s", user_id)
                     return self._handoff_to_human(
                         user_id=user_id,
                         message=message,
@@ -695,6 +707,7 @@ class SimpleChatbot:
                 
                 # Success! Keep in AI mode
                 self.user_modes[user_id] = ChatMode.AI
+                logger.info("✅ [PRODUCT_RESPONSE_READY] Returning formatted response with %d products", len(products))
                 
                 return self._create_response(
                     user_id=user_id,
@@ -873,10 +886,13 @@ Examples:
     def _local_intent_fallback(self, message: str) -> tuple[str, str]:
         """Deterministic fallback when Groq is unavailable or returns unparsable output."""
         text = str(message or '').strip().lower()
+        logger.info("🔄 [LOCAL_FALLBACK] Fallback intent detection for message: %s", message[:50])
 
         if self._looks_like_product_query(message):
+            logger.info("🔄 [LOCAL_FALLBACK_PRODUCT] Detected as product query")
             # Keep laptop intent specific when laptop keyword appears.
             if 'laptop' in text or 'ল্যাপটপ' in text:
+                logger.info("🔄 [LOCAL_FALLBACK_LAPTOP] Detected as laptop search")
                 return 'laptop_search', self._build_product_search_keywords(message)
             if any(w in text for w in ['price', 'dam', 'দাম', 'tk', 'taka', 'টাকা']):
                 return 'price_search', self._build_product_search_keywords(message)
