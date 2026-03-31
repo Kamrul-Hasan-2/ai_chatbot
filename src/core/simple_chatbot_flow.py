@@ -386,51 +386,34 @@ class SimpleChatbot:
                 return self._create_response(
                     user_id=user_id,
                     message=message,
-                    response="থ্যাঙ্ক ইউ। আমাদের একজন প্রতিনিধি শীঘ্রই আপনার সাথে যোগাযোগ করবেন।",
+                    response="",
                     mode=ChatMode.HUMAN,
-                    intent='agent_assigned',
+                    intent='human_mode_active',
                     products=None,
                     processing_time=(datetime.now() - start_time).total_seconds(),
                     conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
                 )
 
-            # Once handed over, stop automated reasoning until a human resets the conversation.
-            if current_mode == ChatMode.HUMAN and current_status == HUMAN_SUPPORT_REQUIRED_STATUS:
-                if normalized_message in greeting_tokens:
-                    # Auto-recover simple Messenger greetings from stale handoff state.
-                    self.user_modes[user_id] = ChatMode.AI
-                    self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
-                    greeting_response = self._search_database_faq(message) or (
-                        "আসসালামু আলাইকুম স্যার। BDStall এ আপনাকে স্বাগতম। "
-                        "আপনি কোন প্রোডাক্ট খুঁজছেন জানালে আমি সাহায্য করতে পারি।"
-                    )
-                    return self._create_response(
-                        user_id=user_id,
-                        message=message,
-                        response=greeting_response,
-                        mode=ChatMode.AI,
-                        intent='greeting',
-                        products=None,
-                        processing_time=(datetime.now() - start_time).total_seconds(),
-                        conversation_status=AI_ACTIVE_STATUS
-                    )
+            # Resume AI only when responder API explicitly returns bot mode.
+            if responder_type == 'bot' and current_mode == ChatMode.HUMAN:
+                self.user_modes[user_id] = ChatMode.AI
+                self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+                current_mode = ChatMode.AI
+                current_status = AI_ACTIVE_STATUS
+                logger.info("🔄 Resuming AI mode from responder API for user_id=%s", user_id)
 
-                if self._looks_like_product_query(message):
-                    # Resume AI automatically when user sends a new product request.
-                    self.user_modes[user_id] = ChatMode.AI
-                    self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
-                    logger.info("🔄 Resuming AI mode from HUMAN for product query user_id=%s", user_id)
-                else:
-                    return self._create_response(
-                        user_id=user_id,
-                        message=message,
-                        response="",
-                        mode=ChatMode.HUMAN,
-                        intent='human_support_required',
-                        products=None,
-                        processing_time=(datetime.now() - start_time).total_seconds(),
-                        conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
-                    )
+            # In human mode, always stay silent (no automated reply/alert text).
+            if current_mode == ChatMode.HUMAN and current_status == HUMAN_SUPPORT_REQUIRED_STATUS:
+                return self._create_response(
+                    user_id=user_id,
+                    message=message,
+                    response="",
+                    mode=ChatMode.HUMAN,
+                    intent='human_support_required',
+                    products=None,
+                    processing_time=(datetime.now() - start_time).total_seconds(),
+                    conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
+                )
 
             # Keep thank-you replies deterministic and free of sir/mam variants.
             thank_you_tokens = {
@@ -1782,9 +1765,9 @@ Examples:
         missing_lines = "\n".join(f"{labels[k]}:" for k in missing_keys if k in labels)
 
         return (
-            "স্যার, অর্ডার কনফার্ম করার জন্য নিচের বাকি তথ্যগুলো দিন:\n\n"
+            "অর্ডার সম্পন্ন করতে শুধু বাকি তথ্যগুলো দিন:\n\n"
             f"{missing_lines}\n\n"
-            "সব তথ্য দিলে আমরা আপনার অর্ডারটি কনফার্ম করে দেব।"
+            "ধন্যবাদ।"
         )
     
     def _create_response(

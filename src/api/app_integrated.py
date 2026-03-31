@@ -235,7 +235,6 @@ def chat():
                 "response": "",
                 "user_id": user_id,
                 "responder_label": responder_check["responder_label"],
-                "message": "Human is now handling this conversation",
                 "success": True
             }), 200
         
