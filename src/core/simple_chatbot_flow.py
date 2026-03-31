@@ -586,12 +586,16 @@ class SimpleChatbot:
             logger.info(f"✅ Intent: {intent}")
             logger.info(f"🔍 Search Keywords: {search_keywords}")
 
-            # Ordering intent should call template API first if product selected.
-            if intent == 'ordering':
+            # Order/buy intent should call template API with dynamic intent + listing id.
+            if intent == 'ordering' or self._looks_like_order_buy_message(message):
                 self.user_order_context[user_id] = True
                 self.user_order_draft[user_id] = {}
                 self.user_modes[user_id] = ChatMode.AI
-                order_template = self._get_order_info_template(user_id)
+                order_template = self._get_order_info_template(
+                    user_id=user_id,
+                    message=message,
+                    intent_hint=self._resolve_order_template_intent(message)
+                )
                 return self._create_response(
                     user_id=user_id,
                     message=message,
@@ -1326,19 +1330,21 @@ Examples:
             logger.warning("⚠️ Delivery intent API call failed: %s", e)
             return None
 
-    def _fetch_order_intent_response(self, listing_id: str) -> Optional[str]:
-        """Fetch order template text from BDStall intent API using selected product listing ID."""
-        params = {
-            'intent': 'order',
-            'id': listing_id,
-            'key': self.api_key
-        }
+    def _fetch_order_intent_response(self, listing_id: str, template_intent: str = 'order') -> Optional[str]:
+        """Fetch order/buy template text from BDStall intent API using listing ID."""
+        normalized_intent = str(template_intent or 'order').strip().lower()
+        if normalized_intent not in {'order', 'buy'}:
+            normalized_intent = 'order'
+
+        request_url = (
+            f"{self.order_intent_api_url}"
+            f"intent={normalized_intent}&id={listing_id}&key={self.api_key}"
+        )
         started = datetime.now()
 
         try:
             response = requests.get(
-                self.order_intent_api_url,
-                params=params,
+                request_url,
                 timeout=10
             )
             duration_ms = int((datetime.now() - started).total_seconds() * 1000)
@@ -1347,8 +1353,12 @@ Examples:
             _log_api_call(
                 api_name="ai_template_order",
                 method="GET",
-                url=self.order_intent_api_url,
-                request_payload=params,
+                url=request_url,
+                request_payload={
+                    'intent': normalized_intent,
+                    'id': listing_id,
+                    'key': self.api_key
+                },
                 status_code=response.status_code,
                 duration_ms=duration_ms,
                 status=status,
@@ -1357,8 +1367,9 @@ Examples:
 
             if status == "FAIL":
                 logger.warning(
-                    "⚠️ Order intent API failed with status %s for listing_id=%s",
+                    "⚠️ Order intent API failed with status %s for intent=%s listing_id=%s",
                     response.status_code,
+                    normalized_intent,
                     listing_id
                 )
                 return None
@@ -1394,8 +1405,12 @@ Examples:
             _log_api_call(
                 api_name="ai_template_order",
                 method="GET",
-                url=self.order_intent_api_url,
-                request_payload=params,
+                url=request_url,
+                request_payload={
+                    'intent': normalized_intent,
+                    'id': listing_id,
+                    'key': self.api_key
+                },
                 status_code=0,
                 duration_ms=duration_ms,
                 status="FAIL",
@@ -1471,33 +1486,77 @@ Examples:
             logger.error(f"❌ AI formatting failed: {e}")
             return {'success': False, 'error': str(e)}
 
-    def _get_order_info_template(self, user_id: str) -> str:
-        """Fetch order template from BDStall API if product selected, otherwise return standard template."""
-        # Try to get selected product
-        selected_product = self.user_selected_product.get(user_id)
-        
-        if selected_product:
-            # Extract listing ID from product URL
-            listing_id = self._extract_listing_id_from_url(selected_product.get('url', ''))
-            if listing_id:
-                # Fetch template from BDStall API
-                api_template = self._fetch_order_intent_response(listing_id)
-                if api_template:
-                    logger.info(f"✅ Order template fetched from API for listing_id={listing_id}")
-                    return api_template
-                else:
-                    logger.warning(f"⚠️ Order template API returned empty for listing_id={listing_id}, using fallback")
-        
-        # Fallback to standard template
+    def _get_order_info_template(self, user_id: str, message: str, intent_hint: str = 'order') -> str:
+        """Fetch order/buy template from API using conversation context and dynamic listing ID."""
+        listing_id = self._resolve_order_listing_id(user_id, message)
+        if listing_id:
+            api_template = self._fetch_order_intent_response(listing_id, intent_hint)
+            if api_template:
+                logger.info(
+                    "✅ %s template fetched from API for listing_id=%s",
+                    intent_hint,
+                    listing_id
+                )
+                return api_template
+
+            logger.warning(
+                "⚠️ %s template API returned empty for listing_id=%s",
+                intent_hint,
+                listing_id
+            )
+
         return (
-            "Sir, আপনি যদি প্রোডাক্টটি অর্ডার করতে চান, তাহলে দয়া করে নিচের তথ্যগুলো দিন:\n\n"
-            "Name:\n"
-            "Phone Number:\n"
-            "Address:\n"
-            "Product Name:\n"
-            "Quantity:\n\n"
-            "এই তথ্যগুলো দিলে আমরা আপনার অর্ডারটি কনফার্ম করে দেব।"
+            "আপনি কোন প্রোডাক্টটি অর্ডার/বাই করতে চান তার লিংক বা প্রোডাক্ট নম্বর দিন। "
+            "আমি সাথে সাথে অর্ডার টেমপ্লেট এনে দিচ্ছি।"
         )
+
+    def _resolve_order_template_intent(self, message: str) -> str:
+        """Choose API template intent between 'order' and 'buy' from message text."""
+        text = str(message or '').lower()
+        buy_markers = [
+            'buy', 'kinbo', 'kinte', 'কিনবো', 'কিনব', 'কিনতে', 'কিভাবে কিনবো', 'kibabe kinbo'
+        ]
+        return 'buy' if any(marker in text for marker in buy_markers) else 'order'
+
+    def _looks_like_order_buy_message(self, message: str) -> bool:
+        """Detect order/buy intent phrases even if upstream intent classifier misses them."""
+        text = str(message or '').lower()
+        if not text.strip():
+            return False
+
+        markers = [
+            'order', 'buy', 'order korbo', 'kibabe order korbo', 'kivabe order korbo',
+            'কিভাবে অর্ডার', 'অর্ডার করবো', 'অর্ডার করব', 'অর্ডার দিব', 'অর্ডার দেব',
+            'কিনবো', 'কিনব', 'কিনতে চাই', 'কিভাবে কিনবো', 'কিভাবে কিনব',
+            'kibabe kinbo', 'kivabe kinbo'
+        ]
+        return any(marker in text for marker in markers)
+
+    def _resolve_order_listing_id(self, user_id: str, message: str) -> Optional[str]:
+        """Resolve listing ID from user message URL, selected product, or latest product context."""
+        message_text = str(message or '').strip()
+
+        # Priority 1: listing ID present in current message (usually from BDStall URL).
+        direct_id = self._extract_listing_id_from_url(message_text)
+        if direct_id:
+            return direct_id
+
+        # Priority 2: selected product from prior numbered selection.
+        selected_product = self.user_selected_product.get(user_id) or {}
+        selected_url = str(selected_product.get('url') or '').strip()
+        selected_id = self._extract_listing_id_from_url(selected_url)
+        if selected_id:
+            return selected_id
+
+        # Priority 3: latest shown product list in current conversation.
+        user_products = self.user_product_context.get(user_id) or []
+        if user_products:
+            first_url = str(user_products[0].get('url') or '').strip()
+            first_id = self._extract_listing_id_from_url(first_url)
+            if first_id:
+                return first_id
+
+        return None
 
     def _get_irrelevant_handoff_message(self) -> str:
         """Bangla handoff message for irrelevant or out-of-scope customer queries."""
