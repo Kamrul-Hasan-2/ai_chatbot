@@ -320,6 +320,33 @@ def get_messenger_user_name(sender_id: str) -> Optional[str]:
     return None
 
 
+def get_responder_user_name(user_id: str) -> Optional[str]:
+    """Resolve user name from BDStall responder API when Messenger profile lookup is unavailable."""
+    if not user_id:
+        return None
+
+    try:
+        url = "https://www.bdstall.com/api/item/chatbot_responder/"
+        params = {
+            "key": SAVE_MESSAGE_API_KEY,
+            "user_id": str(user_id)
+        }
+        response = requests.get(url, params=params, timeout=8)
+        if not (200 <= response.status_code < 300):
+            return None
+
+        data = response.json() if response.text else {}
+        responder_data = data.get("data") if isinstance(data, dict) else {}
+        resolved_name = (responder_data.get("user_name") or "").strip() if isinstance(responder_data, dict) else ""
+        if resolved_name:
+            MESSENGER_USER_NAME_CACHE[str(user_id)] = resolved_name
+            return resolved_name
+    except Exception as e:
+        logger.info("[WEBHOOK] responder user_name lookup failed for %s: %s", user_id, e)
+
+    return None
+
+
 def _process_user_message(
     user_id: str,
     message: str,
@@ -328,7 +355,11 @@ def _process_user_message(
 ) -> dict:
     """Run the same chatbot pipeline for web and Messenger inputs."""
     clean_message = (message or '').strip()
-    resolved_user_name = (user_name or '').strip() or get_known_user_name(str(user_id))
+    resolved_user_name = (
+        (user_name or '').strip()
+        or get_known_user_name(str(user_id))
+        or get_responder_user_name(str(user_id))
+    )
     remember_user_name(str(user_id), resolved_user_name)
     if not clean_message:
         return {
@@ -385,6 +416,9 @@ def _process_user_message(
         visitor_saved,
         bot_saved
     )
+
+    # Always include user_name in API response when known.
+    result['user_name'] = resolved_user_name
 
     return result
 
@@ -521,6 +555,8 @@ def messenger_webhook():
                     sender_name = get_messenger_user_name(sender_id)
                 if not sender_name and sender_id:
                     sender_name = get_known_user_name(sender_id)
+                if not sender_name and sender_id:
+                    sender_name = get_responder_user_name(sender_id)
                 remember_user_name(sender_id, sender_name)
                 message_text = (message_obj.get('text') or '').strip()
                 if not message_text:
