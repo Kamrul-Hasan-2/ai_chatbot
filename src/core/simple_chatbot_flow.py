@@ -917,6 +917,11 @@ Examples:
             'laptop', 'phone', 'mobile', 'pc', 'computer', 'monitor', 'mouse', 'keyboard',
             'headphone', 'ssd', 'ram', 'printer', 'camera', 'router', 'charger',
             'gun', 'stun', 'stun gun', 'taser',
+            # Laptop models
+            'elitebook', 'pavilion', 'thinkpad', 'inspiron', 'aspire', 'vivobook', 'zbook',
+            'macbook', 'chromebook', 'probook', 'pixelbook', 'razer', 'alienware', 'rog',
+            # Model patterns (G8, G7, G6, etc.)
+            'g8', 'g7', 'g6', 'g5', 'g4', 'g3', 'g2', 'g1',
             'ল্যাপটপ', 'মোবাইল', 'ফোন', 'কম্পিউটার', 'মাউস', 'কিবোর্ড', 'হেডফোন'
         ]
         brand_terms = [
