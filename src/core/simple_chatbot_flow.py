@@ -1987,6 +1987,28 @@ Rules:
         
         except Exception as e:
             logger.error(f"❌ AI formatting failed: {e}")
+
+            # Never hand off to human when we already have product results.
+            # Return deterministic product formatting as a safe fallback.
+            if products:
+                response_text = "স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
+                for idx, product in enumerate(products[:5], 1):
+                    title = product.get('title', 'N/A')
+                    price = product.get('price', 'N/A')
+                    url = product.get('url', '')
+
+                    response_text += f"{idx}. {title}\n"
+                    response_text += f"মূল্য: {price}\n"
+                    if url:
+                        response_text += f"লিংক: {url}\n"
+                    response_text += "\n"
+
+                response_text += "আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।"
+                return {
+                    'success': True,
+                    'response': response_text
+                }
+
             return {'success': False, 'error': str(e)}
 
     def _get_order_info_template(self, user_id: str, message: str, intent_hint: str = 'order') -> str:
