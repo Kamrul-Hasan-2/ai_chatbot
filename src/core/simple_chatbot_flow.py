@@ -637,7 +637,22 @@ class SimpleChatbot:
                     intent_result['search_keywords']
                 )
             else:
-                intent_result = self._step1_groq_intent(message_for_intent, conversation_context)
+                rule_based_product = self._determine_rule_based_product_intent(message_for_intent)
+                if rule_based_product:
+                    intent_result = {
+                        'success': True,
+                        'intent': rule_based_product['intent'],
+                        'search_keywords': rule_based_product['search_keywords'],
+                        'raw_response': 'RULE_BASED_PRODUCT_INTENT'
+                    }
+                    logger.info(
+                        "🔁 [RULE_BASED_PRODUCT_INTENT] user_id=%s intent=%s keywords='%s'",
+                        user_id,
+                        intent_result['intent'],
+                        intent_result['search_keywords']
+                    )
+                else:
+                    intent_result = self._step1_groq_intent(message_for_intent, conversation_context)
 
             if not intent_result['success']:
                 logger.warning("⚠️ Intent detection failed; switching to HUMAN mode")
@@ -670,6 +685,21 @@ class SimpleChatbot:
             logger.info(f"🔍 Search Keywords: {search_keywords}")
             logger.info("📋 [INTENT_DETECTION] intent=%s keywords=%s looks_like_product=%s", 
                         intent, search_keywords, self._looks_like_product_query(message))
+
+            # Dynamic Groq recheck: if intent is unclear/general but query may be a search,
+            # ask Groq once more to confirm and extract search keywords.
+            if intent in ['unknown', 'irrelevant', 'general']:
+                dynamic_keywords = self._step1_groq_dynamic_search_keywords(message_for_intent, conversation_context)
+                if dynamic_keywords:
+                    normalized_dynamic = str(message_for_intent or '').lower()
+                    intent = 'laptop_search' if ('laptop' in normalized_dynamic or 'ল্যাপটপ' in normalized_dynamic) else 'product_search'
+                    search_keywords = dynamic_keywords
+                    logger.info(
+                        "🔁 [DYNAMIC_GROQ_SEARCH] user_id=%s intent=%s keywords='%s'",
+                        user_id,
+                        intent,
+                        search_keywords
+                    )
 
             # Order/buy intent should call template API with dynamic intent + listing id.
             if intent == 'ordering' or self._looks_like_order_buy_message(message):
@@ -1012,6 +1042,58 @@ Examples:
                 'raw_response': f'LOCAL_FALLBACK_ON_ERROR: {str(e)}'
             }
 
+    def _step1_groq_dynamic_search_keywords(self, message: str, conversation_context: str = '') -> Optional[str]:
+        """Ask Groq if message is a product-search query and extract keywords when yes."""
+        if not self.groq_client:
+            return None
+
+        try:
+            prompt = f"""Decide if this is a PRODUCT SEARCH query for an ecommerce chatbot.
+
+Recent conversation context:
+{conversation_context or 'N/A'}
+
+Current message:
+{message}
+
+Return EXACTLY in this format:
+SearchQuery: [yes/no]
+Keywords: [keyword string or none]
+
+Rules:
+- yes only if user is asking to find/check products, availability, brand/model, budget, or price-related shopping query.
+- no for greetings, thanks, pure support, random chat.
+- Keywords should be concise search terms for API search.
+"""
+
+            response = self.groq_client.chat.completions.create(
+                model=self.groq_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=120
+            )
+
+            result = response.choices[0].message.content.strip()
+            search_flag_match = re.search(r'(?is)searchquery\s*[:\-]\s*(yes|no)', result)
+            keywords_match = re.search(r'(?is)keywords\s*[:\-]\s*([^\n]+)', result)
+
+            if not search_flag_match:
+                return None
+
+            is_search = search_flag_match.group(1).strip().lower() == 'yes'
+            keywords = keywords_match.group(1).strip() if keywords_match else ''
+
+            if not is_search:
+                return None
+
+            if keywords.lower() in {'none', 'na', 'n/a', 'নেই', 'না', ''}:
+                keywords = self._build_product_search_keywords(message)
+
+            return keywords or None
+        except Exception as e:
+            logger.info("[DYNAMIC_GROQ_SEARCH] failed: %s", e)
+            return None
+
     def _normalize_history_messages(self, payload: Any) -> list[str]:
         """Normalize history API payload into compact role-prefixed lines."""
         candidates = []
@@ -1240,6 +1322,32 @@ Examples:
             parts.append(price_text)
 
         return ' '.join(part for part in parts if part).strip()
+
+    def _determine_rule_based_product_intent(self, message: str) -> Optional[Dict[str, str]]:
+        """Deterministically derive product intent/keywords for shopping-like messages."""
+        text = str(message or '').strip().lower()
+        if not text:
+            return None
+
+        entities = self._extract_search_entities(text)
+        has_product = bool(entities.get('has_product'))
+        has_price = bool(entities.get('has_price'))
+
+        if self._looks_like_product_query(text):
+            intent = 'laptop_search' if ('laptop' in text or 'ল্যাপটপ' in text) else ('price_search' if has_price else 'product_search')
+            return {
+                'intent': intent,
+                'search_keywords': self._build_product_search_keywords(text)
+            }
+
+        if self._looks_like_possible_product_signal(text) and (has_product or entities.get('brand')):
+            intent = 'laptop_search' if ('laptop' in text or 'ল্যাপটপ' in text) else ('price_search' if has_price else 'product_search')
+            return {
+                'intent': intent,
+                'search_keywords': self._build_product_search_keywords(text)
+            }
+
+        return None
 
     def _looks_like_product_query(self, message: str) -> bool:
         """Heuristic detector for short product requests in English/Bangla transliteration."""
