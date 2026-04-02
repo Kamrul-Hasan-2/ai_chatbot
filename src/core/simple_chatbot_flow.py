@@ -2101,6 +2101,25 @@ Rules:
         error: Optional[str] = None
     ) -> Dict[str, Any]:
         """Switch a conversation to human support and return standardized response."""
+        # Central guard: product-like queries should never be hard-handed off.
+        if self._looks_like_possible_product_signal(message):
+            self.user_modes[user_id] = ChatMode.AI
+            self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+            return self._create_response(
+                user_id=user_id,
+                message=message,
+                response=(
+                    "জি স্যার, আমি প্রোডাক্ট সার্চ করে দেখছি। "
+                    "ব্র্যান্ড/মডেল/বাজেট দিলে আরও ভালো ফল পাবেন।"
+                ),
+                mode=ChatMode.AI,
+                intent='product_search_clarification',
+                products=products,
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                error=error,
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
         self.user_modes[user_id] = ChatMode.HUMAN
         self.user_conversation_status[user_id] = HUMAN_SUPPORT_REQUIRED_STATUS
         self.user_order_context[user_id] = False
