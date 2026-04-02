@@ -120,6 +120,8 @@ class SimpleChatbot:
         # Track order form context and partially submitted order fields per user.
         self.user_order_context: Dict[str, bool] = {}
         self.user_order_draft: Dict[str, Dict[str, str]] = {}
+        # Track pending product-search constraints when user gives only brand + budget.
+        self.user_pending_product_query: Dict[str, Dict[str, Any]] = {}
         
         # BDStall API Configuration
         self.api_url = "https://www.bdstall.com/api/item/ai_search/"
@@ -168,6 +170,7 @@ class SimpleChatbot:
                 for user_id, active in (state.get('user_order_context') or {}).items()
             }
             self.user_order_draft = dict(state.get('user_order_draft') or {})
+            self.user_pending_product_query = dict(state.get('user_pending_product_query') or {})
             logger.info("✅ Restored chatbot state for %s users", len(self.user_modes))
         except Exception as e:
             logger.warning("⚠️ Failed to restore chatbot state: %s", e)
@@ -183,6 +186,7 @@ class SimpleChatbot:
                 'user_selected_product': self.user_selected_product,
                 'user_order_context': self.user_order_context,
                 'user_order_draft': self.user_order_draft,
+                'user_pending_product_query': self.user_pending_product_query,
             }
             with open(self.state_file, 'w', encoding='utf-8') as file_obj:
                 json.dump(state, file_obj, ensure_ascii=False)
@@ -535,9 +539,59 @@ class SimpleChatbot:
                     processing_time=(datetime.now() - start_time).total_seconds()
                 )
 
+            # If previous turn had only brand+budget, require product type/title before searching.
+            pending_search = self.user_pending_product_query.get(user_id)
+            message_for_intent = message
+            if pending_search:
+                pending_merged_query = self._merge_pending_search_query(pending_search, message)
+                if self._looks_like_product_query(message):
+                    message_for_intent = pending_merged_query
+                    self.user_pending_product_query.pop(user_id, None)
+                    logger.info(
+                        "🔗 Using pending search context for user_id=%s merged_query='%s'",
+                        user_id,
+                        message_for_intent
+                    )
+                else:
+                    return self._create_response(
+                        user_id=user_id,
+                        message=message,
+                        response="জি স্যার, কোন প্রোডাক্ট চাচ্ছেন? যেমন: laptop, mobile, monitor।",
+                        mode=ChatMode.AI,
+                        intent='need_product_title',
+                        products=None,
+                        processing_time=(datetime.now() - start_time).total_seconds()
+                    )
+
+            # Detect brand + budget without product and ask follow-up before search.
+            if not pending_search:
+                entities = self._extract_search_entities(message)
+                if entities['brand'] and entities['has_price'] and not entities['has_product']:
+                    self.user_pending_product_query[user_id] = {
+                        'brand': entities['brand'],
+                        'min_price': entities.get('min_price'),
+                        'max_price': entities.get('max_price'),
+                        'price_text': entities.get('price_text', ''),
+                        'seed_message': str(message or '').strip()
+                    }
+
+                    budget_text = entities.get('price_text') or 'your budget'
+                    return self._create_response(
+                        user_id=user_id,
+                        message=message,
+                        response=(
+                            f"ঠিক আছে স্যার, {entities['brand']} {budget_text} বুঝেছি। "
+                            "আপনি কোন প্রোডাক্ট চাচ্ছেন?"
+                        ),
+                        mode=ChatMode.AI,
+                        intent='need_product_title',
+                        products=None,
+                        processing_time=(datetime.now() - start_time).total_seconds()
+                    )
+
             # STEP 1: Message → Groq API (Intent Detection)
             logger.info("🚀 STEP 1: Sending to Groq API for intent detection...")
-            intent_result = self._step1_groq_intent(message)
+            intent_result = self._step1_groq_intent(message_for_intent)
 
             if not intent_result['success']:
                 logger.warning("⚠️ Intent detection failed; switching to HUMAN mode")
@@ -552,13 +606,13 @@ class SimpleChatbot:
             search_keywords = intent_result['search_keywords']
 
             if intent in ['product_search', 'price_search', 'laptop_search'] and str(search_keywords).strip().lower() in ['none', 'না', 'নেই', '']:
-                search_keywords = self._build_product_search_keywords(message)
+                search_keywords = self._build_product_search_keywords(message_for_intent)
 
             # Guardrail: prevent false handoff when LLM mislabels clear product queries.
-            if intent in ['unknown', 'irrelevant'] and self._looks_like_product_query(message):
-                normalized = str(message or '').lower()
+            if intent in ['unknown', 'irrelevant'] and self._looks_like_product_query(message_for_intent):
+                normalized = str(message_for_intent or '').lower()
                 intent = 'laptop_search' if ('laptop' in normalized or 'ল্যাপটপ' in normalized) else 'product_search'
-                search_keywords = self._build_product_search_keywords(message)
+                search_keywords = self._build_product_search_keywords(message_for_intent)
                 logger.info(
                     "🔁 Overriding %s intent to %s for product-like query user_id=%s",
                     intent_result.get('intent'),
@@ -907,6 +961,103 @@ Examples:
 
         return 'general', message
 
+    def _extract_budget_range(self, message: str) -> Dict[str, Optional[int]]:
+        """Extract approximate price range from user text (supports k, tk, taka, হাজার)."""
+        text = str(message or '').strip().lower()
+        if not text:
+            return {'min_price': None, 'max_price': None, 'price_text': ''}
+
+        text = text.translate(str.maketrans('০১২৩৪৫৬৭৮৯', '0123456789'))
+
+        def _to_taka(raw_value: str, unit: str) -> int:
+            value = int(float(raw_value))
+            unit_norm = (unit or '').strip().lower()
+            if unit_norm in {'k', 'হাজার', 'thousand'}:
+                return value * 1000
+            if unit_norm in {'tk', 'taka', 'টাকা'}:
+                return value
+            if value < 1000:
+                return value * 1000
+            return value
+
+        range_match = re.search(
+            r'(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা)?\s*(?:-|to|থেকে)\s*(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা)?',
+            text
+        )
+        if range_match:
+            min_price = _to_taka(range_match.group(1), range_match.group(2) or range_match.group(4) or '')
+            max_price = _to_taka(range_match.group(3), range_match.group(4) or range_match.group(2) or '')
+            if min_price > max_price:
+                min_price, max_price = max_price, min_price
+            return {
+                'min_price': min_price,
+                'max_price': max_price,
+                'price_text': f"{min_price}-{max_price}"
+            }
+
+        under_match = re.search(
+            r'(?:under|within|modde|modhhe|budget|er modde|এর মধ্যে|মধ্যে|below|less than)\s*(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা)?',
+            text
+        )
+        if under_match:
+            max_price = _to_taka(under_match.group(1), under_match.group(2) or '')
+            return {'min_price': None, 'max_price': max_price, 'price_text': f"under {max_price}"}
+
+        generic_match = re.search(r'\b(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা)\b', text)
+        if generic_match:
+            max_price = _to_taka(generic_match.group(1), generic_match.group(2) or '')
+            return {'min_price': None, 'max_price': max_price, 'price_text': f"under {max_price}"}
+
+        return {'min_price': None, 'max_price': None, 'price_text': ''}
+
+    def _extract_search_entities(self, message: str) -> Dict[str, Any]:
+        """Extract lightweight entities for search: brand, product hint, and budget range."""
+        text = str(message or '').strip().lower()
+        text = text.translate(str.maketrans('০১২৩৪৫৬৭৮৯', '0123456789'))
+
+        brand_terms = [
+            'hp', 'dell', 'lenovo', 'asus', 'acer', 'apple', 'iphone', 'samsung', 'xiaomi',
+            'realme', 'oppo', 'vivo', 'msi', 'huawei'
+        ]
+        product_terms = [
+            'laptop', 'phone', 'mobile', 'pc', 'computer', 'monitor', 'mouse', 'keyboard',
+            'headphone', 'ssd', 'ram', 'printer', 'camera', 'router', 'charger', 'tablet',
+            'elitebook', 'pavilion', 'thinkpad', 'inspiron', 'aspire', 'vivobook', 'zbook',
+            'macbook', 'chromebook', 'probook', 'pixelbook', 'razer', 'alienware', 'rog',
+            'ল্যাপটপ', 'মোবাইল', 'ফোন', 'কম্পিউটার', 'মাউস', 'কিবোর্ড', 'হেডফোন', 'ট্যাব'
+        ]
+
+        brand = next((b for b in brand_terms if b in text), None)
+        has_product = any(term in text for term in product_terms)
+        budget = self._extract_budget_range(text)
+        has_price = budget.get('min_price') is not None or budget.get('max_price') is not None
+
+        return {
+            'brand': brand,
+            'has_product': has_product,
+            'has_price': has_price,
+            'min_price': budget.get('min_price'),
+            'max_price': budget.get('max_price'),
+            'price_text': budget.get('price_text', '')
+        }
+
+    def _merge_pending_search_query(self, pending: Dict[str, Any], followup_message: str) -> str:
+        """Combine pending brand/budget constraints with follow-up product request."""
+        parts = []
+        brand = str(pending.get('brand') or '').strip()
+        if brand:
+            parts.append(brand)
+
+        followup = str(followup_message or '').strip()
+        if followup:
+            parts.append(followup)
+
+        price_text = str(pending.get('price_text') or '').strip()
+        if price_text:
+            parts.append(price_text)
+
+        return ' '.join(part for part in parts if part).strip()
+
     def _looks_like_product_query(self, message: str) -> bool:
         """Heuristic detector for short product requests in English/Bangla transliteration."""
         text = str(message or '').strip().lower()
@@ -917,10 +1068,8 @@ Examples:
             'laptop', 'phone', 'mobile', 'pc', 'computer', 'monitor', 'mouse', 'keyboard',
             'headphone', 'ssd', 'ram', 'printer', 'camera', 'router', 'charger',
             'gun', 'stun', 'stun gun', 'taser',
-            # Laptop models
             'elitebook', 'pavilion', 'thinkpad', 'inspiron', 'aspire', 'vivobook', 'zbook',
             'macbook', 'chromebook', 'probook', 'pixelbook', 'razer', 'alienware', 'rog',
-            # Model patterns (G8, G7, G6, etc.)
             'g8', 'g7', 'g6', 'g5', 'g4', 'g3', 'g2', 'g1',
             'ল্যাপটপ', 'মোবাইল', 'ফোন', 'কম্পিউটার', 'মাউস', 'কিবোর্ড', 'হেডফোন'
         ]
@@ -939,7 +1088,6 @@ Examples:
         has_cue = any(cue in text for cue in buying_cues)
         has_number = bool(re.search(r'\b\d+\s*(k|tk|taka|টাকা|হাজার)?\b', text))
 
-        # Availability style query like "stun gun ase" should trigger search.
         availability_words = {'ase', 'ache', 'pawa', 'available', 'stock', 'আছে', 'পাওয়া', 'পাওয়া'}
         compact_tokens = [t for t in re.split(r'\s+', text) if t]
         has_availability_word = any(t in availability_words for t in compact_tokens)
@@ -947,12 +1095,8 @@ Examples:
 
         if has_product and (has_brand or has_cue or has_number):
             return True
-
-        # Short brand+product queries such as "hp laptop" should always search.
         if has_product and len(text.split()) <= 4:
             return True
-
-        # Fallback: generic product availability ask with at least one candidate term.
         if has_availability_word and has_candidate_term and len(compact_tokens) <= 5:
             return True
 
@@ -1584,6 +1728,7 @@ Examples:
         self.user_conversation_status[user_id] = HUMAN_SUPPORT_REQUIRED_STATUS
         self.user_order_context[user_id] = False
         self.user_order_draft.pop(user_id, None)
+        self.user_pending_product_query.pop(user_id, None)
         self._notify_assign_agent(user_id)
 
         return self._create_response(
@@ -1889,6 +2034,7 @@ Examples:
         self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
         self.user_order_context[user_id] = False
         self.user_order_draft.pop(user_id, None)
+        self.user_pending_product_query.pop(user_id, None)
         self._save_state()
         logger.info(f"🤖 User {user_id} switched to AI mode")
     
