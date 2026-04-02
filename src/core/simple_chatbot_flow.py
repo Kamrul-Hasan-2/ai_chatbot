@@ -391,20 +391,29 @@ class SimpleChatbot:
             # ✅ NEW: Check user's responder status from BDStall API
             responder_type = self._check_responder_type(user_id)
             if responder_type == 'agent':
-                logger.info(f"🤝 User {user_id} is assigned to AGENT mode (responder_type={responder_type})")
-                self.user_modes[user_id] = ChatMode.HUMAN
-                self.user_conversation_status[user_id] = HUMAN_SUPPORT_REQUIRED_STATUS
-                self._save_state()
-                return self._create_response(
-                    user_id=user_id,
-                    message=message,
-                    response="",
-                    mode=ChatMode.HUMAN,
-                    intent='human_mode_active',
-                    products=None,
-                    processing_time=(datetime.now() - start_time).total_seconds(),
-                    conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
-                )
+                if self._looks_like_possible_product_signal(message):
+                    logger.info(
+                        "🔁 Overriding AGENT mode for product search user_id=%s message='%s'",
+                        user_id,
+                        message,
+                    )
+                    self.user_modes[user_id] = ChatMode.AI
+                    self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+                else:
+                    logger.info(f"🤝 User {user_id} is assigned to AGENT mode (responder_type={responder_type})")
+                    self.user_modes[user_id] = ChatMode.HUMAN
+                    self.user_conversation_status[user_id] = HUMAN_SUPPORT_REQUIRED_STATUS
+                    self._save_state()
+                    return self._create_response(
+                        user_id=user_id,
+                        message=message,
+                        response="",
+                        mode=ChatMode.HUMAN,
+                        intent='human_mode_active',
+                        products=None,
+                        processing_time=(datetime.now() - start_time).total_seconds(),
+                        conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
+                    )
 
             # Resume AI only when responder API explicitly returns bot mode.
             if responder_type == 'bot' and current_mode == ChatMode.HUMAN:
@@ -416,16 +425,25 @@ class SimpleChatbot:
 
             # In human mode, always stay silent (no automated reply/alert text).
             if current_mode == ChatMode.HUMAN and current_status == HUMAN_SUPPORT_REQUIRED_STATUS:
-                return self._create_response(
-                    user_id=user_id,
-                    message=message,
-                    response="",
-                    mode=ChatMode.HUMAN,
-                    intent='human_support_required',
-                    products=None,
-                    processing_time=(datetime.now() - start_time).total_seconds(),
-                    conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
-                )
+                if self._looks_like_possible_product_signal(message):
+                    logger.info(
+                        "🔁 Escaping stored HUMAN mode for product search user_id=%s message='%s'",
+                        user_id,
+                        message,
+                    )
+                    self.user_modes[user_id] = ChatMode.AI
+                    self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+                else:
+                    return self._create_response(
+                        user_id=user_id,
+                        message=message,
+                        response="",
+                        mode=ChatMode.HUMAN,
+                        intent='human_support_required',
+                        products=None,
+                        processing_time=(datetime.now() - start_time).total_seconds(),
+                        conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
+                    )
 
             # Keep thank-you replies deterministic and free of sir/mam variants.
             thank_you_tokens = {
