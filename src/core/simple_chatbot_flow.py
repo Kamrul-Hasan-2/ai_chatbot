@@ -464,6 +464,30 @@ class SimpleChatbot:
                     conversation_status=AI_ACTIVE_STATUS
                 )
 
+            # Context-aware finisher: when user sends short acknowledgement like "ok",
+            # check recent context with Groq; if conversation is finished, reply with thanks.
+            ok_tokens = {
+                'ok', 'okay', 'okk', 'okey', 'ঠিক আছে', 'acha', 'accha', 'আচ্ছা', 'ওকে'
+            }
+            if normalized_message in ok_tokens:
+                short_context = self._fetch_recent_chat_context(
+                    user_id=user_id,
+                    limit=self.chatbot_history_limit
+                )
+                if self._is_conversation_finished_with_context(message, short_context):
+                    self.user_modes[user_id] = ChatMode.AI
+                    self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+                    return self._create_response(
+                        user_id=user_id,
+                        message=message,
+                        response="Thank you",
+                        mode=ChatMode.AI,
+                        intent='conversation_finished_ack',
+                        products=None,
+                        processing_time=(datetime.now() - start_time).total_seconds(),
+                        conversation_status=AI_ACTIVE_STATUS
+                    )
+
             # If user confirms after selecting a specific product, call order template API with listing ID.
             # Guard: do not trigger order flow for fresh product-search messages.
             selected_product = self.user_selected_product.get(user_id)
@@ -1093,6 +1117,44 @@ Rules:
         except Exception as e:
             logger.info("[DYNAMIC_GROQ_SEARCH] failed: %s", e)
             return None
+
+    def _is_conversation_finished_with_context(self, message: str, conversation_context: str = '') -> bool:
+        """Use Groq to decide whether a short ack means conversation has finished."""
+        if not self.groq_client:
+            return False
+
+        try:
+            prompt = f"""Determine if the user message indicates conversation completion.
+
+Recent conversation context:
+{conversation_context or 'N/A'}
+
+Latest user message:
+{message}
+
+Return EXACTLY:
+Finished: [yes/no]
+
+Rules:
+- Return yes when user is wrapping up/ending after receiving answer.
+- Return no when user likely expects next step (order, search refinement, pending details).
+"""
+
+            response = self.groq_client.chat.completions.create(
+                model=self.groq_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=40
+            )
+
+            result = response.choices[0].message.content.strip()
+            match = re.search(r'(?is)finished\s*[:\-]\s*(yes|no)', result)
+            if not match:
+                return False
+            return match.group(1).strip().lower() == 'yes'
+        except Exception as e:
+            logger.info("[FINISH_CHECK] failed: %s", e)
+            return False
 
     def _normalize_history_messages(self, payload: Any) -> list[str]:
         """Normalize history API payload into compact role-prefixed lines."""
