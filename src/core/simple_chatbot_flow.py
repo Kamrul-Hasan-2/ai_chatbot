@@ -496,7 +496,7 @@ class SimpleChatbot:
                     return self._create_response(
                         user_id=user_id,
                         message=message,
-                        response="Thank you",
+                        response="ধন্যবাদ স্যার, আর কিভাবে আমি আপনাকে সাহায্য করতে পারি?",
                         mode=ChatMode.AI,
                         intent='conversation_finished_ack',
                         products=None,
