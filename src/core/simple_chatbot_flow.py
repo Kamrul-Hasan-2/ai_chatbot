@@ -464,6 +464,22 @@ class SimpleChatbot:
                     conversation_status=AI_ACTIVE_STATUS
                 )
 
+            if self._is_fixed_price_query(message):
+                self.user_modes[user_id] = ChatMode.AI
+                self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+                return self._create_response(
+                    user_id=user_id,
+                    message=message,
+                    response=(
+                        "জি স্যার, এগুলোর দাম ফিক্সড। বিস্তারিত জানতে ওয়েবসাইট ভিজিট করুন অথবা আমাদের কল করুন।"
+                    ),
+                    mode=ChatMode.AI,
+                    intent='fixed_price_info',
+                    products=None,
+                    processing_time=(datetime.now() - start_time).total_seconds(),
+                    conversation_status=AI_ACTIVE_STATUS
+                )
+
             # Context-aware finisher: when user sends short acknowledgement like "ok",
             # check recent context with Groq; if conversation is finished, reply with thanks.
             ok_tokens = {
@@ -1476,6 +1492,27 @@ Rules:
         tokens = set(re.findall(r'[a-z0-9\u0980-\u09ff]+', text))
         hits = sum(1 for token in tokens if token in signal_terms)
         return hits >= 2
+
+    def _is_fixed_price_query(self, message: str) -> bool:
+        """Detect queries asking whether a product has a fixed price."""
+        text = str(message or '').strip().lower()
+        if not text:
+            return False
+
+        fixed_price_terms = [
+            'fixed dam', 'fixed price', 'fix dam', 'fix price', 'fixed rate',
+            'ki fixed dam', 'ki fixed price', 'fixed', 'fix',
+            'ফিক্সড দাম', 'ফিক্সড প্রাইস', 'নির্দিষ্ট দাম', 'স্থির দাম', 'ফিক্সড'
+        ]
+
+        query_markers = [
+            'ki', 'কি', 'koto', 'কত', 'ase', 'ache', 'available', 'these', 'eigula', 'egula', 'egulo', 'eigula',
+            'এইগুলা', 'এগুলা', 'এগুলো', 'egula'
+        ]
+
+        has_fixed = any(term in text for term in fixed_price_terms)
+        has_query_marker = any(marker in text for marker in query_markers)
+        return has_fixed and has_query_marker
 
     def _build_product_search_keywords(self, message: str) -> str:
         """Build cleaner search keywords from informal user queries."""
