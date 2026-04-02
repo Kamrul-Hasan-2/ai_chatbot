@@ -693,6 +693,27 @@ class SimpleChatbot:
             
             # If chatbot does not understand the intent, switch to HUMAN as per roadmap.
             if intent in ['unknown', 'irrelevant']:
+                if self._looks_like_possible_product_signal(message_for_intent):
+                    logger.info(
+                        "🔁 Product-signal fallback activated for user_id=%s message='%s'",
+                        user_id,
+                        message_for_intent
+                    )
+                    self.user_modes[user_id] = ChatMode.AI
+                    self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+                    return self._create_response(
+                        user_id=user_id,
+                        message=message,
+                        response=(
+                            "জি স্যার, আমি প্রোডাক্ট খুঁজে দিতে পারি। "
+                            "একটু বিস্তারিত বলুন: brand/model/budget (যেমন: HP laptop 50k এর মধ্যে)।"
+                        ),
+                        mode=ChatMode.AI,
+                        intent='product_search_clarification',
+                        products=None,
+                        processing_time=(datetime.now() - start_time).total_seconds(),
+                        conversation_status=AI_ACTIVE_STATUS
+                    )
                 return self._handoff_to_human(
                     user_id=user_id,
                     message=message,
@@ -1229,6 +1250,28 @@ Examples:
             return True
 
         return False
+
+    def _looks_like_possible_product_signal(self, message: str) -> bool:
+        """Broader detector used to avoid accidental human handoff for shopping-related text."""
+        text = str(message or '').strip().lower()
+        if not text:
+            return False
+
+        if self._looks_like_product_query(text):
+            return True
+
+        signal_terms = {
+            'hp', 'dell', 'lenovo', 'asus', 'acer', 'apple', 'samsung', 'xiaomi',
+            'laptop', 'mobile', 'phone', 'pc', 'computer', 'monitor', 'mouse', 'keyboard',
+            'elitebook', 'thinkpad', 'macbook', 'inspiron', 'pavilion',
+            'price', 'dam', 'tk', 'taka', 'budget', 'modde', 'under', 'within',
+            'ase', 'ache', 'pawa', 'available', 'stock',
+            'দাম', 'টাকা', 'বাজেট', 'ল্যাপটপ', 'মোবাইল', 'ফোন', 'আছে'
+        }
+
+        tokens = set(re.findall(r'[a-z0-9\u0980-\u09ff]+', text))
+        hits = sum(1 for token in tokens if token in signal_terms)
+        return hits >= 2
 
     def _build_product_search_keywords(self, message: str) -> str:
         """Build cleaner search keywords from informal user queries."""
