@@ -550,11 +550,13 @@ class SimpleChatbot:
             # If previous turn had only brand+budget, require product type/title before searching.
             pending_search = self.user_pending_product_query.get(user_id)
             message_for_intent = message
+            force_pending_search = False
             if pending_search:
                 pending_merged_query = self._merge_pending_search_query(pending_search, message)
                 if self._looks_like_product_query(message):
                     message_for_intent = pending_merged_query
                     self.user_pending_product_query.pop(user_id, None)
+                    force_pending_search = True
                     logger.info(
                         "🔗 Using pending search context for user_id=%s merged_query='%s'",
                         user_id,
@@ -603,7 +605,21 @@ class SimpleChatbot:
                 limit=self.chatbot_history_limit
             )
             logger.info("🚀 STEP 1: Sending to Groq API for intent detection...")
-            intent_result = self._step1_groq_intent(message_for_intent, conversation_context)
+            if force_pending_search:
+                normalized_pending = str(message_for_intent or '').lower()
+                intent_result = {
+                    'success': True,
+                    'intent': 'laptop_search' if ('laptop' in normalized_pending or 'ল্যাপটপ' in normalized_pending) else 'product_search',
+                    'search_keywords': self._build_product_search_keywords(message_for_intent),
+                    'raw_response': 'PENDING_SEARCH_BYPASS'
+                }
+                logger.info(
+                    "🔁 [PENDING_SEARCH_BYPASS] user_id=%s keywords='%s'",
+                    user_id,
+                    intent_result['search_keywords']
+                )
+            else:
+                intent_result = self._step1_groq_intent(message_for_intent, conversation_context)
 
             if not intent_result['success']:
                 logger.warning("⚠️ Intent detection failed; switching to HUMAN mode")
