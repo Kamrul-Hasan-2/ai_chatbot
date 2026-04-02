@@ -481,28 +481,23 @@ class SimpleChatbot:
                 )
 
             # Context-aware finisher: when user sends short acknowledgement like "ok",
-            # check recent context with Groq; if conversation is finished, reply with thanks.
+            # reply with the standard Bangla closing line.
             ok_tokens = {
                 'ok', 'okay', 'okk', 'okey', 'ঠিক আছে', 'acha', 'accha', 'আচ্ছা', 'ওকে'
             }
             if normalized_message in ok_tokens:
-                short_context = self._fetch_recent_chat_context(
+                self.user_modes[user_id] = ChatMode.AI
+                self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+                return self._create_response(
                     user_id=user_id,
-                    limit=self.chatbot_history_limit
+                    message=message,
+                    response="ধন্যবাদ স্যার, আর কিভাবে আমি আপনাকে সাহায্য করতে পারি?",
+                    mode=ChatMode.AI,
+                    intent='conversation_finished_ack',
+                    products=None,
+                    processing_time=(datetime.now() - start_time).total_seconds(),
+                    conversation_status=AI_ACTIVE_STATUS
                 )
-                if self._is_conversation_finished_with_context(message, short_context):
-                    self.user_modes[user_id] = ChatMode.AI
-                    self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
-                    return self._create_response(
-                        user_id=user_id,
-                        message=message,
-                        response="ধন্যবাদ স্যার, আর কিভাবে আমি আপনাকে সাহায্য করতে পারি?",
-                        mode=ChatMode.AI,
-                        intent='conversation_finished_ack',
-                        products=None,
-                        processing_time=(datetime.now() - start_time).total_seconds(),
-                        conversation_status=AI_ACTIVE_STATUS
-                    )
 
             # If user confirms after selecting a specific product, call order template API with listing ID.
             # Guard: do not trigger order flow for fresh product-search messages.
