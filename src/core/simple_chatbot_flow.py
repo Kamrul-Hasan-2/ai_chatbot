@@ -138,6 +138,14 @@ class SimpleChatbot:
             'https://www.bdstall.com/api/item/chatbot_responder/'
         )
         self.responder_api_key = os.getenv('RESPONDER_API_KEY', 'mkh677ddd2sxxkkdjff')
+        self.chatbot_history_api_url = os.getenv(
+            'CHATBOT_HISTORY_API_URL',
+            'https://www.bdstall.com/api/item/chatbot_history/'
+        )
+        try:
+            self.chatbot_history_limit = int(os.getenv('CHATBOT_HISTORY_LIMIT', '5'))
+        except Exception:
+            self.chatbot_history_limit = 5
 
         self._load_state()
         
@@ -590,8 +598,12 @@ class SimpleChatbot:
                     )
 
             # STEP 1: Message → Groq API (Intent Detection)
+            conversation_context = self._fetch_recent_chat_context(
+                user_id=user_id,
+                limit=self.chatbot_history_limit
+            )
             logger.info("🚀 STEP 1: Sending to Groq API for intent detection...")
-            intent_result = self._step1_groq_intent(message_for_intent)
+            intent_result = self._step1_groq_intent(message_for_intent, conversation_context)
 
             if not intent_result['success']:
                 logger.warning("⚠️ Intent detection failed; switching to HUMAN mode")
@@ -746,7 +758,7 @@ class SimpleChatbot:
                 
                 # STEP 4: Database Message → AI (Final Formatting)
                 logger.info("🚀 STEP 4: Sending to AI for final response...")
-                final_response = self._step4_ai_format(message, database_message, products)
+                final_response = self._step4_ai_format(message, database_message, products, conversation_context)
                 
                 if not final_response['success']:
                     # AI formatting failed, switch to HUMAN
@@ -796,7 +808,7 @@ class SimpleChatbot:
                 
                 # Not in database - use AI for general response
                 logger.info("🚀 General query - using AI directly...")
-                ai_response = self._step4_ai_format(message, None, None)
+                ai_response = self._step4_ai_format(message, None, None, conversation_context)
                 
                 if not ai_response['success']:
                     return self._handoff_to_human(
@@ -829,7 +841,7 @@ class SimpleChatbot:
                 error=str(e)
             )
     
-    def _step1_groq_intent(self, message: str) -> Dict[str, Any]:
+    def _step1_groq_intent(self, message: str, conversation_context: str = '') -> Dict[str, Any]:
         """
         STEP 1: Send to Groq API for intent detection
         Extract: intent & search keywords
@@ -848,6 +860,9 @@ class SimpleChatbot:
 1. Intent (product_search, price_search, laptop_search, ordering, delivery, greeting, question, support, warranty, availability, general, unknown)
 2. Search keywords (for product search)
 
+Recent conversation context (oldest to newest):
+{conversation_context or 'N/A'}
+
 Intents:
 - product_search/laptop_search: Looking for specific products
 - price_search: Asking about prices
@@ -859,6 +874,11 @@ Intents:
 - greeting: Hi, hello, salam
 - question: General informational questions
 - unknown: Unclear, complaints, refunds
+
+Rules:
+- Always read the recent context before deciding intent.
+- If current message is short/ambiguous, use context to infer likely intent.
+- For product follow-up messages, combine with context mentally before returning keywords.
 
 Message: {message}
 
@@ -936,6 +956,114 @@ Examples:
                 'search_keywords': local_keywords,
                 'raw_response': f'LOCAL_FALLBACK_ON_ERROR: {str(e)}'
             }
+
+    def _normalize_history_messages(self, payload: Any) -> list[str]:
+        """Normalize history API payload into compact role-prefixed lines."""
+        candidates = []
+        if isinstance(payload, list):
+            candidates = payload
+        elif isinstance(payload, dict):
+            for key in ['data', 'messages', 'history', 'chat_history', 'conversation', 'result']:
+                value = payload.get(key)
+                if isinstance(value, list):
+                    candidates = value
+                    break
+
+            if not candidates and isinstance(payload.get('data'), dict):
+                nested = payload.get('data') or {}
+                for key in ['messages', 'history', 'chat_history', 'conversation', 'items']:
+                    value = nested.get(key)
+                    if isinstance(value, list):
+                        candidates = value
+                        break
+
+        lines: list[str] = []
+        for item in candidates:
+            if isinstance(item, str):
+                text = item.strip()
+                if text:
+                    lines.append(f"User: {text}")
+                continue
+
+            if not isinstance(item, dict):
+                continue
+
+            text = (
+                str(item.get('message') or item.get('text') or item.get('content') or item.get('body') or '')
+                .strip()
+            )
+            if not text:
+                continue
+
+            sender_type = str(item.get('sender_type') or '').strip()
+            role = str(item.get('role') or '').strip().lower()
+            if sender_type == '2' or role in {'assistant', 'bot', 'ai'}:
+                lines.append(f"Bot: {text}")
+            elif sender_type == '1' or role in {'agent', 'human'}:
+                lines.append(f"Agent: {text}")
+            else:
+                lines.append(f"User: {text}")
+
+        return lines[-10:]
+
+    def _fetch_recent_chat_context(self, user_id: str, limit: int = 5) -> str:
+        """Fetch recent chat history from BDStall and return compact context text."""
+        if not user_id:
+            return ''
+
+        safe_limit = max(1, min(int(limit or 5), 20))
+        request_url = (
+            f"{self.chatbot_history_api_url}"
+            f"user_id={user_id}&limit={safe_limit}&key={self.api_key}"
+        )
+
+        started = datetime.now()
+        try:
+            response = requests.get(request_url, timeout=8)
+            duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+
+            _log_api_call(
+                api_name="chatbot_history",
+                method="GET",
+                url=request_url,
+                request_payload={
+                    'user_id': str(user_id),
+                    'limit': safe_limit,
+                    'key': self.api_key
+                },
+                status_code=response.status_code,
+                duration_ms=duration_ms,
+                status="PASS" if 200 <= response.status_code < 300 else "FAIL",
+                response_preview=response.text
+            )
+
+            if not (200 <= response.status_code < 300):
+                return ''
+
+            payload = response.json() if response.text else {}
+            lines = self._normalize_history_messages(payload)
+            context = '\n'.join(lines).strip()
+            if context:
+                logger.info("🧠 [HISTORY_CONTEXT] user_id=%s lines=%s", user_id, len(lines))
+            return context
+        except Exception as e:
+            duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+            _log_api_call(
+                api_name="chatbot_history",
+                method="GET",
+                url=request_url,
+                request_payload={
+                    'user_id': str(user_id),
+                    'limit': safe_limit,
+                    'key': self.api_key
+                },
+                status_code=0,
+                duration_ms=duration_ms,
+                status="FAIL",
+                response_preview=str(e)
+            )
+            logger.info("[HISTORY_CONTEXT] history fetch failed for user_id=%s: %s", user_id, e)
+            return ''
 
     def _local_intent_fallback(self, message: str) -> tuple[str, str]:
         """Deterministic fallback when Groq is unavailable or returns unparsable output."""
@@ -1567,68 +1695,110 @@ Examples:
             logger.warning("⚠️ Order intent API call failed: %s", e)
             return None
     
-    def _step4_ai_format(self, original_message: str, database_message: Optional[str], products: Optional[list]) -> Dict[str, Any]:
+    def _step4_ai_format(
+        self,
+        original_message: str,
+        database_message: Optional[str],
+        products: Optional[list],
+        conversation_context: str = ''
+    ) -> Dict[str, Any]:
         """
         STEP 4: Send database message to AI for final formatting
         """
         try:
             if database_message and products:
-                # Product search response - Use custom formatting with greeting
+                if self.groq_client:
+                    compact_products = []
+                    for idx, product in enumerate(products[:5], 1):
+                        compact_products.append({
+                            'index': idx,
+                            'title': product.get('title', ''),
+                            'price': product.get('price', ''),
+                            'url': product.get('url', '')
+                        })
+
+                    prompt = f"""তুমি BDStall.com এর একজন সহায়ক বাংলা সেলস অ্যাসিস্ট্যান্ট।
+
+Recent chat context:
+{conversation_context or 'N/A'}
+
+User latest message:
+{original_message}
+
+Available products (top matches):
+{json.dumps(compact_products, ensure_ascii=False)}
+
+Instructions:
+- Context পড়ে user intent বুঝে উত্তর দাও।
+- ৫টি প্রোডাক্ট সুন্দরভাবে 1-5 লিস্টে দাও (title, price, link)।
+- ভদ্র, সংক্ষিপ্ত, বিক্রয় সহায়ক টোন রাখো।
+- অপ্রয়োজনীয় তথ্য দিও না।
+"""
+
+                    response = self.groq_client.chat.completions.create(
+                        model=self.groq_model,
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.5,
+                        max_tokens=700
+                    )
+
+                    ai_response = response.choices[0].message.content.strip()
+                    if ai_response:
+                        return {
+                            'success': True,
+                            'response': ai_response
+                        }
+
+                # Fallback deterministic product formatting if Groq unavailable.
                 response_text = "স্যার এই প্রোডাক্টগুলা দেখতে পারেন:\n\n"
-                
-                # Format each product with details
-                for idx, product in enumerate(products[:5], 1):  # Show top 5 products
+                for idx, product in enumerate(products[:5], 1):
                     title = product.get('title', 'N/A')
                     price = product.get('price', 'N/A')
                     url = product.get('url', '')
-                    description = product.get('description', '')
-                    
-                    # Clean up description (first 100 chars)
-                    if description and len(description) > 100:
-                        description = description[:100] + "..."
-                    
+
                     response_text += f"{idx}. {title}\n"
                     response_text += f"মূল্য: {price}\n"
-                    
-                    if description:
-                        response_text += f"বিবরণ: {description}\n"
-                    
                     if url:
                         response_text += f"লিংক: {url}\n"
-                    
                     response_text += "\n"
-                
+
                 response_text += "আরও তথ্যের জন্য আমাদের সাথে যোগাযোগ করুন। ধন্যবাদ!"
-                
                 return {
                     'success': True,
                     'response': response_text
                 }
-            else:
-                if not self.groq_client:
-                    return {'success': False, 'error': 'Groq not available'}
 
-                # General query - Use AI
-                prompt = f"""তুমি একজন বন্ধুত্বপূর্ণ বাংলা চ্যাটবট। BDStall.com এর হয়ে উত্তর দাও।
+            if not self.groq_client:
+                return {'success': False, 'error': 'Groq not available'}
 
-প্রশ্ন: {original_message}
+            # General query - Use AI with recent chat context.
+            prompt = f"""তুমি একজন বন্ধুত্বপূর্ণ বাংলা চ্যাটবট। BDStall.com এর হয়ে উত্তর দাও।
 
-একটি সুন্দর, সংক্ষিপ্ত বাংলা উত্তর দাও।
+Recent chat context:
+{conversation_context or 'N/A'}
+
+Latest user message:
+{original_message}
+
+Rules:
+- Context পড়ে উত্তর দাও।
+- আগের কথার সাথে connection রাখো।
+- সংক্ষিপ্ত, স্পষ্ট এবং সহায়ক বাংলা উত্তর দাও।
 """
-            
-                response = self.groq_client.chat.completions.create(
-                    model=self.groq_model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.7,
-                    max_tokens=500
-                )
-                
-                ai_response = response.choices[0].message.content.strip()
-                
-                return {
-                    'success': True,
-                    'response': ai_response
-                }
+
+            response = self.groq_client.chat.completions.create(
+                model=self.groq_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+                max_tokens=500
+            )
+
+            ai_response = response.choices[0].message.content.strip()
+
+            return {
+                'success': True,
+                'response': ai_response
+            }
         
         except Exception as e:
             logger.error(f"❌ AI formatting failed: {e}")
