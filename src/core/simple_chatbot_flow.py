@@ -1576,7 +1576,7 @@ Rules:
         return any(pattern in text for pattern in price_patterns)
 
     def _reply_price_from_context(self, user_id: str) -> Optional[str]:
-        """Return product price from selected or single suggested product context."""
+        """Return product price from selected or recently suggested product context."""
         selected = self.user_selected_product.get(user_id) or {}
         if selected:
             title = selected.get('title') or 'এই প্রোডাক্টটির'
@@ -1586,6 +1586,9 @@ Rules:
             return "স্যার, এই প্রোডাক্টটির দাম এখন দেখাতে পারছি না।"
 
         products = self.user_product_context.get(user_id, []) or []
+        if not products:
+            return None
+
         if len(products) == 1:
             product = products[0]
             title = product.get('title') or 'এই প্রোডাক্টটির'
@@ -1593,6 +1596,18 @@ Rules:
             if price and str(price).strip().upper() != 'N/A':
                 return f"জি স্যার, {title} এর দাম {price}।"
             return "স্যার, এই প্রোডাক্টটির দাম এখন দেখাতে পারছি না।"
+
+        # Multiple products are in context. Return a compact price list so user can pick quickly.
+        lines = ["স্যার, আপনি যে প্রোডাক্টগুলো দেখেছেন সেগুলোর দাম:"]
+        for idx, product in enumerate(products[:5], 1):
+            title = str(product.get('title') or f'প্রোডাক্ট {idx}').strip()
+            price = str(product.get('price') or 'N/A').strip()
+            if not price or price.upper() == 'N/A':
+                price = 'দাম পাওয়া যায়নি'
+            lines.append(f"{idx}. {title} - {price}")
+
+        lines.append("যেটা নিতে চান, নম্বর বলুন স্যার।")
+        return "\n".join(lines)
 
         return None
 
