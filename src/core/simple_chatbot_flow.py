@@ -324,8 +324,10 @@ class SimpleChatbot:
             }
             
             # Check if message is a greeting
+            message_tokens = set(re.findall(r'[a-z0-9\u0980-\u09ff]+', message_lower))
             for eng_key, bengali_keys in greeting_map.items():
-                if eng_key in message_lower:
+                # Avoid substring collisions like "chacchi" -> "hi".
+                if eng_key in message_tokens or eng_key in message_lower.split():
                     # Search database for matching Bengali greeting
                     for item in self.database:
                         question = item['question']
@@ -740,6 +742,30 @@ class SimpleChatbot:
             intent = intent_result['intent']
             search_keywords = intent_result['search_keywords']
 
+            # Normalize Groq custom product-search labels (e.g. watch_search, mobile_search)
+            # so any product-like intent always flows into search API.
+            if self._should_force_product_search_intent(intent, message_for_intent):
+                normalized_text = str(message_for_intent or '').lower()
+                normalized_keywords = str(search_keywords or '').lower()
+                if 'laptop' in normalized_text or 'ল্যাপটপ' in normalized_text:
+                    intent = 'laptop_search'
+                elif any(term in normalized_text for term in ['price', 'dam', 'দাম', 'tk', 'taka', 'টাকা']) or any(
+                    term in normalized_keywords for term in ['price', 'dam', 'দাম', 'tk', 'taka', 'টাকা']
+                ):
+                    intent = 'price_search'
+                else:
+                    intent = 'product_search'
+
+                if str(search_keywords).strip().lower() in ['none', 'না', 'নেই', '']:
+                    search_keywords = self._build_product_search_keywords(message_for_intent)
+
+                logger.info(
+                    "🔁 [GROQ_PRODUCT_INTENT_NORMALIZED] user_id=%s normalized_intent=%s keywords='%s'",
+                    user_id,
+                    intent,
+                    search_keywords
+                )
+
             if intent in ['product_search', 'price_search', 'laptop_search'] and str(search_keywords).strip().lower() in ['none', 'না', 'নেই', '']:
                 search_keywords = self._build_product_search_keywords(message_for_intent)
 
@@ -772,7 +798,9 @@ class SimpleChatbot:
 
             # Dynamic Groq recheck: if intent is unclear/general but query may be a search,
             # ask Groq once more to confirm and extract search keywords.
-            if intent in ['unknown', 'irrelevant', 'general']:
+            if intent in ['unknown', 'irrelevant', 'general'] or (
+                intent in ['greeting', 'faq'] and self._looks_like_possible_product_signal(message_for_intent)
+            ):
                 dynamic_keywords = self._step1_groq_dynamic_search_keywords(message_for_intent, conversation_context)
                 if dynamic_keywords:
                     normalized_dynamic = str(message_for_intent or '').lower()
@@ -824,7 +852,7 @@ class SimpleChatbot:
             safe_intents = ['greeting', 'goodbye', 'thank_you', 'thanks', 'faq', 'general', 'question', 'ordering', 'delivery', 'support', 'warranty', 'availability']
             
             # SPECIAL HANDLING: Check database for FAQ responses first (greetings, common questions, ordering, delivery)
-            if intent in safe_intents:
+            if intent in safe_intents and not self._looks_like_possible_product_signal(message_for_intent):
                 database_response = self._search_database_faq(message)
                 if database_response:
                     logger.info("✅ Found response in database FAQ")
@@ -1471,6 +1499,29 @@ Rules:
 
         return None
 
+    def _should_force_product_search_intent(self, intent: str, message: str) -> bool:
+        """Return True when Groq intent looks product-search-like and should route to search."""
+        normalized_intent = str(intent or '').strip().lower()
+        if not normalized_intent:
+            return False
+
+        if normalized_intent in {'product_search', 'price_search', 'laptop_search'}:
+            return False
+
+        product_intent_hints = {
+            'search', 'product', 'laptop', 'mobile', 'phone', 'watch', 'smartwatch',
+            'computer', 'electronics', 'gadget', 'item', 'catalog'
+        }
+        looks_like_product_intent = (
+            normalized_intent.endswith('_search')
+            or any(hint in normalized_intent for hint in product_intent_hints)
+        )
+
+        if not looks_like_product_intent:
+            return False
+
+        return self._looks_like_possible_product_signal(message) or self._looks_like_product_query(message)
+
     def _looks_like_product_query(self, message: str) -> bool:
         """Heuristic detector for short product requests in English/Bangla transliteration."""
         text = str(message or '').strip().lower()
@@ -1480,11 +1531,13 @@ Rules:
         product_terms = [
             'laptop', 'phone', 'mobile', 'pc', 'computer', 'monitor', 'mouse', 'keyboard',
             'headphone', 'ssd', 'ram', 'printer', 'camera', 'router', 'charger',
+            'watch', 'smartwatch', 'smart-watch', 'smart watch',
             'gun', 'stun', 'stun gun', 'taser',
             'elitebook', 'pavilion', 'thinkpad', 'inspiron', 'aspire', 'vivobook', 'zbook',
             'macbook', 'chromebook', 'probook', 'pixelbook', 'razer', 'alienware', 'rog',
             'g8', 'g7', 'g6', 'g5', 'g4', 'g3', 'g2', 'g1',
-            'ল্যাপটপ', 'মোবাইল', 'ফোন', 'কম্পিউটার', 'মাউস', 'কিবোর্ড', 'হেডফোন'
+            'ল্যাপটপ', 'মোবাইল', 'ফোন', 'কম্পিউটার', 'মাউস', 'কিবোর্ড', 'হেডফোন',
+            'ঘড়ি', 'ঘড়ি', 'স্মার্টওয়াচ', 'স্মার্টওয়াচ', 'স্মার্ট ঘড়ি', 'স্মার্ট ঘড়ি'
         ]
         brand_terms = [
             'hp', 'dell', 'lenovo', 'asus', 'acer', 'apple', 'iphone', 'samsung', 'xiaomi',
@@ -1527,10 +1580,11 @@ Rules:
         signal_terms = {
             'hp', 'dell', 'lenovo', 'asus', 'acer', 'apple', 'samsung', 'xiaomi',
             'laptop', 'mobile', 'phone', 'pc', 'computer', 'monitor', 'mouse', 'keyboard',
+            'watch', 'smartwatch', 'smart',
             'elitebook', 'thinkpad', 'macbook', 'inspiron', 'pavilion',
             'price', 'dam', 'tk', 'taka', 'budget', 'modde', 'under', 'within',
             'ase', 'ache', 'pawa', 'available', 'stock',
-            'দাম', 'টাকা', 'বাজেট', 'ল্যাপটপ', 'মোবাইল', 'ফোন', 'আছে'
+            'দাম', 'টাকা', 'বাজেট', 'ল্যাপটপ', 'মোবাইল', 'ফোন', 'আছে', 'ঘড়ি', 'ঘড়ি', 'স্মার্টওয়াচ', 'স্মার্টওয়াচ'
         }
 
         tokens = set(re.findall(r'[a-z0-9\u0980-\u09ff]+', text))
