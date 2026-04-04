@@ -153,10 +153,13 @@ class SimpleChatbot:
         
         # Load database.csv for FAQ responses
         self.database = self._load_database()
+        # Load configured category/item names that should always trigger search intent.
+        self.search_intent_items = self._load_search_intent_items()
         
         logger.info("✅ Simple Chatbot Initialized")
         logger.info(f"🌐 BDStall API: {self.api_url}")
         logger.info(f"📚 Database: {len(self.database)} FAQ responses loaded")
+        logger.info("🧭 Search-intent items loaded: %s", len(self.search_intent_items))
 
     def _load_state(self) -> None:
         """Restore lightweight conversation state from disk."""
@@ -286,6 +289,33 @@ class SimpleChatbot:
             return database
         except Exception as e:
             logger.error(f"❌ Failed to load database: {e}")
+            return []
+
+    def _load_search_intent_items(self) -> list:
+        """Load configured catalog/category names that must map to search intent."""
+        items_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'search_intent_items.json')
+        try:
+            if not os.path.exists(items_path):
+                logger.warning("⚠️ Search intent item file not found: %s", items_path)
+                return []
+
+            with open(items_path, 'r', encoding='utf-8') as file_obj:
+                payload = json.load(file_obj)
+
+            if not isinstance(payload, list):
+                logger.warning("⚠️ Search intent item file format invalid")
+                return []
+
+            normalized_items = []
+            for item in payload:
+                text = str(item or '').strip().lower()
+                if text:
+                    normalized_items.append(text)
+
+            # Keep insertion order while removing duplicates.
+            return list(dict.fromkeys(normalized_items))
+        except Exception as e:
+            logger.warning("⚠️ Failed to load search intent items: %s", e)
             return []
     
     def _search_database_faq(self, message: str) -> Optional[str]:
@@ -1479,6 +1509,12 @@ Rules:
         if not text:
             return None
 
+        if self._contains_configured_search_item(text):
+            return {
+                'intent': 'product_search',
+                'search_keywords': self._build_product_search_keywords(text)
+            }
+
         entities = self._extract_search_entities(text)
         has_product = bool(entities.get('has_product'))
         has_price = bool(entities.get('has_price'))
@@ -1574,6 +1610,9 @@ Rules:
         if not text:
             return False
 
+        if self._contains_configured_search_item(text):
+            return True
+
         if self._looks_like_product_query(text):
             return True
 
@@ -1590,6 +1629,27 @@ Rules:
         tokens = set(re.findall(r'[a-z0-9\u0980-\u09ff]+', text))
         hits = sum(1 for token in tokens if token in signal_terms)
         return hits >= 2
+
+    def _contains_configured_search_item(self, message: str) -> bool:
+        """Return True when user message includes a configured catalog/category item name."""
+        text = str(message or '').strip().lower()
+        if not text or not getattr(self, 'search_intent_items', None):
+            return False
+
+        # Normalize separators so patterns like "smart-watch" and "smart watch" both match.
+        normalized_message = re.sub(r'[^a-z0-9\u0980-\u09ff]+', ' ', text)
+        normalized_message = re.sub(r'\s+', ' ', normalized_message).strip()
+        padded_message = f" {normalized_message} "
+
+        for item in self.search_intent_items:
+            normalized_item = re.sub(r'[^a-z0-9\u0980-\u09ff]+', ' ', item)
+            normalized_item = re.sub(r'\s+', ' ', normalized_item).strip()
+            if not normalized_item:
+                continue
+            if f" {normalized_item} " in padded_message:
+                return True
+
+        return False
 
     def _is_fixed_price_query(self, message: str) -> bool:
         """Detect queries asking whether a product has a fixed price."""
