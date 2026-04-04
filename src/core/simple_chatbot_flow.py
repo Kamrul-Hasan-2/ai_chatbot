@@ -122,6 +122,8 @@ class SimpleChatbot:
         self.user_order_draft: Dict[str, Dict[str, str]] = {}
         # Track pending product-search constraints when user gives only brand + budget.
         self.user_pending_product_query: Dict[str, Dict[str, Any]] = {}
+        # Track last resolved intent so cache can be cleared on intent switches.
+        self.user_last_intent: Dict[str, str] = {}
         
         # BDStall API Configuration
         self.api_url = "https://www.bdstall.com/api/item/ai_search/"
@@ -179,6 +181,7 @@ class SimpleChatbot:
             }
             self.user_order_draft = dict(state.get('user_order_draft') or {})
             self.user_pending_product_query = dict(state.get('user_pending_product_query') or {})
+            self.user_last_intent = dict(state.get('user_last_intent') or {})
             logger.info("✅ Restored chatbot state for %s users", len(self.user_modes))
         except Exception as e:
             logger.warning("⚠️ Failed to restore chatbot state: %s", e)
@@ -195,11 +198,19 @@ class SimpleChatbot:
                 'user_order_context': self.user_order_context,
                 'user_order_draft': self.user_order_draft,
                 'user_pending_product_query': self.user_pending_product_query,
+                'user_last_intent': self.user_last_intent,
             }
             with open(self.state_file, 'w', encoding='utf-8') as file_obj:
                 json.dump(state, file_obj, ensure_ascii=False)
         except Exception as e:
             logger.warning("⚠️ Failed to persist chatbot state: %s", e)
+
+    def _clear_product_search_cache(self, user_id: str, clear_pending: bool = True) -> None:
+        """Clear product-selection/search cache for a user when intent changes."""
+        self.user_product_context.pop(user_id, None)
+        self.user_selected_product.pop(user_id, None)
+        if clear_pending:
+            self.user_pending_product_query.pop(user_id, None)
     
     def _check_responder_type(self, user_id: str) -> Optional[str]:
         """
@@ -293,7 +304,7 @@ class SimpleChatbot:
                 'আসসালামু আলাইকুম': ['হাই', 'হ্যালো', 'আসসালামু-আলাইকুম']
             }
             
-            # Define ordering query mappings (romanized Bengali)
+            # Define ordering query mappings (romanized Bengali)e
             ordering_map = {
                 'kibabe order korbo': 'অর্ডার করবো কিভাবে',
                 'kivabe order korbo': 'অর্ডার করবো কিভাবে',
@@ -459,6 +470,34 @@ class SimpleChatbot:
                     response="Most welcome",
                     mode=ChatMode.AI,
                     intent='thanks',
+                    products=None,
+                    processing_time=(datetime.now() - start_time).total_seconds(),
+                    conversation_status=AI_ACTIVE_STATUS
+                )
+
+            if self._is_price_query(message):
+                self.user_modes[user_id] = ChatMode.AI
+                self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+
+                context_price_reply = self._reply_price_from_context(user_id)
+                if context_price_reply:
+                    return self._create_response(
+                        user_id=user_id,
+                        message=message,
+                        response=context_price_reply,
+                        mode=ChatMode.AI,
+                        intent='price_from_context',
+                        products=None,
+                        processing_time=(datetime.now() - start_time).total_seconds(),
+                        conversation_status=AI_ACTIVE_STATUS
+                    )
+
+                return self._create_response(
+                    user_id=user_id,
+                    message=message,
+                    response="কোন প্রোডাক্টটি চাচ্ছেন স্যার?",
+                    mode=ChatMode.AI,
+                    intent='price_product_clarification',
                     products=None,
                     processing_time=(datetime.now() - start_time).total_seconds(),
                     conversation_status=AI_ACTIVE_STATUS
@@ -720,6 +759,16 @@ class SimpleChatbot:
             logger.info(f"🔍 Search Keywords: {search_keywords}")
             logger.info("📋 [INTENT_DETECTION] intent=%s keywords=%s looks_like_product=%s", 
                         intent, search_keywords, self._looks_like_product_query(message))
+
+            previous_intent = self.user_last_intent.get(user_id)
+            if previous_intent and previous_intent != intent:
+                self._clear_product_search_cache(user_id, clear_pending=True)
+                logger.info(
+                    "🧹 Cleared search cache for user_id=%s due to intent switch %s -> %s",
+                    user_id,
+                    previous_intent,
+                    intent
+                )
 
             # Dynamic Groq recheck: if intent is unclear/general but query may be a search,
             # ask Groq once more to confirm and extract search keywords.
@@ -1508,6 +1557,44 @@ Rules:
         has_fixed = any(term in text for term in fixed_price_terms)
         has_query_marker = any(marker in text for marker in query_markers)
         return has_fixed and has_query_marker
+
+    def _is_price_query(self, message: str) -> bool:
+        """Detect generic price questions like 'price koto' that need context lookup."""
+        text = str(message or '').strip().lower()
+        if not text:
+            return False
+
+        # Keep existing fixed-price flow unchanged.
+        if self._is_fixed_price_query(message):
+            return False
+
+        price_patterns = [
+            'price koto', 'dam koto', 'dham koto', 'koto price', 'koto dam',
+            'er dam koto', 'etar dam koto', 'etar price koto',
+            'দাম কত', 'প্রাইস কত', 'কত দাম', 'এটার দাম কত', 'এইটার দাম কত'
+        ]
+        return any(pattern in text for pattern in price_patterns)
+
+    def _reply_price_from_context(self, user_id: str) -> Optional[str]:
+        """Return product price from selected or single suggested product context."""
+        selected = self.user_selected_product.get(user_id) or {}
+        if selected:
+            title = selected.get('title') or 'এই প্রোডাক্টটির'
+            price = selected.get('price') or ''
+            if price and str(price).strip().upper() != 'N/A':
+                return f"জি স্যার, {title} এর দাম {price}।"
+            return "স্যার, এই প্রোডাক্টটির দাম এখন দেখাতে পারছি না।"
+
+        products = self.user_product_context.get(user_id, []) or []
+        if len(products) == 1:
+            product = products[0]
+            title = product.get('title') or 'এই প্রোডাক্টটির'
+            price = product.get('price') or ''
+            if price and str(price).strip().upper() != 'N/A':
+                return f"জি স্যার, {title} এর দাম {price}।"
+            return "স্যার, এই প্রোডাক্টটির দাম এখন দেখাতে পারছি না।"
+
+        return None
 
     def _build_product_search_keywords(self, message: str) -> str:
         """Build cleaner search keywords from informal user queries."""
@@ -2442,6 +2529,8 @@ Rules:
         """
         Create standardized JSON response with mode
         """
+        if intent:
+            self.user_last_intent[user_id] = str(intent)
         self._save_state()
         return {
             "success": mode == ChatMode.AI,
