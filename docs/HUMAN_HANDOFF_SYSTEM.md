@@ -167,7 +167,7 @@ info = chatbot.handoff_manager.get_session_info("user123")
 
 ### No Match Found
 ```
-মিঠুন চন্দ্র বর্মন, BDStall.com-এ আপনাকে স্বাগতম। 
+BDStall.com-এ আপনাকে স্বাগতম। 
 আপনার মেসেজ এর জন্য ধন্যবাদ। 
 খুব শীঘ্রই BDStall.com এর একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবে। 
 (যোগাযোগের সময় সকাল ১০ টা থেকে সন্ধ্যা ৬ টা)

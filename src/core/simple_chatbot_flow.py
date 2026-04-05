@@ -363,6 +363,8 @@ class SimpleChatbot:
                         question = item['question']
                         for bengali_key in bengali_keys:
                             if bengali_key in question:
+                                if self._is_blocked_automated_message(item['answer']):
+                                    continue
                                 logger.info(f"✅ Greeting match: '{message}' → '{item['answer']}'")
                                 return item['answer']
             
@@ -398,6 +400,8 @@ class SimpleChatbot:
                 
                 # Check if message matches question keywords
                 if message_lower in question or question in message_lower:
+                    if self._is_blocked_automated_message(item['answer']):
+                        continue
                     return item['answer']
             
             return None
@@ -430,6 +434,20 @@ class SimpleChatbot:
             
             logger.info(f"📨 Processing message from {user_id} (Mode: {current_mode.value})")
             logger.info(f"💬 Message: {message}")
+
+            # Ignore known canned welcome templates to avoid unwanted auto-replies.
+            if self._is_blocked_automated_message(message):
+                logger.info("🔇 Ignoring blocked automated template message for user_id=%s", user_id)
+                return self._create_response(
+                    user_id=user_id,
+                    message=message,
+                    response="",
+                    mode=ChatMode.AI,
+                    intent='ignored_automated_template',
+                    products=None,
+                    processing_time=(datetime.now() - start_time).total_seconds(),
+                    conversation_status=self.user_conversation_status.get(user_id, AI_ACTIVE_STATUS)
+                )
 
             # ✅ NEW: Check user's responder status from BDStall API
             responder_type = self._check_responder_type(user_id)
@@ -502,6 +520,20 @@ class SimpleChatbot:
                     response="Most welcome",
                     mode=ChatMode.AI,
                     intent='thanks',
+                    products=None,
+                    processing_time=(datetime.now() - start_time).total_seconds(),
+                    conversation_status=AI_ACTIVE_STATUS
+                )
+
+            if self._is_deferred_reply_message(message):
+                self.user_modes[user_id] = ChatMode.AI
+                self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+                return self._create_response(
+                    user_id=user_id,
+                    message=message,
+                    response="ধন্যবাদ স্যার, সাথে থাকার জন্য।",
+                    mode=ChatMode.AI,
+                    intent='deferred_follow_up_ack',
                     products=None,
                     processing_time=(datetime.now() - start_time).total_seconds(),
                     conversation_status=AI_ACTIVE_STATUS
@@ -1721,6 +1753,33 @@ Rules:
         ]
 
         return any(term in text for term in budget_terms)
+
+    def _is_deferred_reply_message(self, message: str) -> bool:
+        """Detect messages like 'পরে জানাবো' and reply with a short thank-you."""
+        text = str(message or '').strip().lower()
+        if not text:
+            return False
+
+        patterns = [
+            'pore janabo', 'pore bolbo', 'poray janabo', 'later janabo',
+            'পরে জানাবো', 'পরে জানাব', 'পরে বলবো', 'পরে বলব', 'পরে জানাই', 'পরে দিবো', 'পরে দিব'
+        ]
+        return any(pattern in text for pattern in patterns)
+
+    def _is_blocked_automated_message(self, message: str) -> bool:
+        """Block known canned welcome templates so chatbot does not answer them."""
+        text = str(message or '').strip().lower()
+        if not text:
+            return False
+
+        blocked_phrases = [
+            'bdstall.com-এ আপনাকে স্বাগতম',
+            'আপনার মেসেজ এর জন্য ধন্যবাদ',
+            'খুব শীঘ্রই bdstall.com এর একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবে'
+        ]
+
+        # Require at least two matched fragments to avoid accidental blocking.
+        return sum(1 for phrase in blocked_phrases if phrase in text) >= 2
 
     def _reply_price_from_context(self, user_id: str) -> Optional[str]:
         """Return product price from selected or recently suggested product context."""
