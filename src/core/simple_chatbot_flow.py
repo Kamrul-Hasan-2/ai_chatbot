@@ -507,6 +507,20 @@ class SimpleChatbot:
                     conversation_status=AI_ACTIVE_STATUS
                 )
 
+            if self._is_budget_only_query(message):
+                self.user_modes[user_id] = ChatMode.AI
+                self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+                return self._create_response(
+                    user_id=user_id,
+                    message=message,
+                    response="স্যার, কোন প্রোডাক্টটি দেখতে চান?",
+                    mode=ChatMode.AI,
+                    intent='budget_product_clarification',
+                    products=None,
+                    processing_time=(datetime.now() - start_time).total_seconds(),
+                    conversation_status=AI_ACTIVE_STATUS
+                )
+
             if self._is_price_query(message):
                 self.user_modes[user_id] = ChatMode.AI
                 self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
@@ -1688,6 +1702,25 @@ Rules:
             'দাম কত', 'প্রাইস কত', 'কত দাম', 'এটার দাম কত', 'এইটার দাম কত'
         ]
         return any(pattern in text for pattern in price_patterns)
+
+    def _is_budget_only_query(self, message: str) -> bool:
+        """Detect low-budget queries without any product mention."""
+        text = str(message or '').strip().lower()
+        if not text:
+            return False
+
+        if self._is_fixed_price_query(message):
+            return False
+
+        if self._looks_like_product_query(message) or self._contains_configured_search_item(message):
+            return False
+
+        budget_terms = [
+            'kom dame', 'কম দামে', 'কম দামের', 'low budget', 'budget',
+            'cheap price', 'low price', 'cheap', 'সস্তা', 'কম বাজেটে', 'স্বল্প বাজেট'
+        ]
+
+        return any(term in text for term in budget_terms)
 
     def _reply_price_from_context(self, user_id: str) -> Optional[str]:
         """Return product price from selected or recently suggested product context."""
