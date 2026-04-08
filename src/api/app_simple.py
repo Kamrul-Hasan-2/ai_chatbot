@@ -642,7 +642,7 @@ def agent_reply():
 def save_message_endpoint():
     """Save a message by sender type: 1=Human Agent, 2=Bot, 3=Visitor."""
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or request.form.to_dict() or {}
         user_id = data.get('user_id')
         user_name = data.get('user_name')
         message = data.get('message', '')
