@@ -155,6 +155,7 @@ class SimpleChatbot:
         self.database = self._load_database()
         # Load configured category/item names that should always trigger search intent.
         self.search_intent_items = self._load_search_intent_items()
+        self.search_intent_items_mtime: Optional[float] = self._get_search_items_mtime()
         
         logger.info("✅ Simple Chatbot Initialized")
         logger.info(f"🌐 BDStall API: {self.api_url}")
@@ -317,6 +318,27 @@ class SimpleChatbot:
         except Exception as e:
             logger.warning("⚠️ Failed to load search intent items: %s", e)
             return []
+
+    def _get_search_items_mtime(self) -> Optional[float]:
+        """Return mtime of search intent item JSON, if available."""
+        items_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'search_intent_items.json')
+        try:
+            if not os.path.exists(items_path):
+                return None
+            return os.path.getmtime(items_path)
+        except Exception:
+            return None
+
+    def _refresh_search_intent_items_if_changed(self) -> None:
+        """Reload search intent item list when JSON file changes on disk."""
+        latest_mtime = self._get_search_items_mtime()
+        if latest_mtime is None:
+            return
+
+        if self.search_intent_items_mtime is None or latest_mtime > self.search_intent_items_mtime:
+            self.search_intent_items = self._load_search_intent_items()
+            self.search_intent_items_mtime = latest_mtime
+            logger.info("🔄 Reloaded search-intent items: %s", len(self.search_intent_items))
     
     def _search_database_faq(self, message: str) -> Optional[str]:
         """Search database for FAQ response (greetings, common questions, ordering, delivery)"""
@@ -422,6 +444,7 @@ class SimpleChatbot:
         """
         try:
             start_time = datetime.now()
+            self._refresh_search_intent_items_if_changed()
             
             # Get current mode for this user
             current_mode = self.user_modes.get(user_id, ChatMode.AI)
@@ -1938,7 +1961,8 @@ Rules:
             'kindly', 'bhai', 'sir', 'স্যার', 'ভাই', 'আমার', 'আপনার', 'কাছে', 'আছে',
             'একটা', 'দেন', 'কি',
             'apnader', 'amader', 'eikhane', 'ekhane', 'ekhne', 'ekhane?', 'eikhane?',
-            'apnadar', 'apnaderi', 'ekhankar', 'pawa', 'pabo'
+            'apnadar', 'apnaderi', 'ekhankar', 'pawa', 'pabo',
+            'cheap', 'low', 'budget', 'affordable', 'কম', 'দামে', 'বাজেটে', 'সস্তা'
         ]
 
         words = []
@@ -2024,7 +2048,7 @@ Rules:
             import requests
             
             # Clean keywords for API
-            search_term = keywords.replace('taka', '').replace('tk', '').strip()
+            search_term = self._normalize_search_keywords_for_api(keywords)
             
             logger.info(f"🔍 Searching BDStall API with term: {search_term}")
             
@@ -2213,6 +2237,25 @@ Rules:
                 'products': [],
                 'database_message': ''
             }
+
+    def _normalize_search_keywords_for_api(self, keywords: str) -> str:
+        """Normalize user search keywords so budget adjectives don't hurt API matching."""
+        text = str(keywords or '').strip().lower()
+        if not text:
+            return ''
+
+        text = text.translate(str.maketrans('০১২৩৪৫৬৭৮৯', '0123456789'))
+        tokens = re.findall(r'[a-z0-9\u0980-\u09ff]+', text)
+
+        drop_tokens = {
+            'cheap', 'low', 'budget', 'affordable', 'best', 'good',
+            'কম', 'দামে', 'বাজেটে', 'সস্তা', 'ভালো', 'ভাল',
+            'taka', 'tk', 'টাকা'
+        }
+
+        kept = [token for token in tokens if token not in drop_tokens]
+        normalized = ' '.join(kept).strip()
+        return normalized or text
 
     def _fetch_delivery_intent_response(self) -> Optional[str]:
         """Fetch delivery template text from BDStall intent API."""
