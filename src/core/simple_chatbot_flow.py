@@ -565,20 +565,6 @@ class SimpleChatbot:
             if self._is_comparison_query(message):
                 self.user_modes[user_id] = ChatMode.AI
                 self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
-
-                comparison_reply = self._reply_comparison_from_context(user_id)
-                if comparison_reply:
-                    return self._create_response(
-                        user_id=user_id,
-                        message=message,
-                        response=comparison_reply,
-                        mode=ChatMode.AI,
-                        intent='product_comparison',
-                        products=None,
-                        processing_time=(datetime.now() - start_time).total_seconds(),
-                        conversation_status=AI_ACTIVE_STATUS
-                    )
-
                 return self._create_response(
                     user_id=user_id,
                     message=message,
@@ -587,7 +573,7 @@ class SimpleChatbot:
                         "রিভিউ এবং রেটিং দেখে প্রোডাক্ট কিনতে পারেন স্যার।"
                     ),
                     mode=ChatMode.AI,
-                    intent='product_comparison_clarification',
+                    intent='product_comparison',
                     products=None,
                     processing_time=(datetime.now() - start_time).total_seconds(),
                     conversation_status=AI_ACTIVE_STATUS
