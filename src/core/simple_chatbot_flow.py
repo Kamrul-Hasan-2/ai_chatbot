@@ -559,7 +559,10 @@ class SimpleChatbot:
                 return self._create_response(
                     user_id=user_id,
                     message=message,
-                    response="স্যার, কোন ২টা বা ৩টা প্রোডাক্ট তুলনা করতে চান?",
+                    response=(
+                        "স্যার, আমাদের সব প্রোডাক্টই ভালো। আপনি লিংকে ক্লিক করে আমাদের ওয়েবসাইটে গিয়ে "
+                        "রিভিউ এবং রেটিং দেখে প্রোডাক্ট কিনতে পারেন স্যার।"
+                    ),
                     mode=ChatMode.AI,
                     intent='product_comparison_clarification',
                     products=None,
@@ -1833,9 +1836,10 @@ Rules:
         if len(products) < 2:
             selected = self.user_selected_product.get(user_id) or {}
             if selected:
-                title = selected.get('title') or 'এই প্রোডাক্টটি'
-                price = selected.get('price') or 'N/A'
-                return f"স্যার, {title} সম্পর্কে আমার কাছে একটাই সিলেক্টেড প্রোডাক্ট আছে। দাম: {price}। আরেকটা প্রোডাক্ট দিলে আমি তুলনা করে বলতে পারব।"
+                return (
+                    "স্যার, আমাদের সব প্রোডাক্টই ভালো। আপনি লিংকে ক্লিক করে আমাদের ওয়েবসাইটে গিয়ে "
+                    "রিভিউ এবং রেটিং দেখে প্রোডাক্ট কিনতে পারেন স্যার।"
+                )
             return None
 
         comparison_items = []
