@@ -539,6 +539,34 @@ class SimpleChatbot:
                     conversation_status=AI_ACTIVE_STATUS
                 )
 
+            if self._is_comparison_query(message):
+                self.user_modes[user_id] = ChatMode.AI
+                self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+
+                comparison_reply = self._reply_comparison_from_context(user_id)
+                if comparison_reply:
+                    return self._create_response(
+                        user_id=user_id,
+                        message=message,
+                        response=comparison_reply,
+                        mode=ChatMode.AI,
+                        intent='product_comparison',
+                        products=None,
+                        processing_time=(datetime.now() - start_time).total_seconds(),
+                        conversation_status=AI_ACTIVE_STATUS
+                    )
+
+                return self._create_response(
+                    user_id=user_id,
+                    message=message,
+                    response="স্যার, কোন ২টা বা ৩টা প্রোডাক্ট তুলনা করতে চান?",
+                    mode=ChatMode.AI,
+                    intent='product_comparison_clarification',
+                    products=None,
+                    processing_time=(datetime.now() - start_time).total_seconds(),
+                    conversation_status=AI_ACTIVE_STATUS
+                )
+
             if self._is_budget_only_query(message):
                 self.user_modes[user_id] = ChatMode.AI
                 self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
@@ -1780,6 +1808,71 @@ Rules:
 
         # Require at least two matched fragments to avoid accidental blocking.
         return sum(1 for phrase in blocked_phrases if phrase in text) >= 2
+
+    def _is_comparison_query(self, message: str) -> bool:
+        """Detect compare/best-product questions like 'compare these' or 'which one is best'."""
+        text = str(message or '').strip().lower()
+        if not text:
+            return False
+
+        compare_terms = [
+            'compare', 'comparison', 'compare these', 'compare this', 'which one is best',
+            'best one', 'better one', 'good laptop', 'good one', 'valo', 'bhalo',
+            'tulona', 'compare koren', 'compare korba', 'tulona koren',
+            'তুলনা', 'কোনটা ভালো', 'কোনটা ভাল', 'কোনটা best', 'কোনটা ভালো হবে',
+            'ভালো হবে', 'ভালো', 'ভাল', 'বেস্ট'
+        ]
+
+        has_compare_term = any(term in text for term in compare_terms)
+        has_product_signal = self._looks_like_possible_product_signal(message) or self._contains_configured_search_item(message)
+        return has_compare_term and has_product_signal
+
+    def _reply_comparison_from_context(self, user_id: str) -> Optional[str]:
+        """Create a simple comparison from the last shown products."""
+        products = self.user_product_context.get(user_id, []) or []
+        if len(products) < 2:
+            selected = self.user_selected_product.get(user_id) or {}
+            if selected:
+                title = selected.get('title') or 'এই প্রোডাক্টটি'
+                price = selected.get('price') or 'N/A'
+                return f"স্যার, {title} সম্পর্কে আমার কাছে একটাই সিলেক্টেড প্রোডাক্ট আছে। দাম: {price}। আরেকটা প্রোডাক্ট দিলে আমি তুলনা করে বলতে পারব।"
+            return None
+
+        comparison_items = []
+        sortable_items = []
+        for idx, product in enumerate(products[:3], 1):
+            title = str(product.get('title') or f'প্রোডাক্ট {idx}').strip()
+            price_text = str(product.get('price') or '').strip()
+            numeric_price = self._parse_price_for_comparison(price_text)
+            sortable_items.append((numeric_price if numeric_price is not None else 10**12, idx, title, price_text))
+
+        sortable_items.sort(key=lambda item: item[0])
+        cheapest = sortable_items[0]
+
+        comparison_items.append("স্যার, আপনার দেখানো প্রোডাক্টগুলোর ছোট্ট তুলনা নিচে দিলাম:")
+        for _, idx, title, price_text in sortable_items:
+            display_price = price_text or 'দাম পাওয়া যায়নি'
+            comparison_items.append(f"{idx}. {title} - {display_price}")
+
+        comparison_items.append(f"দাম অনুযায়ী সবচেয়ে ভাল অপশন হতে পারে {cheapest[2]}।")
+        comparison_items.append("আপনি চাইলে আমি বাজেট অনুযায়ীও বেছে দিতে পারি স্যার।")
+        return "\n".join(comparison_items)
+
+    def _parse_price_for_comparison(self, price_text: str) -> Optional[int]:
+        """Convert a price string into an integer for comparison sorting."""
+        text = str(price_text or '').strip().lower()
+        if not text:
+            return None
+
+        text = text.translate(str.maketrans('০১২৩৪৫৬৭৮৯', '0123456789'))
+        match = re.search(r'(\d+(?:,\d{3})*(?:\.\d+)?)', text)
+        if not match:
+            return None
+
+        try:
+            return int(float(match.group(1).replace(',', '')))
+        except Exception:
+            return None
 
     def _reply_price_from_context(self, user_id: str) -> Optional[str]:
         """Return product price from selected or recently suggested product context."""
