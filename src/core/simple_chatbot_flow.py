@@ -1023,6 +1023,33 @@ class SimpleChatbot:
             
             # STEP 2 & 3: Search API → Database Format
             if intent in ['product_search', 'price_search', 'laptop_search']:
+                category_name = self._resolve_generic_category_query(message_for_intent)
+                if category_name:
+                    logger.info(
+                        "🚀 CATEGORY TEMPLATE: user_id=%s category=%s",
+                        user_id,
+                        category_name
+                    )
+                    category_response = self._fetch_category_intent_response(category_name)
+                    if category_response:
+                        self.user_modes[user_id] = ChatMode.AI
+                        self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+                        return self._create_response(
+                            user_id=user_id,
+                            message=message,
+                            response=category_response,
+                            mode=ChatMode.AI,
+                            intent='category_search',
+                            products=None,
+                            search_keywords=category_name,
+                            processing_time=(datetime.now() - start_time).total_seconds(),
+                            conversation_status=AI_ACTIVE_STATUS
+                        )
+                    logger.info(
+                        "⚠️ CATEGORY TEMPLATE unavailable; fallback to ai_search for category=%s",
+                        category_name
+                    )
+
                 logger.info("🚀 STEP 2-3: Searching database with keywords...")
                 logger.info("🔎 [SEARCH_INITIATED] user_id=%s intent=%s keywords='%s'", user_id, intent, search_keywords)
                 search_result = self._step2_search_database(search_keywords)
@@ -1056,7 +1083,7 @@ class SimpleChatbot:
                         user_id=user_id,
                         message=message,
                         response=(
-                            "স্যার, আপনার কথার সাথে মিলে এই মুহূর্তে নির্দিষ্ট কোনো প্রোডাক্ট পেলাম না। "
+                            "স্যার, এই মুহূর্তে নির্দিষ্ট কোনো প্রোডাক্ট পেলাম না। "
                             "আপনি ব্র্যান্ড/মডেল/বাজেট একটু সহজ করে লিখে দিন, আমি আবার খুঁজে দিচ্ছি।"
                         ),
                         mode=ChatMode.AI,
@@ -1745,6 +1772,82 @@ Rules:
 
         return False
 
+    def _find_best_search_item_match(self, message: str) -> Optional[str]:
+        """Return the longest configured category/item phrase found in the message."""
+        text = str(message or '').strip().lower()
+        if not text or not getattr(self, 'search_intent_items', None):
+            return None
+
+        normalized_message = re.sub(r'[^a-z0-9\u0980-\u09ff]+', ' ', text)
+        normalized_message = re.sub(r'\s+', ' ', normalized_message).strip()
+        padded_message = f" {normalized_message} "
+
+        best_match = None
+        best_token_count = 0
+
+        for item in self.search_intent_items:
+            normalized_item = re.sub(r'[^a-z0-9\u0980-\u09ff]+', ' ', str(item or '').lower())
+            normalized_item = re.sub(r'\s+', ' ', normalized_item).strip()
+            if not normalized_item:
+                continue
+
+            if f" {normalized_item} " not in padded_message:
+                continue
+
+            token_count = len(normalized_item.split())
+            if token_count > best_token_count:
+                best_match = normalized_item
+                best_token_count = token_count
+
+        return best_match
+
+    def _resolve_generic_category_query(self, message: str) -> Optional[str]:
+        """Return category only when user asks a generic category query without details."""
+        text = str(message or '').strip().lower()
+        if not text:
+            return None
+
+        matched_item = self._find_best_search_item_match(text)
+        if not matched_item:
+            return None
+
+        entities = self._extract_search_entities(text)
+        if entities.get('brand') or entities.get('has_price'):
+            return None
+
+        filler_tokens = {
+            'ase', 'ache', 'achi', 'available', 'stock', 'pawa', 'kache', 'kase',
+            'chai', 'lagbe', 'dorkar', 'den', 'din', 'show', 'dekhan', 'dekhte',
+            'please', 'plz', 'need', 'want', 'looking', 'for',
+            'আছে', 'পাওয়া', 'পাওয়া', 'চাই', 'লাগবে', 'দেখান', 'দিন', 'দেন'
+        }
+
+        message_tokens = re.findall(r'[a-z0-9\u0980-\u09ff]+', text)
+        message_tokens = [token for token in message_tokens if token not in filler_tokens]
+        if not message_tokens:
+            return matched_item
+
+        item_tokens = re.findall(r'[a-z0-9\u0980-\u09ff]+', matched_item)
+        item_token_set = set(item_tokens)
+        extra_tokens = [token for token in message_tokens if token not in item_token_set]
+
+        if not extra_tokens:
+            return matched_item
+
+        # Model/spec qualifiers should remain on ai_search flow.
+        model_or_spec_cues = {
+            'core', 'i3', 'i5', 'i7', 'i9', 'ryzen', 'gen', 'ddr',
+            'gb', 'tb', 'ssd', 'hdd', 'inch', 'office', 'gaming', 'pro', 'max', 'ultra'
+        }
+        if any(token in model_or_spec_cues for token in extra_tokens):
+            return None
+
+        if any(re.search(r'\d', token) for token in extra_tokens):
+            return None
+
+        # Extra descriptive words mean this is a specific search request.
+        return None
+
     def _is_fixed_price_query(self, message: str) -> bool:
         """Detect queries asking whether a product has a fixed price."""
         text = str(message or '').strip().lower()
@@ -1951,6 +2054,33 @@ Rules:
         if price and price.lower() not in {'koto', 'কত', 'price', 'দাম'}:
             keywords_parts.append(price)
         search_keywords = ' '.join(part for part in keywords_parts if part).strip()
+
+        category_name = self._resolve_generic_category_query(text)
+        if category_name:
+            logger.info(
+                "🚀 SCHEMA CATEGORY TEMPLATE: user_id=%s category=%s",
+                user_id,
+                category_name
+            )
+            category_response = self._fetch_category_intent_response(category_name)
+            if category_response:
+                self.user_modes[user_id] = ChatMode.AI
+                self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+                return self._create_response(
+                    user_id=user_id,
+                    message=message,
+                    response=category_response,
+                    mode=ChatMode.AI,
+                    intent='category_search',
+                    products=None,
+                    search_keywords=category_name,
+                    processing_time=(datetime.now() - start_time).total_seconds(),
+                    conversation_status=AI_ACTIVE_STATUS
+                )
+            logger.info(
+                "⚠️ SCHEMA CATEGORY TEMPLATE unavailable; fallback to ai_search for category=%s",
+                category_name
+            )
 
         search_result = self._step2_search_database(search_keywords)
         products = search_result.get('products') or []
@@ -2546,6 +2676,87 @@ Rules:
         kept = [token for token in tokens if token not in drop_tokens]
         normalized = ' '.join(kept).strip()
         return normalized or text
+
+    def _fetch_category_intent_response(self, category: str) -> Optional[str]:
+        """Fetch generic category template text from BDStall intent API."""
+        params = {
+            'intent': 'category',
+            'category': str(category or '').strip().lower(),
+            'key': self.api_key
+        }
+        started = datetime.now()
+
+        try:
+            response = requests.get(
+                self.delivery_intent_api_url,
+                params=params,
+                timeout=10
+            )
+            duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+            status = "PASS" if response.status_code == 200 else "FAIL"
+
+            _log_api_call(
+                api_name="ai_template_category",
+                method="GET",
+                url=self.delivery_intent_api_url,
+                request_payload=params,
+                status_code=response.status_code,
+                duration_ms=duration_ms,
+                status=status,
+                response_preview=response.text
+            )
+
+            if status == "FAIL":
+                logger.warning(
+                    "⚠️ Category intent API failed with status %s for category=%s",
+                    response.status_code,
+                    category
+                )
+                return None
+
+            data = response.json()
+
+            if isinstance(data, str):
+                return data.strip() or None
+
+            if isinstance(data, dict):
+                if data.get('success') is False:
+                    return None
+
+                for key in [
+                    'response',
+                    'message',
+                    'template',
+                    'text',
+                    'content',
+                    'data'
+                ]:
+                    value = data.get(key)
+                    if isinstance(value, str) and value.strip():
+                        return value.strip()
+
+                if len(data) == 1:
+                    only_value = next(iter(data.values()))
+                    if isinstance(only_value, str) and only_value.strip():
+                        return only_value.strip()
+
+            logger.warning("⚠️ Category intent API returned unexpected payload format")
+            return None
+
+        except Exception as e:
+            duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+            _log_api_call(
+                api_name="ai_template_category",
+                method="GET",
+                url=self.delivery_intent_api_url,
+                request_payload=params,
+                status_code=0,
+                duration_ms=duration_ms,
+                status="FAIL",
+                response_preview=str(e)
+            )
+            logger.warning("⚠️ Category intent API call failed: %s", e)
+            return None
 
     def _fetch_delivery_intent_response(self) -> Optional[str]:
         """Fetch delivery template text from BDStall intent API."""
