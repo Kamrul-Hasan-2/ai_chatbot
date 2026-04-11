@@ -1891,6 +1891,21 @@ Rules:
                 conversation_status=AI_ACTIVE_STATUS
             )
 
+        # Budget/number-only query should ask product title first.
+        if self._is_price_only_query(text):
+            self.user_modes[user_id] = ChatMode.AI
+            self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+            return self._create_response(
+                user_id=user_id,
+                message=message,
+                response="কোন প্রোডাক্টটি চাচ্ছেন স্যার?",
+                mode=ChatMode.AI,
+                intent='schema_need_title_price_only',
+                products=None,
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
         intent_obj = self._extract_intent_schema(message)
         is_search_related = bool(intent_obj.get('title') or intent_obj.get('price') or intent_obj.get('compare') or self._looks_like_possible_product_signal(message))
 
@@ -2009,6 +2024,33 @@ Rules:
             'price': price or None,
             'compare': compare or None,
         }
+
+    def _is_price_only_query(self, message: str) -> bool:
+        """Detect price-only queries like 'under 10k'/'under 20k' or multi-number budgets without product title."""
+        text = str(message or '').strip().lower()
+        if not text:
+            return False
+
+        # If product title/signal exists, this is not a price-only query.
+        if self._contains_configured_search_item(text) or self._looks_like_product_query(text):
+            return False
+
+        text = text.translate(str.maketrans('০১২৩৪৫৬৭৮৯', '0123456789'))
+        numbers = re.findall(r'\d+(?:\.\d+)?', text)
+
+        # Any explicit price cue + at least one number is a price-only query.
+        explicit_price_cues = [
+            'under', 'budget', 'within', 'less than', 'below', 'k', 'tk', 'taka',
+            'দাম', 'টাকা', 'বাজেট', 'মধ্যে', 'এর মধ্যে'
+        ]
+        if any(cue in text for cue in explicit_price_cues) and len(numbers) >= 1:
+            return True
+
+        # If user sends two or more numbers with no product title, treat as price intent.
+        if len(numbers) >= 2:
+            return True
+
+        return False
 
     def _resolve_title_from_search_reference(self, message: str) -> Optional[str]:
         """Resolve title by matching known entries from search intent reference list."""
