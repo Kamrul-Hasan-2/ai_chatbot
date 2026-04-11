@@ -1859,11 +1859,10 @@ Rules:
         if not text:
             return None
 
-        is_bangla = bool(re.search(r'[\u0980-\u09ff]', text))
         normalized = text.lower()
 
         if self._is_greeting_message(normalized):
-            greeting_response = "আসসালামু-আলাইকুম স্যার, কোন বিষয়ে জানতে চাচ্ছেন?" if is_bangla else "Hello sir, what would you like to know?"
+            greeting_response = "আসসালামু-আলাইকুম স্যার, কোন বিষয়ে জানতে চাচ্ছেন?"
             self.user_modes[user_id] = ChatMode.AI
             self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
             return self._create_response(
@@ -1878,7 +1877,7 @@ Rules:
             )
 
         if self._is_goodbye_message(normalized):
-            goodbye_response = "ধন্যবাদ স্যার, ভালো থাকবেন।" if is_bangla else "Thank you sir, goodbye."
+            goodbye_response = "ধন্যবাদ স্যার, ভালো থাকবেন।"
             self.user_modes[user_id] = ChatMode.AI
             self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
             return self._create_response(
@@ -1901,11 +1900,7 @@ Rules:
                 message=message,
                 start_time=start_time,
                 intent='schema_non_search_handoff',
-                response_text=(
-                    "স্যার, এই বিষয়ে আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।"
-                    if is_bangla else
-                    "Sir, our human representative will contact you on this topic."
-                )
+                response_text="স্যার, এই বিষয়ে আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।"
             )
 
         # Each new message is treated as a fresh intent (clear prior context).
@@ -1915,13 +1910,9 @@ Rules:
 
         if not intent_obj.get('title'):
             prompt = (
-                "কোন product এর দাম জানতে চান?"
+                "কোন প্রোডাক্টের দাম জানতে চান?"
                 if intent_obj.get('price') else
-                "কোন product খুঁজছেন?"
-            ) if is_bangla else (
-                "Which product price do you want to know?"
-                if intent_obj.get('price') else
-                "Which product are you looking for?"
+                "কোন প্রোডাক্ট খুঁজছেন?"
             )
 
             self.user_modes[user_id] = ChatMode.AI
@@ -1952,12 +1943,7 @@ Rules:
         if not products:
             self.user_modes[user_id] = ChatMode.AI
             self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
-            no_result_response = (
-                f"🔍 Search: {title}\n"
-                f"💰 Price Filter: {price or 'N/A'}\n"
-                f"🔄 Compare: {compare or 'N/A'}\n\n"
-                + ("দুঃখিত স্যার, এই মুহূর্তে কোনো প্রোডাক্ট পাওয়া যায়নি।" if is_bangla else "Sorry, no products were found right now.")
-            )
+            no_result_response = "দুঃখিত স্যার, এই মুহূর্তে কোনো প্রোডাক্ট পাওয়া যায়নি।"
             return self._create_response(
                 user_id=user_id,
                 message=message,
@@ -1970,23 +1956,18 @@ Rules:
                 conversation_status=AI_ACTIVE_STATUS
             )
 
-        self.user_product_context[user_id] = products[:5]
+        self.user_product_context[user_id] = products[:3]
 
-        lines = [
-            f"🔍 Search: {title}",
-            f"💰 Price Filter: {price or 'N/A'}",
-            f"🔄 Compare: {compare or 'N/A'}",
-            ""
-        ]
+        lines = []
 
-        for idx, product in enumerate(products[:5], 1):
+        for idx, product in enumerate(products[:3], 1):
             product_title = str(product.get('title') or 'N/A').strip()
             product_price = str(product.get('price') or 'N/A').strip()
             product_url = str(product.get('url') or '').strip()
             lines.append(f"{idx}. {product_title}")
-            lines.append(f"   Price: {product_price}")
+            lines.append(f"   মূল্য: {product_price}")
             if product_url:
-                lines.append(f"   Link: {product_url}")
+                lines.append(f"   লিংক: {product_url}")
 
         self.user_modes[user_id] = ChatMode.AI
         self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
@@ -1996,7 +1977,7 @@ Rules:
             response='\n'.join(lines),
             mode=ChatMode.AI,
             intent='schema_search',
-            products=products,
+            products=products[:3],
             search_keywords=search_keywords,
             processing_time=(datetime.now() - start_time).total_seconds(),
             conversation_status=AI_ACTIVE_STATUS
