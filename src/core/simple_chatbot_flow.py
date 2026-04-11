@@ -529,6 +529,18 @@ class SimpleChatbot:
                         conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
                     )
 
+            # TEMP STRICT MODE:
+            # Only search, greeting, and goodbye are handled by bot.
+            # Everything else is routed to human mode for now.
+            if not self._is_allowed_in_strict_mode(message):
+                return self._handoff_to_human(
+                    user_id=user_id,
+                    message=message,
+                    start_time=start_time,
+                    intent='strict_mode_handoff',
+                    response_text="স্যার, এই বিষয়ে আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।"
+                )
+
             # Keep thank-you replies deterministic and free of sir/mam variants.
             thank_you_tokens = {
                 'thank you', 'thanks', 'thx', 'thanku', 'thankyou',
@@ -1820,6 +1832,30 @@ Rules:
 
         # Require at least two matched fragments to avoid accidental blocking.
         return sum(1 for phrase in blocked_phrases if phrase in text) >= 2
+
+    def _is_allowed_in_strict_mode(self, message: str) -> bool:
+        """Temporary allow-list: search, greeting, and goodbye only."""
+        text = str(message or '').strip().lower()
+        if not text:
+            return False
+
+        if self._looks_like_possible_product_signal(message):
+            return True
+
+        greeting_terms = {
+            'hi', 'hello', 'hey', 'hlw', 'hai', 'salam', 'assalamu alaikum',
+            'হাই', 'হ্যালো', 'হেলো', 'সালাম', 'আসসালামু আলাইকুম', 'আসসালামুয়ালাইকুম'
+        }
+        goodbye_terms = {
+            'bye', 'goodbye', 'see you', 'take care', 'allah hafez', 'ok bye',
+            'বিদায়', 'বিদায়', 'আল্লাহ হাফেজ', 'বাই', 'আবার দেখা হবে'
+        }
+
+        normalized = re.sub(r'\s+', ' ', text).strip()
+        if normalized in greeting_terms or normalized in goodbye_terms:
+            return True
+
+        return False
 
     def _is_comparison_query(self, message: str) -> bool:
         """Detect compare/best-product questions like 'compare these' or 'which one is best'."""
