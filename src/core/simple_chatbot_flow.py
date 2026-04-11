@@ -2050,7 +2050,14 @@ Rules:
         price = str(intent_obj.get('price') or '').strip()
         compare = str(intent_obj.get('compare') or '').strip()
 
-        keywords_parts = [title]
+        search_entities = self._extract_search_entities(text)
+        brand = str(search_entities.get('brand') or '').strip()
+
+        keywords_parts = []
+        if brand:
+            keywords_parts.append(brand)
+        if title:
+            keywords_parts.append(title)
         if price and price.lower() not in {'koto', 'কত', 'price', 'দাম'}:
             keywords_parts.append(price)
         search_keywords = ' '.join(part for part in keywords_parts if part).strip()
