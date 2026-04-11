@@ -765,6 +765,145 @@ def test():
     return chat()
 
 
+# Valid API keys for ai_template endpoint
+VALID_API_KEYS = [
+    'mkh677ddd2sxxk',
+    'mkh677ddd2sxxkkdjff',
+    os.getenv('BDSTALL_API_KEY', 'mkh677ddd2sxxkkdjff')
+]
+
+SEARCH_INTENT_ITEMS_FILE = os.path.join(PROJECT_ROOT, 'data', 'search_intent_items.json')
+
+
+def load_search_intent_items():
+    """Load search_intent_items.json"""
+    try:
+        if os.path.exists(SEARCH_INTENT_ITEMS_FILE):
+            with open(SEARCH_INTENT_ITEMS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except Exception as e:
+        logger.error(f"Failed to load search_intent_items.json: {e}")
+    return []
+
+
+def normalize_category(category: str) -> str:
+    """Normalize category name for comparison"""
+    return category.lower().strip()
+
+
+def find_category_in_list(category: str, items_list: list) -> bool:
+    """Check if category exists in the items list (case-insensitive)"""
+    normalized_category = normalize_category(category)
+    for item in items_list:
+        if normalize_category(item) == normalized_category:
+            return True
+    return False
+
+
+def get_category_url(category: str) -> str:
+    """Generate BDStall category URL"""
+    # Replace spaces with hyphens and make lowercase
+    url_slug = category.lower().replace(' ', '-').replace('_', '-')
+    return f"https://www.bdstall.com/{url_slug}/"
+
+
+@app.route('/api/item/ai_template/', methods=['GET'])
+def ai_template_category_search():
+    """
+    AI Template Category Search Endpoint
+    
+    URL Format:
+    /api/item/ai_template/?intent=category&category=laptop&key=mkh677ddd2sxxk
+    
+    Query Parameters:
+    - intent: Operation type (currently "category")
+    - category: Category name to search for
+    - key: API key for authentication
+    
+    Response (if category found):
+    {
+        "success": true,
+        "data": "আপনি laptop ক্যাটাগরিতে বিভিন্ন পণ্য দেখতে পারেন। এই লিংকে ক্লিক করুন: https://www.bdstall.com/laptop/"
+    }
+    
+    Response (if category not found):
+    {
+        "success": false,
+        "error": "Category not found",
+        "data": []
+    }
+    """
+    try:
+        # Get query parameters
+        intent = request.args.get('intent', '').lower()
+        category = request.args.get('category', '').strip()
+        api_key = request.args.get('key', '').strip()
+        
+        # Validate API key
+        if api_key not in VALID_API_KEYS:
+            logger.warning(f"[AI_TEMPLATE] Invalid API key: {api_key}")
+            return jsonify({
+                "success": False,
+                "error": "Invalid API key"
+            }), 401
+        
+        # Validate required parameters
+        if not category:
+            return jsonify({
+                "success": False,
+                "error": "Category parameter is required"
+            }), 400
+        
+        # Only support "category" intent for now
+        if intent != 'category':
+            return jsonify({
+                "success": False,
+                "error": f"Intent '{intent}' not supported. Use 'intent=category'",
+                "supported_intents": ["category"]
+            }), 400
+        
+        # Load search intent items
+        items_list = load_search_intent_items()
+        
+        if not items_list:
+            logger.warning("[AI_TEMPLATE] Failed to load search intent items")
+            return jsonify({
+                "success": False,
+                "error": "Unable to load category database"
+            }), 500
+        
+        # Check if category exists in the list
+        category_exists = find_category_in_list(category, items_list)
+        
+        if category_exists:
+            # Category found - return Bengali response with link
+            category_url = get_category_url(category)
+            bengali_message = f"আপনি {category} ক্যাটাগরিতে বিভিন্ন পণ্য দেখতে পারেন। এই লিংকে ক্লিক করুন: {category_url}"
+            
+            logger.info(f"[AI_TEMPLATE] Category found: {category}")
+            
+            return jsonify({
+                "success": True,
+                "data": bengali_message
+            }), 200
+        else:
+            # Category not found
+            logger.info(f"[AI_TEMPLATE] Category not found: {category}")
+            
+            return jsonify({
+                "success": False,
+                "error": f"Category '{category}' not found",
+                "message": "Please search with a valid category name"
+            }), 404
+    
+    except Exception as e:
+        logger.error(f"[AI_TEMPLATE] Error: {e}", exc_info=True)
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
 def initialize():
     """Initialize chatbot"""
     global chatbot
