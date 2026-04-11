@@ -530,6 +530,107 @@ def process_message_detailed():
         }), 500
 
 
+@app.route('/api/item/ai_template/', methods=['GET'])
+def ai_template_intent_search():
+    """
+    AI Template Intent Search API
+    Endpoint: /api/item/ai_template/?intent=category&category=laptop&key=mkh677ddd2sxxk
+    
+    Returns category information if found in search_intent_items.json
+    Example response:
+    {
+        "success": true,
+        "data": "আপনি laptop ক্যাটাগরিতে বিভিন্ন পণ্য দেখতে পারেন। এই লিংকে ক্লিক করুন: https://www.bdstall.com/laptop/"
+    }
+    """
+    try:
+        # Get parameters
+        intent = request.args.get('intent', '').lower()
+        category = request.args.get('category', '').strip()
+        api_key = request.args.get('key', '')
+        
+        logger.info(f"AI Template Request - Intent: {intent}, Category: {category}")
+        
+        # Validate parameters
+        if not intent or not category:
+            return jsonify({
+                "success": False,
+                "error": "Missing required parameters: intent and category",
+                "data": None
+            }), 400
+        
+        # Load search intent items from JSON file
+        intent_file_path = os.path.join(
+            os.path.dirname(__file__), 
+            '..', '..', 
+            'data', 
+            'search_intent_items.json'
+        )
+        
+        if not os.path.exists(intent_file_path):
+            logger.error(f"Intent file not found at: {intent_file_path}")
+            return jsonify({
+                "success": False,
+                "error": "Intent database not available",
+                "data": None
+            }), 500
+        
+        # Load search intent items
+        import json
+        with open(intent_file_path, 'r', encoding='utf-8') as f:
+            search_items = json.load(f)
+        
+        # Convert category to lowercase for comparison
+        category_lower = category.lower()
+        
+        # Check if category exists in search items (case-insensitive)
+        found_category = None
+        for item in search_items:
+            if item.lower() == category_lower:
+                found_category = item
+                break
+        
+        if found_category:
+            # Generate response
+            category_url = category_lower.replace(' ', '-')
+            bengali_message = f"আপনি {found_category} ক্যাটাগরিতে বিভিন্ন পণ্য দেখতে পারেন। এই লিংকে ক্লিক করুন: https://www.bdstall.com/{category_url}/"
+            
+            logger.info(f"Category found: {found_category}")
+            
+            return jsonify({
+                "success": True,
+                "data": bengali_message,
+                "category": found_category,
+                "url": f"https://www.bdstall.com/{category_url}/"
+            }), 200
+        else:
+            # Category not found
+            logger.warning(f"Category not found: {category}")
+            
+            return jsonify({
+                "success": False,
+                "error": f"Category '{category}' not found in search database",
+                "data": None,
+                "category": category
+            }), 404
+            
+    except json.JSONDecodeError as e:
+        logger.error(f"Error decoding search_intent_items.json: {e}")
+        return jsonify({
+            "success": False,
+            "error": "Invalid intent database file",
+            "data": None
+        }), 500
+    
+    except Exception as e:
+        logger.error(f"Error in AI template intent search: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "data": None
+        }), 500
+
+
 def initialize_chatbot():
     """Initialize the new BDStall chatbot system"""
     global chatbot_system, chatbot_integration
@@ -583,6 +684,7 @@ if __name__ == '__main__':
     print("• GET /system_health - System health status") 
     print("• GET /analytics - System analytics")
     print("• GET /conversation_history/<user_id> - User history")
+    print("• GET /api/item/ai_template - AI intent/category search")
     print("=" * 60)
     
     # Run Flask app
