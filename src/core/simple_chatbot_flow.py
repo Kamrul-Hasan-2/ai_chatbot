@@ -529,17 +529,13 @@ class SimpleChatbot:
                         conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
                     )
 
-            # TEMP STRICT MODE:
-            # Only search, greeting, and goodbye are handled by bot.
-            # Everything else is routed to human mode for now.
-            if not self._is_allowed_in_strict_mode(message):
-                return self._handoff_to_human(
-                    user_id=user_id,
-                    message=message,
-                    start_time=start_time,
-                    intent='strict_mode_handoff',
-                    response_text="স্যার, এই বিষয়ে আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।"
-                )
+            # PRIMARY SCHEMA FLOW (temporary):
+            # - greeting/goodbye allowed
+            # - schema-based search intent handling
+            # - other messages route to human
+            schema_response = self._handle_intent_schema_flow(user_id, message, start_time)
+            if schema_response is not None:
+                return schema_response
 
             # Keep thank-you replies deterministic and free of sir/mam variants.
             thank_you_tokens = {
@@ -1856,6 +1852,255 @@ Rules:
             return True
 
         return False
+
+    def _handle_intent_schema_flow(self, user_id: str, message: str, start_time: datetime) -> Optional[Dict[str, Any]]:
+        """Handle request using strict title/price/compare schema as primary behavior."""
+        text = str(message or '').strip()
+        if not text:
+            return None
+
+        is_bangla = bool(re.search(r'[\u0980-\u09ff]', text))
+        normalized = text.lower()
+
+        if self._is_greeting_message(normalized):
+            greeting_response = "আসসালামু-আলাইকুম স্যার, কোন বিষয়ে জানতে চাচ্ছেন?" if is_bangla else "Hello sir, what would you like to know?"
+            self.user_modes[user_id] = ChatMode.AI
+            self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+            return self._create_response(
+                user_id=user_id,
+                message=message,
+                response=greeting_response,
+                mode=ChatMode.AI,
+                intent='greeting',
+                products=None,
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
+        if self._is_goodbye_message(normalized):
+            goodbye_response = "ধন্যবাদ স্যার, ভালো থাকবেন।" if is_bangla else "Thank you sir, goodbye."
+            self.user_modes[user_id] = ChatMode.AI
+            self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+            return self._create_response(
+                user_id=user_id,
+                message=message,
+                response=goodbye_response,
+                mode=ChatMode.AI,
+                intent='goodbye',
+                products=None,
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
+        intent_obj = self._extract_intent_schema(message)
+        is_search_related = bool(intent_obj.get('title') or intent_obj.get('price') or intent_obj.get('compare') or self._looks_like_possible_product_signal(message))
+
+        if not is_search_related:
+            return self._handoff_to_human(
+                user_id=user_id,
+                message=message,
+                start_time=start_time,
+                intent='schema_non_search_handoff',
+                response_text=(
+                    "স্যার, এই বিষয়ে আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।"
+                    if is_bangla else
+                    "Sir, our human representative will contact you on this topic."
+                )
+            )
+
+        # Each new message is treated as a fresh intent (clear prior context).
+        self._clear_product_search_cache(user_id, clear_pending=True)
+        self.user_order_context[user_id] = False
+        self.user_order_draft.pop(user_id, None)
+
+        if not intent_obj.get('title'):
+            prompt = (
+                "কোন product এর দাম জানতে চান?"
+                if intent_obj.get('price') else
+                "কোন product খুঁজছেন?"
+            ) if is_bangla else (
+                "Which product price do you want to know?"
+                if intent_obj.get('price') else
+                "Which product are you looking for?"
+            )
+
+            self.user_modes[user_id] = ChatMode.AI
+            self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+            return self._create_response(
+                user_id=user_id,
+                message=message,
+                response=prompt,
+                mode=ChatMode.AI,
+                intent='schema_need_title',
+                products=None,
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
+        title = str(intent_obj.get('title') or '').strip()
+        price = str(intent_obj.get('price') or '').strip()
+        compare = str(intent_obj.get('compare') or '').strip()
+
+        keywords_parts = [title]
+        if price and price.lower() not in {'koto', 'কত', 'price', 'দাম'}:
+            keywords_parts.append(price)
+        search_keywords = ' '.join(part for part in keywords_parts if part).strip()
+
+        search_result = self._step2_search_database(search_keywords)
+        products = search_result.get('products') or []
+
+        if not products:
+            self.user_modes[user_id] = ChatMode.AI
+            self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+            no_result_response = (
+                f"🔍 Search: {title}\n"
+                f"💰 Price Filter: {price or 'N/A'}\n"
+                f"🔄 Compare: {compare or 'N/A'}\n\n"
+                + ("দুঃখিত স্যার, এই মুহূর্তে কোনো প্রোডাক্ট পাওয়া যায়নি।" if is_bangla else "Sorry, no products were found right now.")
+            )
+            return self._create_response(
+                user_id=user_id,
+                message=message,
+                response=no_result_response,
+                mode=ChatMode.AI,
+                intent='schema_search_no_result',
+                products=None,
+                search_keywords=search_keywords,
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
+        self.user_product_context[user_id] = products[:5]
+
+        lines = [
+            f"🔍 Search: {title}",
+            f"💰 Price Filter: {price or 'N/A'}",
+            f"🔄 Compare: {compare or 'N/A'}",
+            ""
+        ]
+
+        for idx, product in enumerate(products[:5], 1):
+            product_title = str(product.get('title') or 'N/A').strip()
+            product_price = str(product.get('price') or 'N/A').strip()
+            product_url = str(product.get('url') or '').strip()
+            lines.append(f"{idx}. {product_title}")
+            lines.append(f"   Price: {product_price}")
+            if product_url:
+                lines.append(f"   Link: {product_url}")
+
+        self.user_modes[user_id] = ChatMode.AI
+        self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+        return self._create_response(
+            user_id=user_id,
+            message=message,
+            response='\n'.join(lines),
+            mode=ChatMode.AI,
+            intent='schema_search',
+            products=products,
+            search_keywords=search_keywords,
+            processing_time=(datetime.now() - start_time).total_seconds(),
+            conversation_status=AI_ACTIVE_STATUS
+        )
+
+    def _extract_intent_schema(self, message: str) -> Dict[str, Optional[str]]:
+        """Extract schema: title (mandatory), price (optional), compare (optional)."""
+        text = str(message or '').strip()
+        lowered = text.lower()
+
+        title = self._resolve_title_from_search_reference(text)
+        price = self._extract_schema_price(lowered)
+        compare = self._extract_schema_compare(text)
+
+        if not title:
+            # Heuristic fallback when product signal exists but exact title not found in list.
+            if self._looks_like_possible_product_signal(text):
+                fallback_tokens = re.findall(r'[a-z0-9\u0980-\u09ff]+', lowered)
+                ignore = {
+                    'price', 'dam', 'koto', 'budget', 'compare', 'vs', 'difference', 'better', 'best',
+                    'দাম', 'কত', 'তুলনা', 'কোনটা', 'ভালো', 'ভাল', 'cheap', 'low', 'under', 'er', 'modde'
+                }
+                kept = [t for t in fallback_tokens if len(t) > 1 and t not in ignore]
+                if kept:
+                    title = ' '.join(kept[:3]).strip()
+
+        return {
+            'title': title or None,
+            'price': price or None,
+            'compare': compare or None,
+        }
+
+    def _resolve_title_from_search_reference(self, message: str) -> Optional[str]:
+        """Resolve title by matching known entries from search intent reference list."""
+        text = str(message or '').lower()
+        normalized_message = re.sub(r'[^a-z0-9\u0980-\u09ff]+', ' ', text)
+        normalized_message = re.sub(r'\s+', ' ', normalized_message).strip()
+        padded_message = f" {normalized_message} "
+
+        best_match = None
+        best_len = 0
+        for item in getattr(self, 'search_intent_items', []):
+            normalized_item = re.sub(r'[^a-z0-9\u0980-\u09ff]+', ' ', str(item).lower())
+            normalized_item = re.sub(r'\s+', ' ', normalized_item).strip()
+            if not normalized_item:
+                continue
+            if f" {normalized_item} " in padded_message and len(normalized_item) > best_len:
+                best_match = str(item).strip()
+                best_len = len(normalized_item)
+
+        return best_match
+
+    def _extract_schema_price(self, lowered_message: str) -> Optional[str]:
+        """Extract price intent value only when price trigger appears."""
+        price_triggers = [
+            'দাম', 'price', 'koto', 'কত', 'budget', 'কত টাকা', 'how much',
+            'সস্তা', 'cheap', 'expensive', 'low budget', 'কম দামে'
+        ]
+        if not any(trigger in lowered_message for trigger in price_triggers):
+            return None
+
+        budget = self._extract_budget_range(lowered_message)
+        if budget.get('min_price') is not None and budget.get('max_price') is not None:
+            return f"{budget['min_price']}-{budget['max_price']}"
+        if budget.get('max_price') is not None and budget.get('min_price') is None:
+            return f"under {budget['max_price']}"
+
+        return 'koto'
+
+    def _extract_schema_compare(self, message: str) -> Optional[str]:
+        """Extract compare target only when comparison trigger appears."""
+        text = str(message or '').strip()
+        lowered = text.lower()
+        compare_triggers = ['vs', 'compare', 'difference', 'kon ta valo', 'কোনটা ভালো', 'better', 'তুলনা']
+        if not any(trigger in lowered for trigger in compare_triggers):
+            return None
+
+        vs_match = re.search(r'\bvs\b\s+(.+)$', lowered)
+        if vs_match:
+            return vs_match.group(1).strip()
+
+        compare_match = re.search(r'compare\s+(.+)$', lowered)
+        if compare_match:
+            return compare_match.group(1).strip()
+
+        return 'target'
+
+    def _is_greeting_message(self, lowered_message: str) -> bool:
+        """Detect allowed greeting messages."""
+        normalized = re.sub(r'\s+', ' ', str(lowered_message or '').strip())
+        allowed = {
+            'hi', 'hello', 'hey', 'hlw', 'hai', 'assalamualikum', 'assalamu alaikum',
+            'হাই', 'হ্যালো', 'হেলো', 'সালাম', 'আসসালামু আলাইকুম', 'আসসালামুয়ালাইকুম'
+        }
+        return normalized in allowed
+
+    def _is_goodbye_message(self, lowered_message: str) -> bool:
+        """Detect allowed goodbye messages."""
+        normalized = re.sub(r'\s+', ' ', str(lowered_message or '').strip())
+        allowed = {
+            'bye', 'goodbye', 'see you', 'take care', 'allah hafez', 'ok bye',
+            'বিদায়', 'বিদায়', 'আল্লাহ হাফেজ', 'বাই', 'আবার দেখা হবে'
+        }
+        return normalized in allowed
 
     def _is_comparison_query(self, message: str) -> bool:
         """Detect compare/best-product questions like 'compare these' or 'which one is best'."""
