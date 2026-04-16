@@ -577,8 +577,8 @@ class SimpleChatbot:
                     user_id=user_id,
                     message=message,
                     response=(
-                        "স্যার, আমাদের সব প্রোডাক্টই ভালো। আপনি লিংকে ক্লিক করে আমাদের ওয়েবসাইটে গিয়ে "
-                        "রিভিউ এবং রেটিং দেখে প্রোডাক্ট কিনতে পারেন স্যার।"
+                        "স্যার, আমাদের প্রতিটি প্রোডাক্টই ভালো। আপনি আমাদের ওয়েবসাইটে ভিজিট করে "
+                        "রেটিং এবং রিভিউ দেখে নিতে পারেন স্যার।"
                     ),
                     mode=ChatMode.AI,
                     intent='product_comparison',
@@ -1679,9 +1679,29 @@ Rules:
 
         return self._looks_like_possible_product_signal(message) or self._looks_like_product_query(message)
 
+    def _normalize_product_query_text(self, message: str) -> str:
+        """Normalize product-search text so common transliterations map to canonical terms."""
+        text = str(message or '').strip().lower()
+        if not text:
+            return ''
+
+        text = text.translate(str.maketrans('০১২৩৪৫৬৭৮৯', '0123456789'))
+
+        phrase_normalizations = (
+            (r'\bhat\s+ghori\b', 'hand watch'),
+            (r'\bhaat\s+ghori\b', 'hand watch'),
+            (r'\bghori\b', 'watch'),
+        )
+        for pattern, replacement in phrase_normalizations:
+            text = re.sub(pattern, replacement, text)
+
+        text = text.replace('ঘড়ি', 'watch')
+        text = text.replace('ঘড়ি', 'watch')
+        return text
+
     def _looks_like_product_query(self, message: str) -> bool:
         """Heuristic detector for short product requests in English/Bangla transliteration."""
-        text = str(message or '').strip().lower()
+        text = self._normalize_product_query_text(message)
         if not text:
             return False
 
@@ -1727,7 +1747,7 @@ Rules:
 
     def _looks_like_possible_product_signal(self, message: str) -> bool:
         """Broader detector used to avoid accidental human handoff for shopping-related text."""
-        text = str(message or '').strip().lower()
+        text = self._normalize_product_query_text(message)
         if not text:
             return False
 
@@ -1753,7 +1773,7 @@ Rules:
 
     def _contains_configured_search_item(self, message: str) -> bool:
         """Return True when user message includes a configured catalog/category item name."""
-        text = str(message or '').strip().lower()
+        text = self._normalize_product_query_text(message)
         if not text or not getattr(self, 'search_intent_items', None):
             return False
 
@@ -1774,7 +1794,7 @@ Rules:
 
     def _find_best_search_item_match(self, message: str) -> Optional[str]:
         """Return the longest configured category/item phrase found in the message."""
-        text = str(message or '').strip().lower()
+        text = self._normalize_product_query_text(message)
         if not text or not getattr(self, 'search_intent_items', None):
             return None
 
@@ -1803,7 +1823,7 @@ Rules:
 
     def _resolve_generic_category_query(self, message: str) -> Optional[str]:
         """Return category only when user asks a generic category query without details."""
-        text = str(message or '').strip().lower()
+        text = self._normalize_product_query_text(message)
         if not text:
             return None
 
@@ -2191,7 +2211,7 @@ Rules:
 
     def _resolve_title_from_search_reference(self, message: str) -> Optional[str]:
         """Resolve title by matching known entries from search intent reference list."""
-        text = str(message or '').lower()
+        text = self._normalize_product_query_text(message)
         normalized_message = re.sub(r'[^a-z0-9\u0980-\u09ff]+', ' ', text)
         normalized_message = re.sub(r'\s+', ' ', normalized_message).strip()
         padded_message = f" {normalized_message} "
@@ -2270,7 +2290,8 @@ Rules:
 
         compare_terms = [
             'compare', 'comparison', 'compare these', 'compare this', 'which one is best',
-            'best one', 'better one', 'good laptop', 'good one', 'valo', 'bhalo',
+            'best', 'better', 'good', 'best one', 'better one', 'good laptop', 'good one',
+            'valo', 'bhalo', 'bhalo ta', 'bhalo konta',
             'tulona', 'compare koren', 'compare korba', 'tulona koren',
             'তুলনা', 'কোনটা ভালো', 'কোনটা ভাল', 'কোনটা best', 'কোনটা ভালো হবে',
             'ভালো হবে', 'ভালো', 'ভাল', 'বেস্ট'
@@ -2287,8 +2308,8 @@ Rules:
             selected = self.user_selected_product.get(user_id) or {}
             if selected:
                 return (
-                    "স্যার, আমাদের সব প্রোডাক্টই ভালো। আপনি লিংকে ক্লিক করে আমাদের ওয়েবসাইটে গিয়ে "
-                    "রিভিউ এবং রেটিং দেখে প্রোডাক্ট কিনতে পারেন স্যার।"
+                    "স্যার, আমাদের প্রতিটি প্রোডাক্টই ভালো। আপনি আমাদের ওয়েবসাইটে ভিজিট করে "
+                    "রেটিং এবং রিভিউ দেখে নিতে পারেন স্যার।"
                 )
             return None
 
@@ -2366,7 +2387,7 @@ Rules:
 
     def _build_product_search_keywords(self, message: str) -> str:
         """Build cleaner search keywords from informal user queries."""
-        text = str(message or '').strip().lower()
+        text = self._normalize_product_query_text(message)
         if not text:
             return ''
 
@@ -2404,7 +2425,7 @@ Rules:
 
     def _extract_search_tokens(self, text: str) -> list[str]:
         """Extract meaningful query tokens for relevance filtering."""
-        normalized = str(text or '').strip().lower()
+        normalized = self._normalize_product_query_text(text)
         if not normalized:
             return []
 
