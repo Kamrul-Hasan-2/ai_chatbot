@@ -475,9 +475,9 @@ class SimpleChatbot:
             # ✅ NEW: Check user's responder status from BDStall API
             responder_type = self._check_responder_type(user_id)
             if responder_type == 'agent':
-                if self._looks_like_possible_product_signal(message):
+                if self._looks_like_possible_product_signal(message) or self._is_comparison_query(message):
                     logger.info(
-                        "🔁 Overriding AGENT mode for product search user_id=%s message='%s'",
+                        "🔁 Overriding AGENT mode for AI-eligible query user_id=%s message='%s'",
                         user_id,
                         message,
                     )
@@ -509,9 +509,9 @@ class SimpleChatbot:
 
             # In human mode, always stay silent (no automated reply/alert text).
             if current_mode == ChatMode.HUMAN and current_status == HUMAN_SUPPORT_REQUIRED_STATUS:
-                if self._looks_like_possible_product_signal(message):
+                if self._looks_like_possible_product_signal(message) or self._is_comparison_query(message):
                     logger.info(
-                        "🔁 Escaping stored HUMAN mode for product search user_id=%s message='%s'",
+                        "🔁 Escaping stored HUMAN mode for AI-eligible query user_id=%s message='%s'",
                         user_id,
                         message,
                     )
@@ -2009,6 +2009,24 @@ Rules:
                 response=goodbye_response,
                 mode=ChatMode.AI,
                 intent='goodbye',
+                products=None,
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
+        # Comparison-style short queries should stay in AI and avoid schema handoff.
+        if self._is_comparison_query(message):
+            self.user_modes[user_id] = ChatMode.AI
+            self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+            return self._create_response(
+                user_id=user_id,
+                message=message,
+                response=(
+                    "স্যার, আমাদের প্রতিটি প্রোডাক্টই ভালো। আপনি আমাদের ওয়েবসাইটে ভিজিট করে "
+                    "রেটিং এবং রিভিউ দেখে নিতে পারেন স্যার।"
+                ),
+                mode=ChatMode.AI,
+                intent='product_comparison',
                 products=None,
                 processing_time=(datetime.now() - start_time).total_seconds(),
                 conversation_status=AI_ACTIVE_STATUS
