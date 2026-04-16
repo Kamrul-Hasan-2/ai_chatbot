@@ -2291,6 +2291,7 @@ Rules:
         compare_terms = [
             'compare', 'comparison', 'compare these', 'compare this', 'which one is best',
             'best', 'better', 'good', 'best one', 'better one', 'good laptop', 'good one',
+            'konta valo', 'konta bhalo', 'konta ভাল', 'konta ভালো',
             'valo', 'bhalo', 'bhalo ta', 'bhalo konta',
             'tulona', 'compare koren', 'compare korba', 'tulona koren',
             'তুলনা', 'কোনটা ভালো', 'কোনটা ভাল', 'কোনটা best', 'কোনটা ভালো হবে',
@@ -2298,7 +2299,10 @@ Rules:
         ]
 
         has_compare_term = any(term in text for term in compare_terms)
-        standalone_compare_terms = {'valo', 'bhalo', 'ভালো', 'ভাল', 'বেস্ট', 'best', 'good', 'better'}
+        standalone_compare_terms = {
+            'valo', 'bhalo', 'konta valo', 'konta bhalo',
+            'ভালো', 'ভাল', 'বেস্ট', 'best', 'good', 'better'
+        }
         if text in standalone_compare_terms:
             return True
 
