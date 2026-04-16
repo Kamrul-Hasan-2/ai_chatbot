@@ -2298,6 +2298,10 @@ Rules:
         ]
 
         has_compare_term = any(term in text for term in compare_terms)
+        standalone_compare_terms = {'valo', 'bhalo', 'ভালো', 'ভাল', 'বেস্ট', 'best', 'good', 'better'}
+        if text in standalone_compare_terms:
+            return True
+
         has_product_signal = self._looks_like_possible_product_signal(message) or self._contains_configured_search_item(message)
         return has_compare_term and has_product_signal
 
