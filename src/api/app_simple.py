@@ -298,21 +298,19 @@ def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Op
         return False
 
     buttons = [btn for btn in (link_buttons or []) if isinstance(btn, dict) and str(btn.get('url') or '').strip()]
-    plain_text = _strip_link_lines(message_text) if buttons else str(message_text or '').strip()
-    if not plain_text:
-        plain_text = "আপনার জন্য তথ্য প্রস্তুত আছে স্যার।"
-
-    text_payload = {
-        "recipient": {"id": recipient_id},
-        "messaging_type": "RESPONSE",
-        "message": {"text": plain_text}
-    }
-
-    if not _send_facebook_payload(recipient_id, text_payload):
-        return False
 
     if not buttons:
-        return True
+        plain_text = str(message_text or '').strip()
+        if not plain_text:
+            plain_text = "আপনার জন্য তথ্য প্রস্তুত আছে স্যার।"
+        text_payload = {
+            "recipient": {"id": recipient_id},
+            "messaging_type": "RESPONSE",
+            "message": {"text": plain_text}
+        }
+        return _send_facebook_payload(recipient_id, text_payload)
+    
+    # If buttons exist, skip plain text and send only buttons
 
     for index, btn in enumerate(buttons, 1):
         label = str(btn.get('text') or 'View this link').strip() or 'View this link'
