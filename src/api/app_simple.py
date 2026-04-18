@@ -6,6 +6,7 @@ import os
 import sys
 import logging
 import json
+import re
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -54,6 +55,7 @@ USER_NAME_MAP_FILE = os.getenv(
     'USER_NAME_MAP_FILE',
     os.path.join(PROJECT_ROOT, 'data', 'user_names.json')
 )
+URL_PATTERN = re.compile(r'https?://[^\s<>"\']+', re.IGNORECASE)
 
 def _log_api_call(
     api_name: str,
@@ -260,11 +262,30 @@ def _strip_link_lines(message_text: str) -> str:
             continue
         if line.lower().startswith('link:'):
             continue
+        if URL_PATTERN.search(line):
+            continue
         filtered_lines.append(raw_line)
 
     cleaned = '\n'.join(filtered_lines)
     cleaned = '\n'.join([ln.rstrip() for ln in cleaned.splitlines()]).strip()
     return cleaned
+
+
+def _extract_urls(message_text: str) -> list[str]:
+    """Extract unique URLs from text in order."""
+    text = str(message_text or '')
+    if not text:
+        return []
+
+    urls = []
+    seen = set()
+    for match in URL_PATTERN.findall(text):
+        url = str(match).strip().rstrip('.,!?)')
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        urls.append(url)
+    return urls
 
 
 def _send_facebook_payload(recipient_id: str, payload: dict) -> bool:
@@ -299,6 +320,14 @@ def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Op
 
     buttons = [btn for btn in (link_buttons or []) if isinstance(btn, dict) and str(btn.get('url') or '').strip()]
 
+    # Fallback: when response contains raw URLs but no structured buttons, build button cards automatically.
+    if not buttons:
+        for url in _extract_urls(message_text):
+            buttons.append({
+                'text': 'View this link',
+                'url': url
+            })
+
     if not buttons:
         plain_text = str(message_text or '').strip()
         if not plain_text:
@@ -312,11 +341,14 @@ def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Op
     
     # If buttons exist, skip plain text and send only buttons
 
+    fallback_title = _strip_link_lines(message_text)
+    fallback_title = fallback_title.splitlines()[0].strip() if fallback_title else ''
+
     for index, btn in enumerate(buttons, 1):
         label = str(btn.get('text') or 'View this link').strip() or 'View this link'
         title = str(btn.get('title') or '').strip()
         price = str(btn.get('price') or '').strip()
-        display_title = title or f'Product {index}'
+        display_title = title or fallback_title or f'Link {index}'
         money_text = f"\nমূল্য: {price}" if price else ''
         card_text = f"{index}️⃣ {display_title}{money_text}"
 
