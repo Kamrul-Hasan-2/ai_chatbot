@@ -11,7 +11,7 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 import requests
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 # Add paths
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -247,24 +247,39 @@ def save_chat_message(user_id: str, sender_type: int, message: str, user_name: O
     return False
 
 
-def send_facebook_message(recipient_id: str, message_text: str) -> bool:
-    """Send a plain text response to a Facebook Messenger user."""
+def _strip_link_lines(message_text: str) -> str:
+    """Remove raw link lines from bot text when dedicated Messenger buttons are used."""
+    text = str(message_text or '')
+    if not text.strip():
+        return ''
+
+    filtered_lines = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if line.lower().startswith('লিংক:'):
+            continue
+        if line.lower().startswith('link:'):
+            continue
+        filtered_lines.append(raw_line)
+
+    cleaned = '\n'.join(filtered_lines)
+    cleaned = '\n'.join([ln.rstrip() for ln in cleaned.splitlines()]).strip()
+    return cleaned
+
+
+def _send_facebook_payload(recipient_id: str, payload: dict) -> bool:
+    """Send a prepared payload to Facebook Messenger Send API."""
     if not PAGE_ACCESS_TOKEN:
         logger.warning("PAGE_ACCESS_TOKEN not set; cannot send Messenger reply")
         return False
 
     url = f"https://graph.facebook.com/v25.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
-    payload = {
-        "recipient": {"id": recipient_id},
-        "messaging_type": "RESPONSE",
-        "message": {"text": message_text}
-    }
-
     try:
         response = requests.post(url, json=payload, timeout=10)
         if 200 <= response.status_code < 300:
-            logger.info("✅ Messenger reply sent to %s", recipient_id)
+            logger.info("✅ Messenger payload sent to %s", recipient_id)
             return True
+
         logger.warning(
             "Messenger send failed (status=%s): %s",
             response.status_code,
@@ -274,6 +289,63 @@ def send_facebook_message(recipient_id: str, message_text: str) -> bool:
     except Exception as e:
         logger.warning("Messenger send error: %s", e)
         return False
+
+
+def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Optional[list[dict[str, Any]]] = None) -> bool:
+    """Send a Messenger reply with optional web_url buttons for product links."""
+    if not PAGE_ACCESS_TOKEN:
+        logger.warning("PAGE_ACCESS_TOKEN not set; cannot send Messenger reply")
+        return False
+
+    buttons = [btn for btn in (link_buttons or []) if isinstance(btn, dict) and str(btn.get('url') or '').strip()]
+    plain_text = _strip_link_lines(message_text) if buttons else str(message_text or '').strip()
+    if not plain_text:
+        plain_text = "আপনার জন্য তথ্য প্রস্তুত আছে স্যার।"
+
+    text_payload = {
+        "recipient": {"id": recipient_id},
+        "messaging_type": "RESPONSE",
+        "message": {"text": plain_text}
+    }
+
+    if not _send_facebook_payload(recipient_id, text_payload):
+        return False
+
+    if not buttons:
+        return True
+
+    # Messenger button template supports up to 3 buttons per message.
+    chunk_size = 3
+    for start in range(0, len(buttons), chunk_size):
+        chunk = buttons[start:start + chunk_size]
+        template_buttons = []
+        for btn in chunk:
+            label = str(btn.get('text') or 'View this link').strip() or 'View this link'
+            template_buttons.append({
+                "type": "web_url",
+                "url": str(btn.get('url')).strip(),
+                "title": label[:20]
+            })
+
+        template_payload = {
+            "recipient": {"id": recipient_id},
+            "messaging_type": "RESPONSE",
+            "message": {
+                "attachment": {
+                    "type": "template",
+                    "payload": {
+                        "template_type": "button",
+                        "text": "Product link",
+                        "buttons": template_buttons
+                    }
+                }
+            }
+        }
+
+        if not _send_facebook_payload(recipient_id, template_payload):
+            return False
+
+    return True
 
 
 def get_messenger_user_name(sender_id: str) -> Optional[str]:
@@ -578,6 +650,7 @@ def messenger_webhook():
                     user_name=sender_name
                 )
                 response_text = (result.get('response') or '').strip()
+                link_buttons = result.get('link_buttons') or []
 
                 # In HUMAN handoff mode, chatbot intentionally returns empty response.
                 if not response_text:
@@ -590,7 +663,7 @@ def messenger_webhook():
                     continue
 
                 logger.info("[WEBHOOK] Sending reply to sender_id=%s", sender_id)
-                if send_facebook_message(sender_id, response_text):
+                if send_facebook_message(sender_id, response_text, link_buttons=link_buttons):
                     replied_count += 1
 
         return jsonify({"status": "ok", "processed": processed_count, "replied": replied_count}), 200
