@@ -55,5 +55,8 @@ def test_create_response_includes_link_buttons_from_products():
 
     assert isinstance(result.get('link_buttons'), list)
     assert result['link_buttons']
+    assert result['link_buttons'][0]['index'] == 1
+    assert result['link_buttons'][0]['title'] == 'Sample Product'
+    assert result['link_buttons'][0]['price'] == '1000'
     assert result['link_buttons'][0]['text'] == 'View this link'
     assert result['link_buttons'][0]['url'] == 'https://www.bdstall.com/listingDetail/index/1234/'

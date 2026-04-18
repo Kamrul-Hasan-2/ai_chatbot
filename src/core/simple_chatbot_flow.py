@@ -3436,12 +3436,16 @@ Rules:
 
         buttons = []
         seen_urls = set()
-        for product in products[:5]:
+        for index, product in enumerate(products[:5], 1):
+            product = product or {}
             url = str((product or {}).get('url') or '').strip()
             if not url or url in seen_urls:
                 continue
             seen_urls.add(url)
             buttons.append({
+                'index': index,
+                'title': str(product.get('title') or product.get('name') or 'Product').strip(),
+                'price': str(product.get('price') or '').strip(),
                 'text': 'View this link',
                 'url': url
             })

@@ -314,18 +314,13 @@ def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Op
     if not buttons:
         return True
 
-    # Messenger button template supports up to 3 buttons per message.
-    chunk_size = 3
-    for start in range(0, len(buttons), chunk_size):
-        chunk = buttons[start:start + chunk_size]
-        template_buttons = []
-        for btn in chunk:
-            label = str(btn.get('text') or 'View this link').strip() or 'View this link'
-            template_buttons.append({
-                "type": "web_url",
-                "url": str(btn.get('url')).strip(),
-                "title": label[:20]
-            })
+    for index, btn in enumerate(buttons, 1):
+        label = str(btn.get('text') or 'View this link').strip() or 'View this link'
+        title = str(btn.get('title') or '').strip()
+        price = str(btn.get('price') or '').strip()
+        display_title = title or f'Product {index}'
+        money_text = f"\nমূল্য: {price}" if price else ''
+        card_text = f"{index}️⃣ {display_title}{money_text}"
 
         template_payload = {
             "recipient": {"id": recipient_id},
@@ -335,8 +330,14 @@ def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Op
                     "type": "template",
                     "payload": {
                         "template_type": "button",
-                        "text": "Product link",
-                        "buttons": template_buttons
+                        "text": card_text[:640],
+                        "buttons": [
+                            {
+                                "type": "web_url",
+                                "url": str(btn.get('url')).strip(),
+                                "title": label[:20]
+                            }
+                        ]
                     }
                 }
             }
