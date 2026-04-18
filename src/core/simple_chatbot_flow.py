@@ -3428,6 +3428,25 @@ Rules:
             f"{missing_lines}\n\n"
             "ধন্যবাদ।"
         )
+
+    def _build_link_buttons(self, products: Optional[list]) -> list:
+        """Build UI-friendly link button metadata from product URLs."""
+        if not products:
+            return []
+
+        buttons = []
+        seen_urls = set()
+        for product in products[:5]:
+            url = str((product or {}).get('url') or '').strip()
+            if not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
+            buttons.append({
+                'text': 'View this link',
+                'url': url
+            })
+
+        return buttons
     
     def _create_response(
         self,
@@ -3448,6 +3467,7 @@ Rules:
         if intent:
             self.user_last_intent[user_id] = str(intent)
         self._save_state()
+        trimmed_products = products[:5] if products else None
         return {
             "success": mode == ChatMode.AI,
             "user_id": user_id,
@@ -3457,7 +3477,8 @@ Rules:
             "intent": intent,
             "search_keywords": search_keywords,
             "products_found": len(products) if products else 0,
-            "products": products[:5] if products else None,  # Keep top 5 for follow-up selection
+            "products": trimmed_products,  # Keep top 5 for follow-up selection
+            "link_buttons": self._build_link_buttons(trimmed_products),
             "conversation_status": conversation_status or self.user_conversation_status.get(
                 user_id,
                 HUMAN_SUPPORT_REQUIRED_STATUS if mode == ChatMode.HUMAN else AI_ACTIVE_STATUS

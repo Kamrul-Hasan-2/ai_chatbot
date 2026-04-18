@@ -3,7 +3,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from core.simple_chatbot_flow import SimpleChatbot
+from core.simple_chatbot_flow import ChatMode, SimpleChatbot
 
 
 def test_ghori_maps_to_watch_keywords():
@@ -31,3 +31,29 @@ def test_konta_valo_process_message_returns_reply_in_agent_mode():
     assert result['mode'] == 'ai'
     assert result['intent'] == 'product_comparison'
     assert 'আমাদের প্রতিটি প্রোডাক্টই ভালো' in result['response']
+
+
+def test_create_response_includes_link_buttons_from_products():
+    bot = SimpleChatbot()
+    products = [
+        {
+            'title': 'Sample Product',
+            'price': '1000',
+            'url': 'https://www.bdstall.com/listingDetail/index/1234/'
+        }
+    ]
+
+    result = bot._create_response(
+        user_id='user-2',
+        message='show product',
+        response='product list',
+        mode=ChatMode.AI,
+        intent='product_search',
+        products=products,
+        processing_time=0.1
+    )
+
+    assert isinstance(result.get('link_buttons'), list)
+    assert result['link_buttons']
+    assert result['link_buttons'][0]['text'] == 'View this link'
+    assert result['link_buttons'][0]['url'] == 'https://www.bdstall.com/listingDetail/index/1234/'
