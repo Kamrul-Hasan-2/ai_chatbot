@@ -942,6 +942,58 @@ def parse_single_link():
         }), 500
 
 
+@app.route('/api/product/enhanced-template/<user_id>', methods=['POST'])
+def create_enhanced_template(user_id):
+    """
+    Create an enhanced Messenger template with product details
+    Fetches product images, prices, and details from BDStall API
+    
+    Request:
+    {
+        "message": "Check out this laptop: https://www.bdstall.com/details/hp-laptop-123/"
+    }
+    
+    Response:
+    {
+        "success": true,
+        "user_id": "user123",
+        "template": {...},  // Full Messenger template with images/prices
+        "products_found": 1,
+        "products": [...]
+    }
+    """
+    try:
+        data = request.get_json() or {}
+        message = data.get('message', '')
+        
+        if not message:
+            return jsonify({
+                "success": False,
+                "error": "Message parameter required"
+            }), 400
+        
+        link_handler = get_link_handler()
+        template = link_handler.create_enhanced_template(message)
+        
+        extraction = link_handler.extract_product_info_from_message(message)
+        
+        return jsonify({
+            "success": True,
+            "user_id": user_id,
+            "products_found": extraction['total_products'],
+            "template": template,
+            "extraction": extraction
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"❌ Error creating enhanced template: {e}")
+        return jsonify({
+            "success": False,
+            "user_id": user_id,
+            "error": str(e)
+        }), 500
+
+
 @app.route('/webhook', methods=['GET'])
 @app.route('/chatbot/webhook', methods=['GET'])
 def verify_webhook():

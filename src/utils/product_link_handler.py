@@ -255,6 +255,97 @@ class ProductLinkHandler:
                 }
             }
     
+    def create_enhanced_template(self, message: str) -> Dict[str, Any]:
+        """
+        Create an enhanced template with product details (images, prices, etc)
+        Uses ProductDetailsHandler to fetch rich product information
+        
+        Args:
+            message: Message text with product links
+            
+        Returns:
+            Enhanced Messenger template with product details
+        """
+        try:
+            from src.utils.product_details_handler import get_details_handler
+            
+            logger.info("🎨 Creating enhanced template with product details")
+            
+            # Extract product links
+            extracted = self.extract_product_info_from_message(message)
+            
+            if not extracted['has_products']:
+                # No products, return simple text
+                logger.info("   ⚠️  No products found, returning text")
+                return {
+                    "messaging_type": "RESPONSE",
+                    "message": {
+                        "text": message
+                    }
+                }
+            
+            # Get product IDs
+            product_ids = [p.get('product_id') for p in extracted['products']]
+            
+            # Use details handler to process products
+            details_handler = get_details_handler()
+            result = details_handler.process_product_links(
+                product_ids,
+                extracted['description']
+            )
+            
+            logger.info(f"   ✅ Created enhanced template for {result['products_found']} products")
+            
+            return result.get('template', self.create_messenger_template(message))
+            
+        except Exception as e:
+            logger.warning(f"⚠️  Could not create enhanced template: {e}")
+            logger.info("   Falling back to standard template")
+            # Fallback to basic template
+            return self.create_messenger_template(message)
+    
+    def create_category_template(self, message: str) -> Dict[str, Any]:
+        """
+        Create a template for category search results
+        Fetches products from category and displays as enhanced template
+        
+        Args:
+            message: Message text potentially containing category reference
+            
+        Returns:
+            Category template or basic message
+        """
+        try:
+            from src.utils.category_product_handler import get_category_handler
+            
+            logger.info("🏪 Creating category template")
+            
+            category_handler = get_category_handler()
+            is_category, result = category_handler.convert_category_message_to_template(message)
+            
+            if is_category and result.get('template'):
+                logger.info(f"   ✅ Created template for category: {result.get('category')}")
+                return result['template']
+            else:
+                # Not a category message, return as text
+                logger.info("   ⚠️  Not a category message, returning text")
+                return {
+                    "messaging_type": "RESPONSE",
+                    "message": {
+                        "text": message
+                    }
+                }
+            
+        except Exception as e:
+            logger.warning(f"⚠️  Could not create category template: {e}")
+            # Fallback to text
+            return {
+                "messaging_type": "RESPONSE",
+                "message": {
+                    "text": message
+                }
+            }
+    
     def process_incoming_link_message(self, user_id: str, message: str) -> Dict[str, Any]:
         """
         Process an incoming message with links
