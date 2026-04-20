@@ -350,8 +350,25 @@ def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Op
             "message": {"text": plain_text}
         }
         return _send_facebook_payload(recipient_id, text_payload)
-    
-    # If buttons exist, skip plain text and send only buttons
+
+    plain_text = str(message_text or '').strip()
+    intro_text = ''
+    closing_text = ''
+    if plain_text:
+        lines = [line.strip() for line in plain_text.splitlines() if line.strip()]
+        if lines:
+            intro_text = lines[0]
+            if 'আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।' in plain_text:
+                closing_text = 'আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।'
+
+    if intro_text:
+        intro_payload = {
+            "recipient": {"id": recipient_id},
+            "messaging_type": "RESPONSE",
+            "message": {"text": intro_text}
+        }
+        if not _send_facebook_payload(recipient_id, intro_payload):
+            return False
 
     fallback_title = _strip_link_lines(message_text)
     fallback_title = fallback_title.splitlines()[0].strip() if fallback_title else ''
@@ -386,6 +403,15 @@ def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Op
         }
 
         if not _send_facebook_payload(recipient_id, template_payload):
+            return False
+
+    if closing_text:
+        closing_payload = {
+            "recipient": {"id": recipient_id},
+            "messaging_type": "RESPONSE",
+            "message": {"text": closing_text}
+        }
+        if not _send_facebook_payload(recipient_id, closing_payload):
             return False
 
     return True
