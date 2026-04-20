@@ -2027,6 +2027,46 @@ Rules:
                 conversation_status=AI_ACTIVE_STATUS
             )
 
+        if self._looks_like_order_buy_message(message):
+            self.user_modes[user_id] = ChatMode.AI
+            self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+            return self._create_response(
+                user_id=user_id,
+                message=message,
+                response=self._build_order_guide_response(),
+                mode=ChatMode.AI,
+                intent='ordering_guide',
+                products=None,
+                link_buttons=[
+                    {
+                        'text': 'Order Guild',
+                        'url': 'https://www.bdstall.com/blog/safe-shopping-guide/'
+                    }
+                ],
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
+        if self._looks_like_order_buy_message(message):
+            self.user_modes[user_id] = ChatMode.AI
+            self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+            return self._create_response(
+                user_id=user_id,
+                message=message,
+                response=self._build_order_guide_response(),
+                mode=ChatMode.AI,
+                intent='ordering_guide',
+                products=None,
+                link_buttons=[
+                    {
+                        'text': 'Order Guild',
+                        'url': 'https://www.bdstall.com/blog/safe-shopping-guide/'
+                    }
+                ],
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
         # Budget/number-only query should ask product title first.
         if self._is_price_only_query(text):
             self.user_modes[user_id] = ChatMode.AI
@@ -2328,6 +2368,12 @@ Rules:
             "স্যার, আমাদের সকল প্রোডাক্টই ভালো। আপনি আমাদের ওয়েবসাইটের প্রোডাক্ট "
             "রেটিং এবং রিভিউ দেখে নিতে পারেন।\n"
             "https://www.bdstall.com/"
+        )
+
+    def _build_order_guide_response(self) -> str:
+        """Return standard order-guide text for buy/order help messages."""
+        return (
+            "স্যার এই লিংকে গিয়ে আপনি দেখতে পারেন কিভাবে অর্ডার অথবা বাই করা যায়"
         )
 
     def _reply_comparison_from_context(self, user_id: str) -> Optional[str]:
@@ -3483,6 +3529,7 @@ Rules:
         intent: Optional[str],
         products: Optional[list],
         search_keywords: Optional[str] = None,
+        link_buttons: Optional[list] = None,
         processing_time: float = 0.0,
         error: Optional[str] = None,
         conversation_status: Optional[str] = None
@@ -3504,7 +3551,7 @@ Rules:
             "search_keywords": search_keywords,
             "products_found": len(products) if products else 0,
             "products": trimmed_products,  # Keep top 5 for follow-up selection
-            "link_buttons": self._build_link_buttons(trimmed_products),
+            "link_buttons": link_buttons if link_buttons is not None else self._build_link_buttons(trimmed_products),
             "conversation_status": conversation_status or self.user_conversation_status.get(
                 user_id,
                 HUMAN_SUPPORT_REQUIRED_STATUS if mode == ChatMode.HUMAN else AI_ACTIVE_STATUS

@@ -357,7 +357,7 @@ def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Op
     fallback_title = fallback_title.splitlines()[0].strip() if fallback_title else ''
 
     for index, btn in enumerate(buttons, 1):
-        label = 'View Product'
+        label = str(btn.get('text') or 'View Product').strip() or 'View Product'
         title = str(btn.get('title') or '').strip()
         price = str(btn.get('price') or '').strip()
         display_title = title or fallback_title or f'Link {index}'
