@@ -27,6 +27,12 @@ try:
 except ImportError:
     from src.utils.conversation_context import get_context_manager
 
+# Import product link handler
+try:
+    from utils.product_link_handler import get_link_handler
+except ImportError:
+    from src.utils.product_link_handler import get_link_handler
+
 # Load environment
 load_dotenv()
 
@@ -748,6 +754,190 @@ def get_conversation_summary(user_id):
         return jsonify({
             "success": False,
             "user_id": user_id,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/product/extract-links/<user_id>', methods=['POST'])
+def extract_product_links(user_id):
+    """
+    Extract product links and information from a message
+    
+    Request:
+    {
+        "message": "আপনি laptop ক্যাটাগরিতে বিভিন্ন পণ্য দেখতে পারেন। এই লিংকে ক্লিক করুন: https://www.bdstall.com/details/product-123/"
+    }
+    
+    Response:
+    {
+        "success": true,
+        "has_links": true,
+        "has_products": true,
+        "products_count": 1,
+        "extracted": {...},
+        "formatted": {...},
+        "messenger_template": {...}
+    }
+    """
+    try:
+        data = request.get_json() or {}
+        message = data.get('message', '')
+        
+        if not message:
+            return jsonify({
+                "success": False,
+                "error": "Message parameter required",
+                "user_id": user_id
+            }), 400
+        
+        link_handler = get_link_handler()
+        result = link_handler.process_incoming_link_message(user_id, message)
+        
+        return jsonify(result), 200 if result['success'] else 400
+        
+    except Exception as e:
+        logger.error(f"❌ Error extracting links: {e}")
+        return jsonify({
+            "success": False,
+            "user_id": user_id,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/product/create-template/<user_id>', methods=['POST'])
+def create_product_template(user_id):
+    """
+    Create a Messenger template for product links in a message
+    
+    Request:
+    {
+        "message": "Check out this laptop: https://www.bdstall.com/details/hp-laptop-123/"
+    }
+    
+    Response:
+    {
+        "success": true,
+        "messenger_template": {
+            "messaging_type": "RESPONSE",
+            "message": {...}
+        },
+        "product_count": 1
+    }
+    """
+    try:
+        data = request.get_json() or {}
+        message = data.get('message', '')
+        
+        if not message:
+            return jsonify({
+                "success": False,
+                "error": "Message parameter required"
+            }), 400
+        
+        link_handler = get_link_handler()
+        template = link_handler.create_messenger_template(message)
+        
+        extraction = link_handler.extract_product_info_from_message(message)
+        
+        return jsonify({
+            "success": True,
+            "user_id": user_id,
+            "product_count": extraction['total_products'],
+            "messenger_template": template,
+            "extraction": extraction
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"❌ Error creating template: {e}")
+        return jsonify({
+            "success": False,
+            "user_id": user_id,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/product/user-context/<user_id>', methods=['GET'])
+def get_user_product_context(user_id):
+    """
+    Get product links discussed in user's conversation history
+    
+    Query Parameters:
+    - limit: Number of products to return (default: 5)
+    
+    Response:
+    {
+        "success": true,
+        "user_id": "user123",
+        "products": [
+            {
+                "message": "Check out these laptops...",
+                "extracted": {...},
+                "products": [...]
+            }
+        ],
+        "count": 3
+    }
+    """
+    try:
+        limit = request.args.get('limit', 5, type=int)
+        
+        link_handler = get_link_handler()
+        products = link_handler.get_user_product_context(user_id, limit)
+        
+        return jsonify({
+            "success": True,
+            "user_id": user_id,
+            "count": len(products),
+            "products": products
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"❌ Error getting product context: {e}")
+        return jsonify({
+            "success": False,
+            "user_id": user_id,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/product/parse-link', methods=['POST'])
+def parse_single_link():
+    """
+    Parse a single product link and extract information
+    
+    Request:
+    {
+        "link": "https://www.bdstall.com/details/product-name-123/"
+    }
+    
+    Response:
+    {
+        "success": true,
+        "url": "https://www.bdstall.com/details/product-name-123/",
+        "product_id": "product-name-123",
+        "domain": "bdstall.com",
+        "type": "product"
+    }
+    """
+    try:
+        data = request.get_json() or {}
+        link = data.get('link', '')
+        
+        if not link:
+            return jsonify({
+                "success": False,
+                "error": "Link parameter required"
+            }), 400
+        
+        link_handler = get_link_handler()
+        result = link_handler.parse_product_link(link)
+        
+        return jsonify(result), 200 if result['success'] else 400
+        
+    except Exception as e:
+        logger.error(f"❌ Error parsing link: {e}")
+        return jsonify({
+            "success": False,
             "error": str(e)
         }), 500
 
