@@ -1852,7 +1852,9 @@ Rules:
             'ase', 'ache', 'achi', 'available', 'stock', 'pawa', 'kache', 'kase',
             'chai', 'lagbe', 'dorkar', 'den', 'din', 'show', 'dekhan', 'dekhte',
             'please', 'plz', 'need', 'want', 'looking', 'for',
-            'আছে', 'পাওয়া', 'পাওয়া', 'চাই', 'লাগবে', 'দেখান', 'দিন', 'দেন'
+            'kinte', 'kinbo', 'kintechi', 'chacchi', 'chai', 'nite', 'nitechi',
+            'আছে', 'পাওয়া', 'পাওয়া', 'চাই', 'লাগবে', 'দেখান', 'দিন', 'দেন',
+            'কিনতে', 'কিনবো', 'কিনব', 'চাচ্ছি', 'নিতে', 'নিবো', 'নিব'
         }
 
         message_tokens = re.findall(r'[a-z0-9\u0980-\u09ff]+', text)
@@ -2088,7 +2090,7 @@ Rules:
                 products=None,
                 link_buttons=[
                     {
-                        'text': 'Order Guild',
+                        'text': 'Shopping Guide',
                         'url': 'https://www.bdstall.com/blog/safe-shopping-guide/'
                     }
                 ],
@@ -2523,7 +2525,7 @@ Rules:
 
         return [
             {
-                'text': 'Show the Product Details',
+                'text': 'Product Details',
                 'url': target_url
             }
         ]
