@@ -1849,7 +1849,7 @@ Rules:
             return None
 
         filler_tokens = {
-            'ase', 'ache', 'achi', 'available', 'stock', 'pawa', 'kache', 'kase',
+            'ami', 'amake', 'amar', 'amr', 'ase', 'ache', 'achi', 'available', 'stock', 'pawa', 'kache', 'kase',
             'chai', 'lagbe', 'dorkar', 'den', 'din', 'show', 'dekhan', 'dekhte',
             'please', 'plz', 'need', 'want', 'looking', 'for',
             'kinte', 'kinbo', 'kintechi', 'chacchi', 'chai', 'nite', 'nitechi',
@@ -2954,7 +2954,7 @@ Rules:
 
         category_url = f"https://www.bdstall.com/{quote(slug, safe='-')}/"
         return (
-            f"আপনি {category_text} ক্যাটাগরিতে বিভিন্ন পণ্য দেখতে পারেন। "
+            f"আপনি {category_text} ক্যাটাগরিতে বিভিন্ন পণ্য দেখতে পারেন।\n"
             f"এই লিংকে ক্লিক করুন:\n{category_url}"
         )
 
