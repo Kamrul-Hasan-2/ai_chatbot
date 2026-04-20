@@ -2227,10 +2227,13 @@ Rules:
 
         self.user_modes[user_id] = ChatMode.AI
         self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+        response_lines = ["স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:", ""]
+        response_lines.extend(lines)
+        response_lines.extend(["", "আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।"])
         return self._create_response(
             user_id=user_id,
             message=message,
-            response='\n'.join(lines),
+            response='\n'.join(response_lines),
             mode=ChatMode.AI,
             intent='schema_search',
             products=products[:3],
@@ -3240,7 +3243,9 @@ Available products (top matches):
 
 Instructions:
 - Context পড়ে user intent বুঝে উত্তর দাও।
-- ৫টি প্রোডাক্ট সুন্দরভাবে 1-5 লিস্টে দাও (title, price, link)।
+- ৩টি প্রোডাক্ট সুন্দরভাবে 1-3 লিস্টে দাও (title, price, link)।
+- উত্তরটি অবশ্যই এই opening line দিয়ে শুরু করবে: "স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:"
+- তালিকার শেষে অবশ্যই এই closing line দেবে: "আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।"
 - ভদ্র, সংক্ষিপ্ত, বিক্রয় সহায়ক টোন রাখো।
 - অপ্রয়োজনীয় তথ্য দিও না।
 """
@@ -3260,8 +3265,8 @@ Instructions:
                         }
 
                 # Fallback deterministic product formatting if Groq unavailable.
-                response_text = "স্যার এই প্রোডাক্টগুলা দেখতে পারেন:\n\n"
-                for idx, product in enumerate(products[:5], 1):
+                response_text = "স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
+                for idx, product in enumerate(products[:3], 1):
                     title = product.get('title', 'N/A')
                     price = product.get('price', 'N/A')
                     url = product.get('url', '')
@@ -3272,7 +3277,7 @@ Instructions:
                         response_text += f"লিংক: {url}\n"
                     response_text += "\n"
 
-                response_text += "আরও তথ্যের জন্য আমাদের সাথে যোগাযোগ করুন। ধন্যবাদ!"
+                response_text += "আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।"
                 return {
                     'success': True,
                     'response': response_text
@@ -3317,7 +3322,7 @@ Rules:
             # Return deterministic product formatting as a safe fallback.
             if products:
                 response_text = "স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
-                for idx, product in enumerate(products[:5], 1):
+                for idx, product in enumerate(products[:3], 1):
                     title = product.get('title', 'N/A')
                     price = product.get('price', 'N/A')
                     url = product.get('url', '')
