@@ -577,10 +577,7 @@ class SimpleChatbot:
                 return self._create_response(
                     user_id=user_id,
                     message=message,
-                    response=(
-                        "স্যার, আমাদের প্রতিটি প্রোডাক্টই ভালো। আপনি আমাদের ওয়েবসাইটে ভিজিট করে "
-                        "রেটিং এবং রিভিউ দেখে নিতে পারেন স্যার।"
-                    ),
+                    response=self._build_comparison_redirect_response(),
                     mode=ChatMode.AI,
                     intent='product_comparison',
                     products=None,
@@ -2022,10 +2019,7 @@ Rules:
             return self._create_response(
                 user_id=user_id,
                 message=message,
-                response=(
-                    "স্যার, আমাদের প্রতিটি প্রোডাক্টই ভালো। আপনি আমাদের ওয়েবসাইটে ভিজিট করে "
-                    "রেটিং এবং রিভিউ দেখে নিতে পারেন স্যার।"
-                ),
+                response=self._build_comparison_redirect_response(),
                 mode=ChatMode.AI,
                 intent='product_comparison',
                 products=None,
@@ -2328,16 +2322,21 @@ Rules:
         has_product_signal = self._looks_like_possible_product_signal(message) or self._contains_configured_search_item(message)
         return has_compare_term and has_product_signal
 
+    def _build_comparison_redirect_response(self) -> str:
+        """Return standard comparison guidance with website URL for a single link button."""
+        return (
+            "স্যার, আমাদের সকল প্রোডাক্টই ভালো। আপনি আমাদের ওয়েবসাইটের প্রোডাক্ট "
+            "রেটিং এবং রিভিউ দেখে নিতে পারেন।\n"
+            "https://www.bdstall.com/"
+        )
+
     def _reply_comparison_from_context(self, user_id: str) -> Optional[str]:
         """Create a simple comparison from the last shown products."""
         products = self.user_product_context.get(user_id, []) or []
         if len(products) < 2:
             selected = self.user_selected_product.get(user_id) or {}
             if selected:
-                return (
-                    "স্যার, আমাদের প্রতিটি প্রোডাক্টই ভালো। আপনি আমাদের ওয়েবসাইটে ভিজিট করে "
-                    "রেটিং এবং রিভিউ দেখে নিতে পারেন স্যার।"
-                )
+                return self._build_comparison_redirect_response()
             return None
 
         comparison_items = []
