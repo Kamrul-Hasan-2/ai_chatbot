@@ -21,6 +21,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 # Import simple chatbot
 from core.simple_chatbot_flow import SimpleChatbot
 
+# Import conversation context manager
+try:
+    from utils.conversation_context import get_context_manager
+except ImportError:
+    from src.utils.conversation_context import get_context_manager
+
 # Load environment
 load_dotenv()
 
@@ -608,6 +614,141 @@ def chat():
             "error": str(e),
             "response": "দুঃখিত স্যার, এই মুহূর্তে উত্তর দিতে সমস্যা হচ্ছে। অনুগ্রহ করে আপনার প্রশ্নটি আবার লিখুন বা প্রোডাক্টের নাম/বাজেট বলুন।",
             "mode": "human"
+        }), 500
+
+
+@app.route('/api/conversation/last-5/<user_id>', methods=['GET'])
+def get_last_5_messages(user_id):
+    """
+    Get the last 5 messages for a user
+    
+    Query Parameters:
+    - limit: Number of messages to retrieve (default: 5, max: 20)
+    
+    Response:
+    {
+        "success": true,
+        "user_id": "user123",
+        "count": 5,
+        "messages": [
+            {"sender_type": 3, "text": "laptop dekhaen", "timestamp": "..."},
+            {"sender_type": 2, "text": "HP laptops...", "timestamp": "..."},
+            ...
+        ],
+        "context_text": "User: laptop dekhaen\nBot: HP laptops...",
+        "formatted_lines": ["User: laptop dekhaen", "Bot: HP laptops..."]
+    }
+    """
+    try:
+        limit = request.args.get('limit', 5, type=int)
+        
+        context_manager = get_context_manager()
+        result = context_manager.get_last_n_messages(user_id, limit=limit)
+        
+        return jsonify({
+            "success": result['success'],
+            "user_id": user_id,
+            "count": result['count'],
+            "messages": result['messages'],
+            "context_text": result['context_text'],
+            "formatted_lines": result.get('formatted_lines', []),
+            "error": result.get('error')
+        }), 200 if result['success'] else 400
+        
+    except Exception as e:
+        logger.error(f"❌ Error getting last 5 messages: {e}")
+        return jsonify({
+            "success": False,
+            "user_id": user_id,
+            "error": str(e),
+            "count": 0,
+            "messages": []
+        }), 500
+
+
+@app.route('/api/conversation/context/<user_id>', methods=['POST'])
+def build_conversation_context(user_id):
+    """
+    Build conversation context for AI prompt
+    
+    Request:
+    {
+        "message": "what was the last product we discussed?",
+        "limit": 5
+    }
+    
+    Response:
+    {
+        "success": true,
+        "user_id": "user123",
+        "prompt": "Recent conversation context (oldest to newest):\nUser: laptop dekhaen\nBot: HP laptops...\n\nCurrent User Message: what was...",
+        "context_lines": 5
+    }
+    """
+    try:
+        data = request.get_json() or {}
+        current_message = data.get('message', '')
+        limit = data.get('limit', 5)
+        
+        if not current_message:
+            return jsonify({
+                "success": False,
+                "error": "Message parameter required",
+                "user_id": user_id
+            }), 400
+        
+        context_manager = get_context_manager()
+        prompt = context_manager.build_conversation_prompt(user_id, current_message, limit)
+        
+        return jsonify({
+            "success": True,
+            "user_id": user_id,
+            "prompt": prompt,
+            "context_lines": limit
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"❌ Error building context: {e}")
+        return jsonify({
+            "success": False,
+            "user_id": user_id,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/conversation/summary/<user_id>', methods=['GET'])
+def get_conversation_summary(user_id):
+    """
+    Get conversation summary for a user
+    
+    Query Parameters:
+    - limit: Number of messages to analyze (default: 5)
+    
+    Response:
+    {
+        "success": true,
+        "user_id": "user123",
+        "total_messages": 5,
+        "user_messages": 2,
+        "bot_messages": 2,
+        "agent_messages": 1,
+        "summary": "Last 5 messages: 2 from user, 2 from bot, 1 from agent"
+    }
+    """
+    try:
+        limit = request.args.get('limit', 5, type=int)
+        
+        context_manager = get_context_manager()
+        result = context_manager.get_conversation_summary(user_id, limit)
+        
+        return jsonify(result), 200 if result['success'] else 400
+        
+    except Exception as e:
+        logger.error(f"❌ Error getting conversation summary: {e}")
+        return jsonify({
+            "success": False,
+            "user_id": user_id,
+            "error": str(e)
         }), 500
 
 
