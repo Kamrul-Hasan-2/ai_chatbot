@@ -2382,15 +2382,18 @@ Rules:
             'compare', 'comparison', 'compare these', 'compare this', 'which one is best',
             'best', 'better', 'good', 'best one', 'better one', 'good laptop', 'good one',
             'konta valo', 'konta bhalo', 'konta ভাল', 'konta ভালো',
+            'konti valo', 'konti bhalo', 'konti ভাল', 'konti ভালো',
             'valo', 'bhalo', 'bhalo ta', 'bhalo konta',
             'tulona', 'compare koren', 'compare korba', 'tulona koren',
             'তুলনা', 'কোনটা ভালো', 'কোনটা ভাল', 'কোনটা best', 'কোনটা ভালো হবে',
+            'কোনটি ভালো', 'কোনটি ভাল',
             'ভালো হবে', 'ভালো', 'ভাল', 'বেস্ট'
         ]
 
         has_compare_term = any(term in text for term in compare_terms)
         standalone_compare_terms = {
             'valo', 'bhalo', 'konta valo', 'konta bhalo',
+            'konti valo', 'konti bhalo',
             'ভালো', 'ভাল', 'বেস্ট', 'best', 'good', 'better'
         }
         if text in standalone_compare_terms:
@@ -3359,7 +3362,9 @@ Rules:
         """Choose API template intent between 'order' and 'buy' from message text."""
         text = str(message or '').lower()
         buy_markers = [
-            'buy', 'kinbo', 'kinte', 'কিনবো', 'কিনব', 'কিনতে', 'কিভাবে কিনবো', 'kibabe kinbo'
+            'buy', 'kinbo', 'kinte', 'kinte pari', 'kivabe kinte pari', 'kibabe kinte pari',
+            'কিনবো', 'কিনব', 'কিনতে', 'কিনতে পারি', 'কিভাবে কিনবো', 'কিভাবে কিনতে পারি',
+            'kibabe kinbo', 'kivabe kinbo'
         ]
         return 'buy' if any(marker in text for marker in buy_markers) else 'order'
 
@@ -3372,8 +3377,8 @@ Rules:
         markers = [
             'order', 'buy', 'order korbo', 'kibabe order korbo', 'kivabe order korbo',
             'কিভাবে অর্ডার', 'অর্ডার করবো', 'অর্ডার করব', 'অর্ডার দিব', 'অর্ডার দেব',
-            'কিনবো', 'কিনব', 'কিনতে চাই', 'কিভাবে কিনবো', 'কিভাবে কিনব',
-            'kibabe kinbo', 'kivabe kinbo'
+            'কিনবো', 'কিনব', 'কিনতে চাই', 'কিনতে পারি', 'কিভাবে কিনবো', 'কিভাবে কিনব', 'কিভাবে কিনতে পারি',
+            'kinte pari', 'kivabe kinte pari', 'kibabe kinte pari', 'kibabe kinbo', 'kivabe kinbo'
         ]
         return any(marker in text for marker in markers)
 
