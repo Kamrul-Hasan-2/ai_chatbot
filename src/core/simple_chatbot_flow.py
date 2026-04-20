@@ -19,6 +19,7 @@ import json
 import re
 from enum import Enum
 import requests
+from urllib.parse import quote
 
 # Add paths
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -2731,8 +2732,30 @@ Rules:
         normalized = ' '.join(kept).strip()
         return normalized or text
 
+    def _build_category_link_response(self, category: str) -> Optional[str]:
+        """Build fixed category message with direct category URL."""
+        category_text = str(category or '').strip().lower()
+        if not category_text:
+            return None
+
+        slug = re.sub(r'\s+', '-', category_text)
+        slug = re.sub(r'[^a-z0-9\u0980-\u09ff\-]', '', slug)
+        slug = slug.strip('-')
+        if not slug:
+            return None
+
+        category_url = f"https://www.bdstall.com/{quote(slug, safe='-')}/"
+        return (
+            f"আপনি {category_text} ক্যাটাগরিতে বিভিন্ন পণ্য দেখতে পারেন। "
+            f"এই লিংকে ক্লিক করুন:\n{category_url}"
+        )
+
     def _fetch_category_intent_response(self, category: str) -> Optional[str]:
-        """Fetch generic category template text from BDStall intent API."""
+        """Return fixed category-link text; fallback to BDStall template API when needed."""
+        direct_response = self._build_category_link_response(category)
+        if direct_response:
+            return direct_response
+
         params = {
             'intent': 'category',
             'category': str(category or '').strip().lower(),
@@ -3446,7 +3469,7 @@ Rules:
                 'index': index,
                 'title': str(product.get('title') or product.get('name') or 'Product').strip(),
                 'price': str(product.get('price') or '').strip(),
-                'text': 'View this link',
+                'text': 'View Product',
                 'url': url
             })
 
