@@ -557,6 +557,20 @@ class SimpleChatbot:
                     conversation_status=AI_ACTIVE_STATUS
                 )
 
+            if self._is_later_followup_message(message):
+                self.user_modes[user_id] = ChatMode.AI
+                self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+                return self._create_response(
+                    user_id=user_id,
+                    message=message,
+                    response=self._build_later_followup_response(),
+                    mode=ChatMode.AI,
+                    intent='deferred_follow_up_ack',
+                    products=None,
+                    processing_time=(datetime.now() - start_time).total_seconds(),
+                    conversation_status=AI_ACTIVE_STATUS
+                )
+
             if self._is_deferred_reply_message(message):
                 self.user_modes[user_id] = ChatMode.AI
                 self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
@@ -1935,6 +1949,25 @@ Rules:
         ]
         return any(pattern in text for pattern in patterns)
 
+    def _is_later_followup_message(self, message: str) -> bool:
+        """Detect user closing messages that indicate they will buy/check later."""
+        text = str(message or '').strip().lower()
+        if not text:
+            return False
+
+        normalized = re.sub(r'\s+', ' ', text)
+        patterns = [
+            'i will buy later', 'will buy later', 'buy later',
+            'see u later', 'see you later',
+            'ok pore janbo', 'pore janbo', 'pore kinbo',
+            'পরে জানবো', 'পরে জানব', 'পরে কিনবো', 'পরে কিনব'
+        ]
+        return any(pattern in normalized for pattern in patterns)
+
+    def _build_later_followup_response(self) -> str:
+        """Return standard Bangla closing line for later follow-up intent."""
+        return "BDStall এর সাথে থাকার জন্য ধন্যবাদ স্যার, আর কিছু লাগলে আমাদের জানাবেন স্যার।"
+
     def _is_blocked_automated_message(self, message: str) -> bool:
         """Block known canned welcome templates so chatbot does not answer them."""
         text = str(message or '').strip().lower()
@@ -2012,6 +2045,20 @@ Rules:
                 conversation_status=AI_ACTIVE_STATUS
             )
 
+        if self._is_later_followup_message(message):
+            self.user_modes[user_id] = ChatMode.AI
+            self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+            return self._create_response(
+                user_id=user_id,
+                message=message,
+                response=self._build_later_followup_response(),
+                mode=ChatMode.AI,
+                intent='deferred_follow_up_ack',
+                products=None,
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
         # Comparison-style short queries should stay in AI and avoid schema handoff.
         if self._is_comparison_query(message):
             self.user_modes[user_id] = ChatMode.AI
@@ -2023,26 +2070,6 @@ Rules:
                 mode=ChatMode.AI,
                 intent='product_comparison',
                 products=None,
-                processing_time=(datetime.now() - start_time).total_seconds(),
-                conversation_status=AI_ACTIVE_STATUS
-            )
-
-        if self._looks_like_order_buy_message(message):
-            self.user_modes[user_id] = ChatMode.AI
-            self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
-            return self._create_response(
-                user_id=user_id,
-                message=message,
-                response=self._build_order_guide_response(),
-                mode=ChatMode.AI,
-                intent='ordering_guide',
-                products=None,
-                link_buttons=[
-                    {
-                        'text': 'Order Guild',
-                        'url': 'https://www.bdstall.com/blog/safe-shopping-guide/'
-                    }
-                ],
                 processing_time=(datetime.now() - start_time).total_seconds(),
                 conversation_status=AI_ACTIVE_STATUS
             )
