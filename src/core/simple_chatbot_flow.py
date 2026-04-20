@@ -2401,7 +2401,7 @@ Rules:
 
     def _build_comparison_redirect_response(self) -> str:
         """Return standard comparison guidance with website URL for a single link button."""
-        return "1️⃣ স্যার, আমাদের সকল প্রোডাক্টই ভালো। আপনি আমাদের ওয়েবসাইটের প্রোডাক্ট রেটিং এবং রিভিউ দেখে নিতে পারেন।"
+        return "স্যার, আমাদের সকল প্রোডাক্টই ভালো। আপনি আমাদের ওয়েবসাইটের প্রোডাক্ট রেটিং এবং রিভিউ দেখে নিতে পারেন।"
 
     def _build_comparison_link_buttons(self) -> list:
         """Return single website button for comparison guidance."""
