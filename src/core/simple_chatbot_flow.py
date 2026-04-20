@@ -595,6 +595,7 @@ class SimpleChatbot:
                     mode=ChatMode.AI,
                     intent='product_comparison',
                     products=None,
+                    link_buttons=self._build_comparison_link_buttons(),
                     processing_time=(datetime.now() - start_time).total_seconds(),
                     conversation_status=AI_ACTIVE_STATUS
                 )
@@ -2070,6 +2071,7 @@ Rules:
                 mode=ChatMode.AI,
                 intent='product_comparison',
                 products=None,
+                link_buttons=self._build_comparison_link_buttons(),
                 processing_time=(datetime.now() - start_time).total_seconds(),
                 conversation_status=AI_ACTIVE_STATUS
             )
@@ -2368,6 +2370,14 @@ Rules:
         if not text:
             return False
 
+        # If user mentions alternatives with "or/অথবা" and product signal,
+        # treat it as a comparison request (e.g., "hp or dell laptop").
+        has_or_connector = (' or ' in f" {text} ") or (' অথবা ' in f" {text} ")
+        if has_or_connector:
+            has_product_signal = self._looks_like_possible_product_signal(message) or self._contains_configured_search_item(message)
+            if has_product_signal:
+                return True
+
         compare_terms = [
             'compare', 'comparison', 'compare these', 'compare this', 'which one is best',
             'best', 'better', 'good', 'best one', 'better one', 'good laptop', 'good one',
@@ -2391,11 +2401,16 @@ Rules:
 
     def _build_comparison_redirect_response(self) -> str:
         """Return standard comparison guidance with website URL for a single link button."""
-        return (
-            "স্যার, আমাদের সকল প্রোডাক্টই ভালো। আপনি আমাদের ওয়েবসাইটের প্রোডাক্ট "
-            "রেটিং এবং রিভিউ দেখে নিতে পারেন।\n"
-            "https://www.bdstall.com/"
-        )
+        return "1️⃣ স্যার, আমাদের সকল প্রোডাক্টই ভালো। আপনি আমাদের ওয়েবসাইটের প্রোডাক্ট রেটিং এবং রিভিউ দেখে নিতে পারেন।"
+
+    def _build_comparison_link_buttons(self) -> list:
+        """Return single website button for comparison guidance."""
+        return [
+            {
+                'text': 'Website e দেখুন',
+                'url': 'https://www.bdstall.com/'
+            }
+        ]
 
     def _build_order_guide_response(self) -> str:
         """Return standard order-guide text for buy/order help messages."""
