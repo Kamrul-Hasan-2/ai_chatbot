@@ -595,7 +595,7 @@ class SimpleChatbot:
                     mode=ChatMode.AI,
                     intent='product_comparison',
                     products=None,
-                    link_buttons=self._build_comparison_link_buttons(),
+                    link_buttons=self._build_comparison_link_buttons(message),
                     processing_time=(datetime.now() - start_time).total_seconds(),
                     conversation_status=AI_ACTIVE_STATUS
                 )
@@ -2071,7 +2071,7 @@ Rules:
                 mode=ChatMode.AI,
                 intent='product_comparison',
                 products=None,
-                link_buttons=self._build_comparison_link_buttons(),
+                link_buttons=self._build_comparison_link_buttons(message),
                 processing_time=(datetime.now() - start_time).total_seconds(),
                 conversation_status=AI_ACTIVE_STATUS
             )
@@ -2403,12 +2403,125 @@ Rules:
         """Return standard comparison guidance with website URL for a single link button."""
         return "স্যার, আমাদের সকল প্রোডাক্টই ভালো। আপনি আমাদের ওয়েবসাইটের প্রোডাক্ট রেটিং এবং রিভিউ দেখে নিতে পারেন।"
 
-    def _build_comparison_link_buttons(self) -> list:
-        """Return single website button for comparison guidance."""
+    def _resolve_comparison_category(self, message: str) -> Optional[str]:
+        """Resolve a best-effort category name from comparison message text."""
+        text = self._normalize_product_query_text(message)
+        if not text:
+            return None
+
+        category = self._resolve_generic_category_query(text)
+        if category:
+            return category
+
+        category_terms = {
+            'laptop': 'laptop',
+            'ল্যাপটপ': 'laptop',
+            'mobile': 'mobile',
+            'phone': 'mobile',
+            'ফোন': 'mobile',
+            'মোবাইল': 'mobile',
+            'watch': 'watch',
+            'ঘড়ি': 'watch',
+            'ঘড়ি': 'watch',
+            'camera': 'camera',
+            'কম্পিউটার': 'computer',
+            'computer': 'computer',
+            'monitor': 'monitor',
+            'tablet': 'tablet',
+            'printer': 'printer'
+        }
+        for term, normalized in category_terms.items():
+            if term in text:
+                return normalized
+
+        best_match = self._find_best_search_item_match(text)
+        if best_match:
+            tokens = re.findall(r'[a-z0-9\u0980-\u09ff]+', best_match.lower())
+            if tokens:
+                return tokens[-1]
+
+        return None
+
+    def _fetch_category_link_from_api(self, category: str) -> Optional[str]:
+        """Fetch category template from API and extract first URL for button use."""
+        category_text = str(category or '').strip().lower()
+        if not category_text:
+            return None
+
+        params = {
+            'intent': 'category',
+            'category': category_text,
+            'key': self.api_key
+        }
+        started = datetime.now()
+
+        try:
+            response = requests.get(
+                self.delivery_intent_api_url,
+                params=params,
+                timeout=10
+            )
+            duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+
+            _log_api_call(
+                api_name="ai_template_category_link_button",
+                method="GET",
+                url=self.delivery_intent_api_url,
+                request_payload=params,
+                status_code=response.status_code,
+                duration_ms=duration_ms,
+                status="PASS" if response.status_code == 200 else "FAIL",
+                response_preview=response.text
+            )
+
+            if response.status_code != 200:
+                return None
+
+            payload = response.json() if response.text else {}
+            candidate_texts = []
+
+            if isinstance(payload, str):
+                candidate_texts.append(payload)
+            elif isinstance(payload, dict):
+                for key in ['response', 'message', 'template', 'text', 'content', 'data']:
+                    value = payload.get(key)
+                    if isinstance(value, str) and value.strip():
+                        candidate_texts.append(value)
+                if len(payload) == 1:
+                    only_value = next(iter(payload.values()))
+                    if isinstance(only_value, str) and only_value.strip():
+                        candidate_texts.append(only_value)
+
+            for candidate in candidate_texts:
+                match = re.search(r'https?://[^\s<>"\']+', str(candidate))
+                if match:
+                    return match.group(0).rstrip('.,!?)')
+
+            return None
+        except Exception:
+            return None
+
+    def _build_comparison_link_buttons(self, message: str) -> list:
+        """Return single button with dynamic category URL for comparison guidance."""
+        category = self._resolve_comparison_category(message)
+        if category:
+            api_url = self._fetch_category_link_from_api(category)
+            if api_url:
+                target_url = api_url
+            else:
+                slug = re.sub(r'\s+', '-', str(category).strip().lower())
+                slug = re.sub(r'[^a-z0-9\u0980-\u09ff\-]', '', slug).strip('-')
+                if slug:
+                    target_url = f"https://www.bdstall.com/{quote(slug, safe='-')}/"
+                else:
+                    target_url = 'https://www.bdstall.com/'
+        else:
+            target_url = 'https://www.bdstall.com/'
+
         return [
             {
-                'text': 'Website e দেখুন',
-                'url': 'https://www.bdstall.com/'
+                'text': 'Show the Product Details',
+                'url': target_url
             }
         ]
 
