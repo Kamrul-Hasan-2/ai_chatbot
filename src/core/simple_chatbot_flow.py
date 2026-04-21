@@ -1703,6 +1703,25 @@ Rules:
 
         return updated
 
+    def _build_search_keywords_from_intent_content(self, intent_content: Dict[str, Any]) -> str:
+        """Build the exact search API term from structured intent content."""
+        if not isinstance(intent_content, dict):
+            return ''
+
+        parts = []
+        brand = str(intent_content.get('brand') or '').strip()
+        title = str(intent_content.get('title') or '').strip()
+        price = str(intent_content.get('price') or '').strip()
+
+        if brand:
+            parts.append(brand)
+        if title:
+            parts.append(title)
+        if price and price.lower() not in {'koto', 'কত', 'price', 'dam', 'দাম'}:
+            parts.append(price)
+
+        return ' '.join(part for part in parts if part).strip()
+
     def _local_intent_fallback(self, message: str) -> tuple[str, str]:
         """Deterministic fallback when Groq is unavailable or returns unparsable output."""
         text = str(message or '').strip().lower()
@@ -2362,18 +2381,16 @@ Rules:
         title = str(intent_content.get('title') or '').strip()
         price = str(intent_content.get('price') or '').strip()
         brand = str(intent_content.get('brand') or '').strip()
-
-        keywords_parts = []
-        if brand:
-            keywords_parts.append(brand)
-        if title:
-            keywords_parts.append(title)
-        if price and price.lower() not in {'koto', 'কত', 'price', 'দাম'}:
-            keywords_parts.append(price)
-        search_keywords = ' '.join(part for part in keywords_parts if part).strip()
+        search_keywords = self._build_search_keywords_from_intent_content(intent_content)
 
         category_name = self._resolve_generic_category_query(text)
-        if category_name:
+        should_use_category_template = bool(
+            category_name
+            and not brand
+            and not price
+            and (title.lower() == category_name.lower() if title else True)
+        )
+        if should_use_category_template:
             logger.info(
                 "🚀 SCHEMA CATEGORY TEMPLATE: user_id=%s category=%s",
                 user_id,
@@ -2399,6 +2416,9 @@ Rules:
                 "⚠️ SCHEMA CATEGORY TEMPLATE unavailable; fallback to ai_search for category=%s",
                 category_name
             )
+
+        if not search_keywords and title:
+            search_keywords = title
 
         search_result = self._step2_search_database(search_keywords)
         products = search_result.get('products') or []
