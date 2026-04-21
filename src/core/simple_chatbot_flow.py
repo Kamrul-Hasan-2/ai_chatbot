@@ -1680,6 +1680,28 @@ Rules:
 
         if title_raw:
             normalized_title = self._to_title_case(title_raw)
+            previous_title = str(previous.get('title') or '').strip().lower()
+            new_title_lower = normalized_title.lower()
+
+            # ── Dynamic intent refresh ────────────────────────────────────────
+            # When Groq detects a NEW product category (title changed), reset all
+            # accumulated context fields so stale brand/price from the old
+            # category don't pollute the new intent.  Brand/price are then filled
+            # fresh from the current message further below.
+            # Title is always mandatory — it is never cleared.
+            if previous_title and new_title_lower != previous_title:
+                logger.info(
+                    "🔄 [INTENT_REFRESH] Title changed '%s' → '%s'. "
+                    "Resetting brand/price/buy/category for new intent context.",
+                    previous_title, normalized_title
+                )
+                updated['brand'] = ''
+                updated['price'] = ''
+                updated['buy'] = ''
+                updated['compare'] = 'no'
+                updated['category'] = ''
+            # ─────────────────────────────────────────────────────────────────
+
             updated['title'] = normalized_title
             updated['category'] = normalized_title
 
