@@ -125,6 +125,8 @@ class SimpleChatbot:
         self.user_pending_product_query: Dict[str, Dict[str, Any]] = {}
         # Track last resolved intent so cache can be cleared on intent switches.
         self.user_last_intent: Dict[str, str] = {}
+        # Track structured search intent context per user.
+        self.user_intent_content: Dict[str, Dict[str, Any]] = {}
         
         # BDStall API Configuration
         self.api_url = "https://www.bdstall.com/api/item/ai_search/"
@@ -187,6 +189,7 @@ class SimpleChatbot:
             self.user_order_draft = dict(state.get('user_order_draft') or {})
             self.user_pending_product_query = dict(state.get('user_pending_product_query') or {})
             self.user_last_intent = dict(state.get('user_last_intent') or {})
+            self.user_intent_content = dict(state.get('user_intent_content') or {})
             logger.info("✅ Restored chatbot state for %s users", len(self.user_modes))
         except Exception as e:
             logger.warning("⚠️ Failed to restore chatbot state: %s", e)
@@ -204,6 +207,7 @@ class SimpleChatbot:
                 'user_order_draft': self.user_order_draft,
                 'user_pending_product_query': self.user_pending_product_query,
                 'user_last_intent': self.user_last_intent,
+                'user_intent_content': self.user_intent_content,
             }
             with open(self.state_file, 'w', encoding='utf-8') as file_obj:
                 json.dump(state, file_obj, ensure_ascii=False)
@@ -1463,58 +1467,241 @@ Rules:
             return ''
 
         safe_limit = max(1, min(int(limit or 5), 20))
-        request_url = (
-            f"{self.chatbot_history_api_url}"
-            f"user_id={user_id}&limit={safe_limit}&key={self.api_key}"
-        )
+
+        request_urls = self._build_chat_history_urls(user_id, safe_limit)
 
         started = datetime.now()
-        try:
-            response = requests.get(request_url, timeout=8)
-            duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+        for request_url in request_urls:
+            try:
+                response = requests.get(request_url, timeout=8)
+                duration_ms = int((datetime.now() - started).total_seconds() * 1000)
 
-            _log_api_call(
-                api_name="chatbot_history",
-                method="GET",
-                url=request_url,
-                request_payload={
-                    'user_id': str(user_id),
-                    'limit': safe_limit,
-                    'key': self.api_key
-                },
-                status_code=response.status_code,
-                duration_ms=duration_ms,
-                status="PASS" if 200 <= response.status_code < 300 else "FAIL",
-                response_preview=response.text
-            )
+                _log_api_call(
+                    api_name="chatbot_history",
+                    method="GET",
+                    url=request_url,
+                    request_payload={
+                        'user_id': str(user_id),
+                        'limit': safe_limit,
+                        'key': self.api_key
+                    },
+                    status_code=response.status_code,
+                    duration_ms=duration_ms,
+                    status="PASS" if 200 <= response.status_code < 300 else "FAIL",
+                    response_preview=response.text
+                )
 
-            if not (200 <= response.status_code < 300):
-                return ''
+                if not (200 <= response.status_code < 300):
+                    continue
 
-            payload = response.json() if response.text else {}
-            lines = self._normalize_history_messages(payload)
-            context = '\n'.join(lines).strip()
-            if context:
-                logger.info("🧠 [HISTORY_CONTEXT] user_id=%s lines=%s", user_id, len(lines))
-            return context
-        except Exception as e:
-            duration_ms = int((datetime.now() - started).total_seconds() * 1000)
-            _log_api_call(
-                api_name="chatbot_history",
-                method="GET",
-                url=request_url,
-                request_payload={
-                    'user_id': str(user_id),
-                    'limit': safe_limit,
-                    'key': self.api_key
-                },
-                status_code=0,
-                duration_ms=duration_ms,
-                status="FAIL",
-                response_preview=str(e)
-            )
-            logger.info("[HISTORY_CONTEXT] history fetch failed for user_id=%s: %s", user_id, e)
+                payload = response.json() if response.text else {}
+                lines = self._normalize_history_messages(payload)
+                context = '\n'.join(lines).strip()
+                if context:
+                    logger.info("🧠 [HISTORY_CONTEXT] user_id=%s lines=%s", user_id, len(lines))
+                return context
+            except Exception as e:
+                duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+                _log_api_call(
+                    api_name="chatbot_history",
+                    method="GET",
+                    url=request_url,
+                    request_payload={
+                        'user_id': str(user_id),
+                        'limit': safe_limit,
+                        'key': self.api_key
+                    },
+                    status_code=0,
+                    duration_ms=duration_ms,
+                    status="FAIL",
+                    response_preview=str(e)
+                )
+
+        return ''
+
+    def _build_chat_history_urls(self, user_id: str, limit: int) -> list[str]:
+        """Build compatible chatbot_history URL variants."""
+        base = str(self.chatbot_history_api_url or '').strip()
+        if not base:
+            return []
+
+        query_tail = f"user_id={user_id}&limit={limit}&key={self.api_key}"
+        base_stripped = base.rstrip('/')
+
+        candidates = [
+            f"{base}{query_tail}",
+            f"{base}?{query_tail}",
+            f"{base_stripped}/user_id={user_id}&limit={limit}&key={self.api_key}",
+            f"{base_stripped}?{query_tail}"
+        ]
+
+        deduped = []
+        seen = set()
+        for url in candidates:
+            if url not in seen:
+                seen.add(url)
+                deduped.append(url)
+        return deduped
+
+    def _normalize_compare_flag(self, value: Any) -> str:
+        """Normalize compare flag to yes/no string."""
+        text = str(value or '').strip().lower()
+        if text in {'yes', 'true', '1', 'y'}:
+            return 'yes'
+        return 'no'
+
+    def _to_title_case(self, text: str) -> str:
+        """Convert category/title text into simple title case."""
+        normalized = str(text or '').strip()
+        if not normalized:
             return ''
+        return ' '.join(part.capitalize() for part in normalized.split())
+
+    def _extract_price_text_for_intent(self, message: str) -> Optional[str]:
+        """Extract compact budget text for intent_content (e.g., 10k, under 20k)."""
+        text = str(message or '').strip().lower()
+        if not text:
+            return None
+
+        text = text.translate(str.maketrans('০১২৩৪৫৬৭৮৯', '0123456789'))
+
+        range_match = re.search(r'(\d+(?:\.\d+)?)\s*(k|tk|taka|টাকা|হাজার)?\s*(?:-|to|থেকে)\s*(\d+(?:\.\d+)?)\s*(k|tk|taka|টাকা|হাজার)?', text)
+        if range_match:
+            left_num = range_match.group(1)
+            left_unit = (range_match.group(2) or '').strip().lower()
+            right_num = range_match.group(3)
+            right_unit = (range_match.group(4) or '').strip().lower()
+            left = f"{left_num}k" if left_unit in {'k', 'হাজার'} else left_num
+            right = f"{right_num}k" if right_unit in {'k', 'হাজার'} else right_num
+            return f"{left}-{right}"
+
+        under_match = re.search(r'(?:under|within|below|less than|modde|মধ্যে|এর মধ্যে)\s*(\d+(?:\.\d+)?)\s*(k|tk|taka|টাকা|হাজার)?', text)
+        if under_match:
+            number = under_match.group(1)
+            unit = (under_match.group(2) or '').strip().lower()
+            if unit in {'k', 'হাজার'}:
+                return f"{number}k"
+            return f"under {number}"
+
+        plain_match = re.search(r'\b(\d+(?:\.\d+)?)\s*(k|tk|taka|টাকা|হাজার)\b', text)
+        if plain_match:
+            number = plain_match.group(1)
+            unit = plain_match.group(2).strip().lower()
+            if unit in {'k', 'হাজার'}:
+                return f"{number}k"
+            return number
+
+        return None
+
+    def _fetch_recent_intent_content(self, user_id: str, limit: int = 5) -> Dict[str, Any]:
+        """Fetch last stored intent_content from chatbot_history API user_info block."""
+        if not user_id:
+            return {}
+
+        safe_limit = max(1, min(int(limit or 5), 20))
+        request_urls = self._build_chat_history_urls(user_id, safe_limit)
+
+        started = datetime.now()
+        for request_url in request_urls:
+            try:
+                response = requests.get(request_url, timeout=8)
+                duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+
+                _log_api_call(
+                    api_name="chatbot_history_intent_content",
+                    method="GET",
+                    url=request_url,
+                    request_payload={
+                        'user_id': str(user_id),
+                        'limit': safe_limit,
+                        'key': self.api_key
+                    },
+                    status_code=response.status_code,
+                    duration_ms=duration_ms,
+                    status="PASS" if 200 <= response.status_code < 300 else "FAIL",
+                    response_preview=response.text
+                )
+
+                if not (200 <= response.status_code < 300):
+                    continue
+
+                payload = response.json() if response.text else {}
+                user_info = payload.get('user_info') if isinstance(payload, dict) else {}
+                raw = user_info.get('intent_content') if isinstance(user_info, dict) else {}
+                if not isinstance(raw, dict):
+                    continue
+
+                title_value = str(raw.get('title') or '').strip()
+                category_value = str(raw.get('category') or raw.get('cat') or '').strip()
+                brand_value = str(raw.get('brand') or '').strip().lower()
+                price_value = str(raw.get('price') or '').strip()
+
+                normalized = {
+                    'title': self._to_title_case(title_value) if title_value else '',
+                    'category': self._to_title_case(category_value) if category_value else '',
+                    'brand': brand_value,
+                    'price': price_value,
+                    'buy': 'ok' if str(raw.get('buy') or '').strip() else '',
+                    'compare': self._normalize_compare_flag(raw.get('compare'))
+                }
+
+                return {k: v for k, v in normalized.items() if str(v).strip()}
+            except Exception:
+                continue
+
+        return {}
+
+    def _build_intent_content_from_schema(
+        self,
+        user_id: str,
+        message: str,
+        intent_obj: Dict[str, Optional[str]]
+    ) -> Dict[str, Any]:
+        """Build conversation-aware intent_content where only explicit fields are updated."""
+        previous = dict(self.user_intent_content.get(user_id) or {})
+        previous_from_api = self._fetch_recent_intent_content(user_id, self.chatbot_history_limit)
+        if previous_from_api:
+            previous = previous_from_api
+
+        title_raw = str(intent_obj.get('title') or '').strip()
+        price_raw = str(intent_obj.get('price') or '').strip()
+
+        entities = self._extract_search_entities(message)
+        brand_raw = str(entities.get('brand') or '').strip().lower()
+
+        updated = {
+            'title': str(previous.get('title') or '').strip(),
+            'category': str(previous.get('category') or '').strip(),
+            'brand': str(previous.get('brand') or '').strip().lower(),
+            'price': str(previous.get('price') or '').strip(),
+            'buy': str(previous.get('buy') or '').strip(),
+            'compare': self._normalize_compare_flag(previous.get('compare'))
+        }
+
+        if title_raw:
+            normalized_title = self._to_title_case(title_raw)
+            updated['title'] = normalized_title
+            updated['category'] = normalized_title
+
+        if brand_raw:
+            updated['brand'] = brand_raw
+
+        price_from_text = self._extract_price_text_for_intent(message)
+        if price_from_text:
+            updated['price'] = price_from_text
+        elif price_raw and price_raw.lower() not in {'koto', 'কত', 'price', 'dam', 'দাম'}:
+            updated['price'] = price_raw
+
+        updated['buy'] = 'ok' if self._looks_like_order_buy_message(message) else updated['buy']
+        updated['compare'] = 'yes' if self._is_comparison_query(message) else 'no'
+
+        if not updated.get('category') and updated.get('title'):
+            updated['category'] = updated['title']
+
+        if updated.get('title'):
+            self.user_intent_content[user_id] = dict(updated)
+
+        return updated
 
     def _local_intent_fallback(self, message: str) -> tuple[str, str]:
         """Deterministic fallback when Groq is unavailable or returns unparsable output."""
@@ -2114,9 +2301,33 @@ Rules:
             )
 
         intent_obj = self._extract_intent_schema(message)
-        is_search_related = bool(intent_obj.get('title') or intent_obj.get('price') or intent_obj.get('compare') or self._looks_like_possible_product_signal(message))
+        intent_content = self._build_intent_content_from_schema(user_id, message, intent_obj)
+        is_search_related = bool(
+            intent_obj.get('title')
+            or intent_obj.get('price')
+            or intent_obj.get('compare')
+            or intent_content.get('title')
+            or intent_content.get('brand')
+            or intent_content.get('price')
+            or self._looks_like_possible_product_signal(message)
+        )
 
         if not is_search_related:
+            extracted = self._extract_search_entities(message)
+            if extracted.get('brand'):
+                self.user_modes[user_id] = ChatMode.AI
+                self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+                return self._create_response(
+                    user_id=user_id,
+                    message=message,
+                    response="কোন প্রোডাক্টটি খুঁজছেন স্যার?",
+                    mode=ChatMode.AI,
+                    intent='schema_need_title',
+                    products=None,
+                    intent_content=intent_content,
+                    processing_time=(datetime.now() - start_time).total_seconds(),
+                    conversation_status=AI_ACTIVE_STATUS
+                )
             return self._handoff_to_human(
                 user_id=user_id,
                 message=message,
@@ -2125,17 +2336,14 @@ Rules:
                 response_text="স্যার, এই বিষয়ে আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।"
             )
 
-        # Each new message is treated as a fresh intent (clear prior context).
+        # Keep previous structured intent context for follow-ups like
+        # "dell er ta dekhan to" where only brand should change.
         self._clear_product_search_cache(user_id, clear_pending=True)
         self.user_order_context[user_id] = False
         self.user_order_draft.pop(user_id, None)
 
-        if not intent_obj.get('title'):
-            prompt = (
-                "কোন প্রোডাক্টের দাম জানতে চান?"
-                if intent_obj.get('price') else
-                "কোন প্রোডাক্ট খুঁজছেন?"
-            )
+        if not intent_content.get('title'):
+            prompt = "কোন প্রোডাক্টটি খুঁজছেন স্যার?"
 
             self.user_modes[user_id] = ChatMode.AI
             self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
@@ -2146,16 +2354,14 @@ Rules:
                 mode=ChatMode.AI,
                 intent='schema_need_title',
                 products=None,
+                intent_content=intent_content,
                 processing_time=(datetime.now() - start_time).total_seconds(),
                 conversation_status=AI_ACTIVE_STATUS
             )
 
-        title = str(intent_obj.get('title') or '').strip()
-        price = str(intent_obj.get('price') or '').strip()
-        compare = str(intent_obj.get('compare') or '').strip()
-
-        search_entities = self._extract_search_entities(text)
-        brand = str(search_entities.get('brand') or '').strip()
+        title = str(intent_content.get('title') or '').strip()
+        price = str(intent_content.get('price') or '').strip()
+        brand = str(intent_content.get('brand') or '').strip()
 
         keywords_parts = []
         if brand:
@@ -2185,6 +2391,7 @@ Rules:
                     intent='category_search',
                     products=None,
                     search_keywords=category_name,
+                    intent_content=intent_content,
                     processing_time=(datetime.now() - start_time).total_seconds(),
                     conversation_status=AI_ACTIVE_STATUS
                 )
@@ -2199,7 +2406,15 @@ Rules:
         if not products:
             self.user_modes[user_id] = ChatMode.AI
             self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
-            no_result_response = "দুঃখিত স্যার, এই মুহূর্তে কোনো প্রোডাক্ট পাওয়া যায়নি।"
+            brand_label = str(intent_content.get('brand') or '').strip()
+            title_label = str(intent_content.get('title') or '').strip()
+            if brand_label or title_label:
+                no_result_response = (
+                    f"দুঃখিত স্যার, এই মুহূর্তে {brand_label} {title_label} স্টকে নেই। "
+                    "অন্য কোনো ব্র্যান্ড দেখাবো?"
+                ).strip()
+            else:
+                no_result_response = "দুঃখিত স্যার, এই মুহূর্তে কোনো প্রোডাক্ট পাওয়া যায়নি।"
             return self._create_response(
                 user_id=user_id,
                 message=message,
@@ -2208,6 +2423,7 @@ Rules:
                 intent='schema_search_no_result',
                 products=None,
                 search_keywords=search_keywords,
+                intent_content=intent_content,
                 processing_time=(datetime.now() - start_time).total_seconds(),
                 conversation_status=AI_ACTIVE_STATUS
             )
@@ -2238,6 +2454,7 @@ Rules:
             intent='schema_search',
             products=products[:3],
             search_keywords=search_keywords,
+            intent_content=intent_content,
             processing_time=(datetime.now() - start_time).total_seconds(),
             conversation_status=AI_ACTIVE_STATUS
         )
@@ -3697,6 +3914,7 @@ Rules:
         products: Optional[list],
         search_keywords: Optional[str] = None,
         link_buttons: Optional[list] = None,
+        intent_content: Optional[Dict[str, Any]] = None,
         processing_time: float = 0.0,
         error: Optional[str] = None,
         conversation_status: Optional[str] = None
@@ -3708,6 +3926,7 @@ Rules:
             self.user_last_intent[user_id] = str(intent)
         self._save_state()
         trimmed_products = products[:5] if products else None
+        resolved_intent_content = dict(intent_content or self.user_intent_content.get(user_id) or {})
         return {
             "success": mode == ChatMode.AI,
             "user_id": user_id,
@@ -3719,6 +3938,7 @@ Rules:
             "products_found": len(products) if products else 0,
             "products": trimmed_products,  # Keep top 5 for follow-up selection
             "link_buttons": link_buttons if link_buttons is not None else self._build_link_buttons(trimmed_products),
+            "intent_content": resolved_intent_content,
             "conversation_status": conversation_status or self.user_conversation_status.get(
                 user_id,
                 HUMAN_SUPPORT_REQUIRED_STATUS if mode == ChatMode.HUMAN else AI_ACTIVE_STATUS

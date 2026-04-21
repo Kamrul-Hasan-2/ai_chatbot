@@ -172,7 +172,13 @@ def remember_user_name(user_id: str, user_name: Optional[str]) -> None:
         _save_user_name_map(name_map)
 
 
-def save_chat_message(user_id: str, sender_type: int, message: str, user_name: Optional[str] = None) -> bool:
+def save_chat_message(
+    user_id: str,
+    sender_type: int,
+    message: str,
+    user_name: Optional[str] = None,
+    intent_content: Optional[dict[str, Any]] = None
+) -> bool:
     """Persist a single chat message to BDStall message history API."""
     if not message:
         return False
@@ -185,6 +191,8 @@ def save_chat_message(user_id: str, sender_type: int, message: str, user_name: O
     }
     if user_name:
         payload["user_name"] = str(user_name)
+    if isinstance(intent_content, dict) and intent_content:
+        payload["intent_content"] = intent_content
 
     def _is_success_response(resp: requests.Response) -> bool:
         """Treat 2xx as success, with optional JSON 'success' flag validation when present."""
@@ -199,9 +207,13 @@ def save_chat_message(user_id: str, sender_type: int, message: str, user_name: O
         return True
 
     # Try JSON first, then form-data fallback for stricter external API gateways.
+    form_payload = dict(payload)
+    if isinstance(form_payload.get("intent_content"), dict):
+        form_payload["intent_content"] = json.dumps(form_payload["intent_content"], ensure_ascii=False)
+
     attempts = [
         ("json", lambda: requests.post(SAVE_MESSAGE_API_URL, json=payload, timeout=10)),
-        ("form", lambda: requests.post(SAVE_MESSAGE_API_URL, data=payload, timeout=10))
+        ("form", lambda: requests.post(SAVE_MESSAGE_API_URL, data=form_payload, timeout=10))
     ]
     last_error = None
 
@@ -529,6 +541,7 @@ def _process_user_message(
 
     # Process message through roadmap
     result = get_chatbot().process_message(user_id, clean_message)
+    intent_content = result.get('intent_content') if isinstance(result, dict) else None
 
     response_text = (result.get('response') or '').strip()
     bot_saved = None
@@ -538,7 +551,8 @@ def _process_user_message(
             user_id=user_id,
             sender_type=2,
             message=response_text,
-            user_name=resolved_user_name
+            user_name=resolved_user_name,
+            intent_content=intent_content if isinstance(intent_content, dict) else None
         )
         if not bot_saved:
             logger.warning(
