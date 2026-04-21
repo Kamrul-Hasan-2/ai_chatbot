@@ -1678,17 +1678,24 @@ Rules:
             'compare': self._normalize_compare_flag(previous.get('compare'))
         }
 
+        # Dynamic fallback: If Groq schema didn't yield an explicit title, but the message
+        # contains a strongly distinct product term (e.g. "ac", "phone", "stun gun"), use it.
+        extracted_product = entities.get('product_name')
+        if not title_raw and extracted_product:
+            prev_title_lower = str(previous.get('title') or '').strip().lower()
+            if extracted_product not in prev_title_lower:
+                title_raw = extracted_product
+
         if title_raw:
             normalized_title = self._to_title_case(title_raw)
             previous_title = str(previous.get('title') or '').strip().lower()
             new_title_lower = normalized_title.lower()
 
             # ── Dynamic intent refresh ────────────────────────────────────────
-            # When Groq detects a NEW product category (title changed), reset all
+            # When a NEW product category (title changed) is detected, reset all
             # accumulated context fields so stale brand/price from the old
-            # category don't pollute the new intent.  Brand/price are then filled
-            # fresh from the current message further below.
-            # Title is always mandatory — it is never cleared.
+            # category don't pollute the new intent. Brand/price are then filled
+            # fresh from the current message.
             if previous_title and new_title_lower != previous_title:
                 logger.info(
                     "🔄 [INTENT_REFRESH] Title changed '%s' → '%s'. "
@@ -1704,6 +1711,7 @@ Rules:
 
             updated['title'] = normalized_title
             updated['category'] = normalized_title
+
 
         if brand_raw:
             updated['brand'] = brand_raw
@@ -1832,17 +1840,21 @@ Rules:
             'headphone', 'ssd', 'ram', 'printer', 'camera', 'router', 'charger', 'tablet',
             'elitebook', 'pavilion', 'thinkpad', 'inspiron', 'aspire', 'vivobook', 'zbook',
             'macbook', 'chromebook', 'probook', 'pixelbook', 'razer', 'alienware', 'rog',
-            'ল্যাপটপ', 'মোবাইল', 'ফোন', 'কম্পিউটার', 'মাউস', 'কিবোর্ড', 'হেডফোন', 'ট্যাব'
+            'ল্যাপটপ', 'মোবাইল', 'ফোন', 'কম্পিউটার', 'মাউস', 'কিবোর্ড', 'হেডফোন', 'ট্যাব',
+            'ac', 'air conditioner', 'tv', 'television', 'smart tv', 'stun gun', 'watch', 'smartwatch',
+            'ips', 'ups', 'router', 'cctv'
         ]
 
         brand = next((b for b in brand_terms if b in text), None)
         has_product = any(term in text for term in product_terms)
+        product_name = next((term for term in product_terms if term in text), None)
         budget = self._extract_budget_range(text)
         has_price = budget.get('min_price') is not None or budget.get('max_price') is not None
 
         return {
             'brand': brand,
             'has_product': has_product,
+            'product_name': product_name,
             'has_price': has_price,
             'min_price': budget.get('min_price'),
             'max_price': budget.get('max_price'),
