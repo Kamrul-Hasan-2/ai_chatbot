@@ -2469,16 +2469,7 @@ Rules:
         compare = self._extract_schema_compare(text)
 
         if not title:
-            # Heuristic fallback when product signal exists but exact title not found in list.
-            if self._looks_like_possible_product_signal(text):
-                fallback_tokens = re.findall(r'[a-z0-9\u0980-\u09ff]+', lowered)
-                ignore = {
-                    'price', 'dam', 'koto', 'budget', 'compare', 'vs', 'difference', 'better', 'best',
-                    'দাম', 'কত', 'তুলনা', 'কোনটা', 'ভালো', 'ভাল', 'cheap', 'low', 'under', 'er', 'modde'
-                }
-                kept = [t for t in fallback_tokens if len(t) > 1 and t not in ignore]
-                if kept:
-                    title = ' '.join(kept[:3]).strip()
+            title = None
 
         return {
             'title': title or None,
