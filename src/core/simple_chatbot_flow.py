@@ -2337,14 +2337,24 @@ Rules:
                             lines.append(f"   লিংক: {product_url}")
                     
                     self.user_product_context[user_id] = products[:3]
-                    response_lines = ["স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:", ""]
-                    response_lines.extend(lines)
-                    response_lines.extend(["", "আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।"])
-                    
+                    conversation_context = self._fetch_recent_chat_context(user_id, self.chatbot_history_limit) if self.groq_client else ''
+                    formatted_result = self._step4_ai_format(
+                        original_message=message,
+                        database_message=f"Search results for {search_keywords}",
+                        products=products[:3],
+                        conversation_context=conversation_context
+                    )
+                    response_text = (formatted_result.get('response') or '').strip()
+                    if not response_text:
+                        response_lines = ["স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:", ""]
+                        response_lines.extend(lines)
+                        response_lines.extend(["", "আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।"])
+                        response_text = '\n'.join(response_lines)
+
                     return self._create_response(
                         user_id=user_id,
                         message=message,
-                        response='\n'.join(response_lines),
+                        response=response_text,
                         mode=ChatMode.AI,
                         intent='schema_search',
                         products=products[:3],
@@ -2534,13 +2544,24 @@ Rules:
 
         self.user_modes[user_id] = ChatMode.AI
         self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
-        response_lines = ["স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:", ""]
-        response_lines.extend(lines)
-        response_lines.extend(["", "আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।"])
+        conversation_context = self._fetch_recent_chat_context(user_id, self.chatbot_history_limit) if self.groq_client else ''
+        formatted_result = self._step4_ai_format(
+            original_message=message,
+            database_message=f"Search results for {search_keywords}",
+            products=products[:3],
+            conversation_context=conversation_context
+        )
+        response_text = (formatted_result.get('response') or '').strip()
+        if not response_text:
+            response_lines = ["স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:", ""]
+            response_lines.extend(lines)
+            response_lines.extend(["", "আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।"])
+            response_text = '\n'.join(response_lines)
+
         return self._create_response(
             user_id=user_id,
             message=message,
-            response='\n'.join(response_lines),
+            response=response_text,
             mode=ChatMode.AI,
             intent='schema_search',
             products=products[:3],
@@ -3543,9 +3564,10 @@ Available products (top matches):
 Instructions:
 - Context পড়ে user intent বুঝে উত্তর দাও।
 - ৩টি প্রোডাক্ট সুন্দরভাবে 1-3 লিস্টে দাও (title, price, link)।
-- উত্তরটি অবশ্যই এই opening line দিয়ে শুরু করবে: "স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:"
-- তালিকার শেষে অবশ্যই এই closing line দেবে: "আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।"
-- ভদ্র, সংক্ষিপ্ত, বিক্রয় সহায়ক টোন রাখো।
+- একটি natural, friendly Bengali intro লেখো যা user message অনুযায়ী বদলাবে.
+- একই opening line বারবার ব্যবহার কোরো না.
+- শেষে একটি short helpful closing দাও, কিন্তু একদম একই sentence repeat কোরো না.
+- ভদ্র, সংক্ষিপ্ত, বিক্রয় সহায়ক টোন রাখো.
 - অপ্রয়োজনীয় তথ্য দিও না।
 """
 
@@ -3564,7 +3586,19 @@ Instructions:
                         }
 
                 # Fallback deterministic product formatting if Groq unavailable.
-                response_text = "স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
+                seed_text = f"{original_message or ''} {database_message or ''}"
+                seed_value = sum(ord(char) for char in seed_text)
+                intro_options = [
+                    "স্যার, মিল পাওয়া কিছু প্রোডাক্ট দিলাম:",
+                    "আপনার জন্য এই অপশনগুলো পেলাম:",
+                    "দেখে নিতে পারেন এই প্রোডাক্টগুলো:"
+                ]
+                closing_options = [
+                    "চাইলে আরও অপশন খুঁজে দিচ্ছি.",
+                    "আরও দেখাতে পারি, বললেই হবে.",
+                    "আরও কিছু লাগলে জানাবেন."
+                ]
+                response_text = f"{intro_options[seed_value % len(intro_options)]}\n\n"
                 for idx, product in enumerate(products[:3], 1):
                     title = product.get('title', 'N/A')
                     price = product.get('price', 'N/A')
@@ -3576,7 +3610,7 @@ Instructions:
                         response_text += f"লিংক: {url}\n"
                     response_text += "\n"
 
-                response_text += "আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।"
+                response_text += closing_options[(seed_value // 3) % len(closing_options)]
                 return {
                     'success': True,
                     'response': response_text
@@ -3620,7 +3654,19 @@ Rules:
             # Never hand off to human when we already have product results.
             # Return deterministic product formatting as a safe fallback.
             if products:
-                response_text = "স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
+                seed_text = f"{original_message or ''} {database_message or ''}"
+                seed_value = sum(ord(char) for char in seed_text)
+                intro_options = [
+                    "স্যার, মিল পাওয়া কিছু প্রোডাক্ট দিলাম:",
+                    "আপনার জন্য এই অপশনগুলো পেলাম:",
+                    "দেখে নিতে পারেন এই প্রোডাক্টগুলো:"
+                ]
+                closing_options = [
+                    "চাইলে আরও অপশন খুঁজে দিচ্ছি.",
+                    "আরও দেখাতে পারি, বললেই হবে.",
+                    "আরও কিছু লাগলে জানাবেন."
+                ]
+                response_text = f"{intro_options[seed_value % len(intro_options)]}\n\n"
                 for idx, product in enumerate(products[:3], 1):
                     title = product.get('title', 'N/A')
                     price = product.get('price', 'N/A')
@@ -3632,7 +3678,7 @@ Rules:
                         response_text += f"লিংক: {url}\n"
                     response_text += "\n"
 
-                response_text += "আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।"
+                response_text += closing_options[(seed_value // 3) % len(closing_options)]
                 return {
                     'success': True,
                     'response': response_text
