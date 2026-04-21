@@ -1686,11 +1686,10 @@ Rules:
         if brand_raw:
             updated['brand'] = brand_raw
 
-        # Only set price if not already found in previous context (price should be sticky)
         price_from_text = self._extract_price_text_for_intent(message)
-        if price_from_text and not updated.get('price'):
+        if price_from_text:
             updated['price'] = price_from_text
-        elif price_raw and price_raw.lower() not in {'koto', 'কত', 'price', 'dam', 'দাম'} and not updated.get('price'):
+        elif price_raw and price_raw.lower() not in {'koto', 'কত', 'price', 'dam', 'দাম'}:
             updated['price'] = price_raw
 
         updated['buy'] = 'ok' if self._looks_like_order_buy_message(message) else updated['buy']
@@ -1699,7 +1698,8 @@ Rules:
         if not updated.get('category') and updated.get('title'):
             updated['category'] = updated['title']
 
-        if updated.get('title'):
+        # Save intent_content if there are meaningful updates (title, price, or brand)
+        if updated.get('title') or price_from_text or brand_raw:
             self.user_intent_content[user_id] = dict(updated)
 
         return updated
@@ -2305,10 +2305,80 @@ Rules:
                 conversation_status=AI_ACTIVE_STATUS
             )
 
-        # Budget/number-only query should ask product title first.
+        # Budget/number-only query: update price if we have previous context, else ask for title
         if self._is_price_only_query(text):
             self.user_modes[user_id] = ChatMode.AI
             self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+            
+            # Extract new price and update intent_content if we have a stored title
+            new_price = self._extract_price_text_for_intent(message)
+            previous_intent = dict(self.user_intent_content.get(user_id) or {})
+            
+            if new_price and previous_intent.get('title'):
+                # Update price and re-search with existing title
+                previous_intent['price'] = new_price
+                self.user_intent_content[user_id] = previous_intent
+                
+                # Build search keywords with updated intent_content and perform search
+                search_keywords = self._build_search_keywords_from_intent_content(previous_intent)
+                search_result = self._step2_search_database(search_keywords)
+                products = search_result.get('products') or []
+                
+                if products and len(products) > 0:
+                    # Format response with products
+                    lines = []
+                    for idx, product in enumerate(products[:3], 1):
+                        product_title = str(product.get('title') or 'N/A').strip()
+                        product_price = str(product.get('price') or 'N/A').strip()
+                        product_url = str(product.get('url') or '').strip()
+                        lines.append(f"{idx}. {product_title}")
+                        lines.append(f"   মূল্য: {product_price}")
+                        if product_url:
+                            lines.append(f"   লিংক: {product_url}")
+                    
+                    self.user_product_context[user_id] = products[:3]
+                    response_lines = ["স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:", ""]
+                    response_lines.extend(lines)
+                    response_lines.extend(["", "আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।"])
+                    
+                    return self._create_response(
+                        user_id=user_id,
+                        message=message,
+                        response='\n'.join(response_lines),
+                        mode=ChatMode.AI,
+                        intent='schema_search',
+                        products=products[:3],
+                        search_keywords=search_keywords,
+                        intent_content=previous_intent,
+                        processing_time=(datetime.now() - start_time).total_seconds(),
+                        conversation_status=AI_ACTIVE_STATUS
+                    )
+                else:
+                    # No products found with new price
+                    brand_label = str(previous_intent.get('brand') or '').strip()
+                    title_label = str(previous_intent.get('title') or '').strip()
+                    if brand_label or title_label:
+                        no_result_response = (
+                            f"দুঃখিত স্যার, এই মুহূর্তে {brand_label} {title_label} স্টকে নেই। "
+                            "অন্য কোনো ব্র্যান্ড দেখাবো?"
+                        ).strip()
+                    else:
+                        no_result_response = "দুঃখিত স্যার, এই মুহূর্তে কোনো প্রোডাক্ট পাওয়া যায়নি।"
+                    
+                    return self._create_response(
+                        user_id=user_id,
+                        message=message,
+                        response=no_result_response,
+                        mode=ChatMode.AI,
+                        intent='schema_search_no_result',
+                        products=None,
+                        search_keywords=search_keywords,
+                        intent_content=previous_intent,
+                        processing_time=(datetime.now() - start_time).total_seconds(),
+                        conversation_status=AI_ACTIVE_STATUS
+                    )
+            
+            # No previous title, ask for product name
             return self._create_response(
                 user_id=user_id,
                 message=message,
