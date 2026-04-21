@@ -1686,10 +1686,11 @@ Rules:
         if brand_raw:
             updated['brand'] = brand_raw
 
+        # Only set price if not already found in previous context (price should be sticky)
         price_from_text = self._extract_price_text_for_intent(message)
-        if price_from_text:
+        if price_from_text and not updated.get('price'):
             updated['price'] = price_from_text
-        elif price_raw and price_raw.lower() not in {'koto', 'কত', 'price', 'dam', 'দাম'}:
+        elif price_raw and price_raw.lower() not in {'koto', 'কত', 'price', 'dam', 'দাম'} and not updated.get('price'):
             updated['price'] = price_raw
 
         updated['buy'] = 'ok' if self._looks_like_order_buy_message(message) else updated['buy']
