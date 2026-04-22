@@ -3325,7 +3325,7 @@ Rules:
 
         return [
             {
-                'text': 'View Details',
+                'text': 'View',
                 'url': target_url
             }
         ]
