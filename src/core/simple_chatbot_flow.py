@@ -1443,6 +1443,8 @@ Examples:
 - "hp laptop under 50k" → Brand: HP, Category: Laptop
 - "macbook pro" → Brand: Apple, Category: Laptop (or "MacBook")
 - "xiaomi phone 5G" → Brand: Xiaomi, Category: Smartphone/Phone
+- "core i3 10 gen" → Brand: Intel, Category: Laptop (or Desktop if message mentions desktop/pc)
+- "i5 12th gen desktop" → Brand: Intel, Category: Desktop
 
 Respond in EXACT format:
 Brand: [brand]
@@ -1487,6 +1489,18 @@ IMPORTANT: Always extract both. If message has device name (iPhone, MacBook), us
             elif category:
                 title = category
 
+            # Guard: model-only CPU queries should still resolve category.
+            if not category:
+                inferred_category = self._infer_computer_category_from_specs(message)
+                if inferred_category:
+                    category = inferred_category
+                    title = f"{brand} {category}".strip() if brand else category
+
+            if not brand and category and category.lower() in {'laptop', 'desktop'}:
+                if re.search(r'\b(core\s*i[3579]|i[3579]|intel|ryzen|amd|gen|generation|th\s*gen)\b', str(message or '').lower()):
+                    brand = 'intel'
+                    title = f"{brand} {category}".strip()
+
             logger.info(f"[BRAND_CATEGORY_EXTRACTED] brand={brand}, category={category}, title={title}")
 
             return {
@@ -1498,6 +1512,35 @@ IMPORTANT: Always extract both. If message has device name (iPhone, MacBook), us
         except Exception as e:
             logger.warning(f"[BRAND_CATEGORY_GROQ] failed: {e}")
             return {'brand': None, 'category': None, 'title': None}
+
+    def _infer_computer_category_from_specs(self, message: str) -> Optional[str]:
+        """Infer Laptop/Desktop category from CPU-generation style model text."""
+        text = str(message or '').strip().lower()
+        if not text:
+            return None
+
+        desktop_cues = {
+            'desktop', 'pc', 'cpu', 'casing', 'tower', 'assembled', 'gaming pc',
+            'ডেস্কটপ', 'কম্পিউটার সেট'
+        }
+        laptop_cues = {
+            'laptop', 'notebook', 'ultrabook', 'ল্যাপটপ', 'নোটবুক'
+        }
+
+        if any(cue in text for cue in desktop_cues):
+            return 'Desktop'
+        if any(cue in text for cue in laptop_cues):
+            return 'Laptop'
+
+        model_pattern = re.search(
+            r'\b(core\s*i[3579]|i[3579]|intel|ryzen|amd|gen|generation|\d{1,2}(st|nd|rd|th)?\s*gen)\b',
+            text
+        )
+        if model_pattern:
+            # Default to Laptop for model-only queries like "core i3 10 gen".
+            return 'Laptop'
+
+        return None
 
     def _normalize_history_messages(self, payload: Any) -> list[str]:
         """Normalize history API payload into compact role-prefixed lines."""
@@ -2084,10 +2127,10 @@ Rules:
 
         brand_terms = [
             'hp', 'dell', 'lenovo', 'asus', 'acer', 'apple', 'iphone', 'samsung', 'xiaomi',
-            'realme', 'oppo', 'vivo', 'msi', 'huawei'
+            'realme', 'oppo', 'vivo', 'msi', 'huawei', 'intel', 'amd'
         ]
         product_terms = [
-            'laptop', 'phone', 'mobile', 'pc', 'computer', 'monitor', 'mouse', 'keyboard',
+            'laptop', 'desktop', 'phone', 'mobile', 'pc', 'computer', 'monitor', 'mouse', 'keyboard',
             'headphone', 'ssd', 'ram', 'printer', 'camera', 'router', 'charger', 'tablet',
             'elitebook', 'pavilion', 'thinkpad', 'inspiron', 'aspire', 'vivobook', 'zbook',
             'macbook', 'chromebook', 'probook', 'pixelbook', 'razer', 'alienware', 'rog',
@@ -2099,6 +2142,10 @@ Rules:
         brand = next((b for b in brand_terms if b in text), None)
         has_product = any(term in text for term in product_terms)
         product_name = next((term for term in product_terms if term in text), None)
+        inferred_category = self._infer_computer_category_from_specs(text)
+        if not product_name and inferred_category:
+            has_product = True
+            product_name = inferred_category.lower()
         budget = self._extract_budget_range(text)
         has_price = budget.get('min_price') is not None or budget.get('max_price') is not None
 
@@ -2211,12 +2258,14 @@ Rules:
             return False
 
         product_terms = [
-            'laptop', 'phone', 'mobile', 'pc', 'computer', 'monitor', 'mouse', 'keyboard',
+            'laptop', 'desktop', 'phone', 'mobile', 'pc', 'computer', 'monitor', 'mouse', 'keyboard',
             'headphone', 'ssd', 'ram', 'printer', 'camera', 'router', 'charger',
             'watch', 'smartwatch', 'smart-watch', 'smart watch',
             'gun', 'stun', 'stun gun', 'taser',
             'elitebook', 'pavilion', 'thinkpad', 'inspiron', 'aspire', 'vivobook', 'zbook',
             'macbook', 'chromebook', 'probook', 'pixelbook', 'razer', 'alienware', 'rog',
+            'core i3', 'core i5', 'core i7', 'core i9', 'i3', 'i5', 'i7', 'i9', 'gen',
+            'intel', 'amd', 'ryzen', 'processor', 'cpu',
             'g8', 'g7', 'g6', 'g5', 'g4', 'g3', 'g2', 'g1',
             'ল্যাপটপ', 'মোবাইল', 'ফোন', 'কম্পিউটার', 'মাউস', 'কিবোর্ড', 'হেডফোন',
             'ঘড়ি', 'ঘড়ি', 'স্মার্টওয়াচ', 'স্মার্টওয়াচ', 'স্মার্ট ঘড়ি', 'স্মার্ট ঘড়ি'
@@ -2264,9 +2313,10 @@ Rules:
 
         signal_terms = {
             'hp', 'dell', 'lenovo', 'asus', 'acer', 'apple', 'samsung', 'xiaomi',
-            'laptop', 'mobile', 'phone', 'pc', 'computer', 'monitor', 'mouse', 'keyboard',
+            'laptop', 'desktop', 'mobile', 'phone', 'pc', 'computer', 'monitor', 'mouse', 'keyboard',
             'watch', 'smartwatch', 'smart',
             'elitebook', 'thinkpad', 'macbook', 'inspiron', 'pavilion',
+            'core', 'i3', 'i5', 'i7', 'i9', 'gen', 'intel', 'amd', 'ryzen', 'processor', 'cpu',
             'price', 'dam', 'tk', 'taka', 'budget', 'modde', 'under', 'within',
             'ase', 'ache', 'pawa', 'available', 'stock',
             'দাম', 'টাকা', 'বাজেট', 'ল্যাপটপ', 'মোবাইল', 'ফোন', 'আছে', 'ঘড়ি', 'ঘড়ি', 'স্মার্টওয়াচ', 'স্মার্টওয়াচ'
@@ -2921,6 +2971,10 @@ Rules:
         lowered = text.lower()
 
         title = self._resolve_title_from_search_reference(text)
+        if not title:
+            inferred_category = self._infer_computer_category_from_specs(text)
+            if inferred_category:
+                title = inferred_category
         price = self._extract_schema_price(lowered)
         compare = self._extract_schema_compare(text)
 
