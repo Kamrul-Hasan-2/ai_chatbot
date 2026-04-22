@@ -589,7 +589,7 @@ class SimpleChatbot:
                     conversation_status=AI_ACTIVE_STATUS
                 )
 
-            if self._is_comparison_query(message):
+            if self._is_comparison_query(message) or self._is_comparison_followup_with_context(user_id, message):
                 self.user_modes[user_id] = ChatMode.AI
                 self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
                 return self._create_response(
@@ -599,7 +599,7 @@ class SimpleChatbot:
                     mode=ChatMode.AI,
                     intent='product_comparison',
                     products=None,
-                    link_buttons=self._build_comparison_link_buttons(message),
+                    link_buttons=self._build_comparison_link_buttons(message, user_id),
                     processing_time=(datetime.now() - start_time).total_seconds(),
                     conversation_status=AI_ACTIVE_STATUS
                 )
@@ -1337,7 +1337,7 @@ Current message:
 {message}
 
 Return EXACTLY in this format:
-SearchQuery: [yes/no]
+SearchQuery: [yes/no] 
 Keywords: [keyword string or none]
 
 Rules:
@@ -2124,6 +2124,7 @@ Rules:
         """Extract lightweight entities for search: brand, product hint, and budget range."""
         text = str(message or '').strip().lower()
         text = text.translate(str.maketrans('০১২৩৪৫৬৭৮৯', '0123456789'))
+        tokens = re.findall(r'[a-z0-9\u0980-\u09ff]+', text)
 
         brand_terms = [
             'hp', 'dell', 'lenovo', 'asus', 'acer', 'apple', 'iphone', 'samsung', 'xiaomi',
@@ -2139,9 +2140,19 @@ Rules:
             'ips', 'ups', 'router', 'cctv'
         ]
 
-        brand = next((b for b in brand_terms if b in text), None)
-        has_product = any(term in text for term in product_terms)
-        product_name = next((term for term in product_terms if term in text), None)
+        def _term_found(term: str) -> bool:
+            normalized = str(term or '').strip().lower()
+            if not normalized:
+                return False
+            # For short ASCII tokens, require token match to avoid collisions
+            # like "ac" inside "ache".
+            if re.fullmatch(r'[a-z0-9]+', normalized) and len(normalized) <= 3:
+                return normalized in tokens
+            return normalized in text
+
+        brand = next((b for b in brand_terms if _term_found(b)), None)
+        has_product = any(_term_found(term) for term in product_terms)
+        product_name = next((term for term in product_terms if _term_found(term)), None)
         inferred_category = self._infer_computer_category_from_specs(text)
         if not product_name and inferred_category:
             has_product = True
@@ -2650,7 +2661,7 @@ Rules:
             )
 
         # Comparison-style short queries should stay in AI and avoid schema handoff.
-        if self._is_comparison_query(message):
+        if self._is_comparison_query(message) or self._is_comparison_followup_with_context(user_id, message):
             self.user_modes[user_id] = ChatMode.AI
             self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
             return self._create_response(
@@ -2660,7 +2671,7 @@ Rules:
                 mode=ChatMode.AI,
                 intent='product_comparison',
                 products=None,
-                link_buttons=self._build_comparison_link_buttons(message),
+                link_buttons=self._build_comparison_link_buttons(message, user_id),
                 processing_time=(datetime.now() - start_time).total_seconds(),
                 conversation_status=AI_ACTIVE_STATUS
             )
@@ -2782,6 +2793,35 @@ Rules:
 
         intent_obj = self._extract_intent_schema(message)
         intent_content = self._build_intent_content_from_schema(user_id, message, intent_obj)
+
+        # Brand-only message guard:
+        # If user sends only brand/availability text (e.g., "hp ache") without
+        # explicit product/category/model in current message, ask for product model.
+        current_entities = self._extract_search_entities(message)
+        inferred_category_now = self._infer_computer_category_from_specs(message)
+        has_explicit_title_now = bool(intent_obj.get('title')) or bool(inferred_category_now)
+        has_product_now = bool(current_entities.get('has_product'))
+        has_brand_now = bool(current_entities.get('brand'))
+
+        if has_brand_now and (not has_product_now) and (not has_explicit_title_now):
+            prompt = "কোন প্রোডাক্টটি চাচ্ছেন স্যার?"
+            intent_content['title'] = ''
+            intent_content['category'] = ''
+            self.user_intent_content[user_id] = self._normalize_intent_content_payload(intent_content)
+            self.user_modes[user_id] = ChatMode.AI
+            self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+            return self._create_response(
+                user_id=user_id,
+                message=message,
+                response=prompt,
+                mode=ChatMode.AI,
+                intent='schema_need_model',
+                products=None,
+                intent_content=intent_content,
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
         is_search_related = bool(
             intent_obj.get('title')
             or intent_obj.get('price')
@@ -2828,11 +2868,16 @@ Rules:
         
         if not title or not category:
             logger.info(f"⚠️ [MANDATORY_CHECK] Missing title or category: title='{title}', category='{category}'")
+            brand_hint = str(intent_content.get('brand') or '').strip()
             
             # Build appropriate prompt based on what's missing
             if not title and not category:
-                prompt = "কোন প্রোডাক্টটি খুঁজছেন স্যার? (ব্র্যান্ড এবং ধরন উল্লেখ করুন, যেমন: iPhone স্মার্টফোন)"
-                intent_type = 'schema_need_title_category'
+                if brand_hint:
+                    prompt = "কোন প্রোডাক্টটি চাচ্ছেন স্যার?"
+                    intent_type = 'schema_need_model'
+                else:
+                    prompt = "কোন প্রোডাক্টটি চাচ্ছেন স্যার?"
+                    intent_type = 'schema_need_title_category'
             elif not category:
                 prompt = f"আপনি {title} খুঁজছেন? এটি কোন ধরনের প্রোডাক্ট?"
                 intent_type = 'schema_need_category'
@@ -3125,6 +3170,32 @@ Rules:
         has_product_signal = self._looks_like_possible_product_signal(message) or self._contains_configured_search_item(message)
         return has_compare_term and has_product_signal
 
+    def _is_comparison_followup_with_context(self, user_id: str, message: str) -> bool:
+        """Detect short comparison follow-ups when category/product context already exists."""
+        text = str(message or '').strip().lower()
+        if not text:
+            return False
+
+        compare_markers = [
+            'which one', 'which is best', 'best', 'better', 'compare', 'comparison',
+            'konta valo', 'konta bhalo', 'konta bhalo', 'konta ভাল',
+            'কোনটা ভালো', 'কোনটা ভাল', 'তুলনা', 'ভালো', 'ভাল', 'বেস্ট'
+        ]
+        if not any(marker in text for marker in compare_markers):
+            return False
+
+        # Keep it as a follow-up style detector (short compare queries).
+        if len(text.split()) > 6:
+            return False
+
+        intent_payload = self.user_intent_content.get(user_id) or {}
+        has_context = bool(
+            self.user_product_context.get(user_id)
+            or str(intent_payload.get('category') or '').strip()
+            or str(intent_payload.get('title') or '').strip()
+        )
+        return has_context
+
     def _build_comparison_redirect_response(self) -> str:
         """Return standard comparison guidance with website URL for a single link button."""
         return "স্যার, আমাদের সকল প্রোডাক্টই ভালো। আপনি আমাদের ওয়েবসাইটের প্রোডাক্ট রেটিং এবং রিভিউ দেখে নিতে পারেন।"
@@ -3227,9 +3298,17 @@ Rules:
         except Exception:
             return None
 
-    def _build_comparison_link_buttons(self, message: str) -> list:
+    def _build_comparison_link_buttons(self, message: str, user_id: Optional[str] = None) -> list:
         """Return single button with dynamic category URL for comparison guidance."""
         category = self._resolve_comparison_category(message)
+        if not category and user_id:
+            context_payload = self.user_intent_content.get(user_id) or {}
+            context_category = str(context_payload.get('category') or '').strip().lower()
+            context_title = str(context_payload.get('title') or '').strip().lower()
+            if context_category:
+                category = context_category
+            elif context_title:
+                category = context_title
         if category:
             api_url = self._fetch_category_link_from_api(category)
             if api_url:
