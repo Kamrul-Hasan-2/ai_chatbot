@@ -390,6 +390,10 @@ def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Op
         title = str(btn.get('title') or '').strip()
         price = str(btn.get('price') or '').strip()
         display_title = title or fallback_title or f'Link {index}'
+        # Avoid duplicated sentence for single-link helper cards (e.g. Shopping Guide)
+        # where intro text and card title would otherwise be identical.
+        if not title and len(buttons) == 1 and intro_text and display_title == intro_text:
+            display_title = label
         money_text = f"\nমূল্য: {price}" if price else ''
         card_text = f"{index}️⃣ {display_title}{money_text}"
 
