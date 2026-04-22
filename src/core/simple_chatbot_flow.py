@@ -1637,6 +1637,115 @@ IMPORTANT: Always extract both. If message has device name (iPhone, MacBook), us
             return 'yes'
         return 'no'
 
+    def _default_intent_content(self) -> Dict[str, Any]:
+        """Return canonical intent_content shape used in all responses."""
+        return {
+            'buy': '',
+            'brand': '',
+            'price': '',
+            'title': '',
+            'compare': 'no',
+            'category': '',
+            'complain': False,
+            'exit': 0,
+        }
+
+    def _normalize_intent_content_payload(self, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Normalize dynamic intent payload into stable API contract fields."""
+        normalized = self._default_intent_content()
+        source = payload if isinstance(payload, dict) else {}
+
+        normalized['buy'] = str(source.get('buy') or '').strip()
+        normalized['brand'] = str(source.get('brand') or '').strip().lower()
+        normalized['price'] = str(source.get('price') or '').strip()
+        normalized['title'] = str(source.get('title') or '').strip()
+        normalized['category'] = str(source.get('category') or '').strip()
+        normalized['compare'] = self._normalize_compare_flag(source.get('compare'))
+
+        complain_raw = source.get('complain', False)
+        if isinstance(complain_raw, str):
+            normalized['complain'] = complain_raw.strip().lower() in {'true', '1', 'yes', 'y'}
+        else:
+            normalized['complain'] = bool(complain_raw)
+
+        exit_raw = source.get('exit', 0)
+        if isinstance(exit_raw, str):
+            normalized['exit'] = 1 if exit_raw.strip().lower() in {'1', 'true', 'yes', 'y'} else 0
+        else:
+            normalized['exit'] = 1 if bool(exit_raw) else 0
+
+        return normalized
+
+    def _classify_exit_and_complain_groq(self, message: str, conversation_context: str = '') -> Dict[str, Any]:
+        """Classify whether user message is an exit/closing or complaint/slang escalation case."""
+        text = str(message or '').strip()
+        lowered = text.lower()
+
+        fallback_exit = (
+            self._is_later_followup_message(text)
+            or self._is_deferred_reply_message(text)
+            or self._is_goodbye_message(lowered)
+        )
+        fallback_complain = any(
+            token in lowered
+            for token in [
+                'complain', 'complaint', 'refund', 'scam', 'fraud', 'cheat', 'fake',
+                'baje', 'faltu', 'kharap', 'useless', 'worst', 'stupid', 'boka',
+                'foul', 'abuse', 'slang', 'gali', 'গালি', 'বাজে', 'ফালতু', 'খারাপ',
+                'প্রতারণা', 'স্ক্যাম', 'রিফান্ড', 'অভিযোগ'
+            ]
+        )
+
+        if not self.groq_client:
+            return {'exit': 1 if fallback_exit else 0, 'complain': bool(fallback_complain)}
+
+        try:
+            prompt = f"""Classify this ecommerce chat message.
+
+Recent conversation context:
+{conversation_context or 'N/A'}
+
+Message:
+{text}
+
+Return EXACTLY this format:
+Exit: [0 or 1]
+Complain: [true or false]
+
+Rules:
+- Exit=1 when user is ending conversation now or saying they will continue later.
+- Exit=1 examples: see you later, later maybe, ok pore kinbo, pore janabo, bye.
+- Complain=true when message is complaint, abuse, slang, unusual angry wording, refund accusation, scam/fraud concern.
+- For normal product search/questions, return Exit=0 and Complain=false.
+"""
+
+            response = self.groq_client.chat.completions.create(
+                model=self.groq_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=60
+            )
+
+            result = response.choices[0].message.content.strip()
+            exit_match = re.search(r'(?is)exit\s*[:\-]\s*([01]|true|false|yes|no)', result)
+            complain_match = re.search(r'(?is)complain\s*[:\-]\s*(true|false|yes|no|1|0)', result)
+
+            exit_value = fallback_exit
+            complain_value = fallback_complain
+
+            if exit_match:
+                raw = exit_match.group(1).strip().lower()
+                exit_value = raw in {'1', 'true', 'yes'}
+
+            if complain_match:
+                raw = complain_match.group(1).strip().lower()
+                complain_value = raw in {'true', 'yes', '1'}
+
+            return {'exit': 1 if exit_value else 0, 'complain': bool(complain_value)}
+        except Exception as e:
+            logger.info("[EXIT_COMPLAIN_CLASSIFY] failed: %s", e)
+            return {'exit': 1 if fallback_exit else 0, 'complain': bool(fallback_complain)}
+
     def _to_title_case(self, text: str) -> str:
         """Convert category/title text into simple title case."""
         normalized = str(text or '').strip()
@@ -1729,10 +1838,23 @@ IMPORTANT: Always extract both. If message has device name (iPhone, MacBook), us
                     'brand': brand_value,
                     'price': price_value,
                     'buy': 'ok' if str(raw.get('buy') or '').strip() else '',
-                    'compare': self._normalize_compare_flag(raw.get('compare'))
+                    'compare': self._normalize_compare_flag(raw.get('compare')),
+                    'complain': bool(raw.get('complain', False)),
+                    'exit': 1 if bool(raw.get('exit', 0)) else 0,
                 }
 
-                return {k: v for k, v in normalized.items() if str(v).strip()}
+                if not any([
+                    normalized.get('title'),
+                    normalized.get('category'),
+                    normalized.get('brand'),
+                    normalized.get('price'),
+                    normalized.get('buy'),
+                    normalized.get('complain'),
+                    normalized.get('exit'),
+                ]):
+                    continue
+
+                return self._normalize_intent_content_payload(normalized)
             except Exception:
                 continue
 
@@ -1762,7 +1884,9 @@ IMPORTANT: Always extract both. If message has device name (iPhone, MacBook), us
             'brand': str(previous.get('brand') or '').strip().lower(),
             'price': str(previous.get('price') or '').strip(),
             'buy': str(previous.get('buy') or '').strip(),
-            'compare': self._normalize_compare_flag(previous.get('compare'))
+            'compare': self._normalize_compare_flag(previous.get('compare')),
+            'complain': bool(previous.get('complain', False)),
+            'exit': 1 if bool(previous.get('exit', 0)) else 0,
         }
 
         # Dynamic fallback: If Groq schema didn't yield an explicit title, but the message
@@ -1840,6 +1964,8 @@ IMPORTANT: Always extract both. If message has device name (iPhone, MacBook), us
 
         updated['buy'] = 'ok' if self._looks_like_order_buy_message(message) else updated['buy']
         updated['compare'] = 'yes' if self._is_comparison_query(message) else 'no'
+        updated['complain'] = bool(updated.get('complain', False))
+        updated['exit'] = 0
 
         # ✅ Ensure category is set - MANDATORY
         if not updated.get('category') and updated.get('title'):
@@ -1852,9 +1978,9 @@ IMPORTANT: Always extract both. If message has device name (iPhone, MacBook), us
 
         # Save intent_content if there are meaningful updates (title, price, or brand)
         if updated.get('title') or price_from_text or brand_raw:
-            self.user_intent_content[user_id] = dict(updated)
+            self.user_intent_content[user_id] = self._normalize_intent_content_payload(updated)
 
-        return updated
+        return self._normalize_intent_content_payload(updated)
 
 
     def _build_search_keywords_from_intent_content(self, intent_content: Dict[str, Any]) -> str:
@@ -2333,7 +2459,7 @@ IMPORTANT: Always extract both. If message has device name (iPhone, MacBook), us
 
     def _build_later_followup_response(self) -> str:
         """Return standard Bangla closing line for later follow-up intent."""
-        return "BDStall এর সাথে থাকার জন্য ধন্যবাদ স্যার, আর কিছু লাগলে আমাদের জানাবেন স্যার।"
+        return "BDStall এর সাথে থাকার জন্য ধন্যবাদ স্যার, আর কিছু লাগলে আমাকে অবশ্যই জানাবেন।"
 
     def _is_blocked_automated_message(self, message: str) -> bool:
         """Block known canned welcome templates so chatbot does not answer them."""
@@ -2401,6 +2527,10 @@ IMPORTANT: Always extract both. If message has device name (iPhone, MacBook), us
             goodbye_response = "ধন্যবাদ স্যার, ভালো থাকবেন।"
             self.user_modes[user_id] = ChatMode.AI
             self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+            current_intent = self._normalize_intent_content_payload(self.user_intent_content.get(user_id) or {})
+            current_intent['exit'] = 1
+            current_intent['complain'] = False
+            self.user_intent_content[user_id] = current_intent
             return self._create_response(
                 user_id=user_id,
                 message=message,
@@ -2408,11 +2538,32 @@ IMPORTANT: Always extract both. If message has device name (iPhone, MacBook), us
                 mode=ChatMode.AI,
                 intent='goodbye',
                 products=None,
+                intent_content=current_intent,
                 processing_time=(datetime.now() - start_time).total_seconds(),
                 conversation_status=AI_ACTIVE_STATUS
             )
 
-        if self._is_later_followup_message(message):
+        conversation_context = self._fetch_recent_chat_context(user_id, self.chatbot_history_limit) if self.groq_client else ''
+        exit_complain = self._classify_exit_and_complain_groq(message, conversation_context)
+
+        if exit_complain.get('complain'):
+            complain_intent = self._normalize_intent_content_payload(self.user_intent_content.get(user_id) or {})
+            complain_intent['complain'] = True
+            complain_intent['exit'] = 0
+            self.user_intent_content[user_id] = complain_intent
+            return self._handoff_to_human(
+                user_id=user_id,
+                message=message,
+                start_time=start_time,
+                intent='complain_handoff',
+                response_text="স্যার, এই বিষয়ে আমাদের একজন প্রতিনিধি এখনই আপনার সাথে যোগাযোগ করবেন।"
+            )
+
+        if exit_complain.get('exit') == 1:
+            exit_intent = self._normalize_intent_content_payload(self.user_intent_content.get(user_id) or {})
+            exit_intent['exit'] = 1
+            exit_intent['complain'] = False
+            self.user_intent_content[user_id] = exit_intent
             self.user_modes[user_id] = ChatMode.AI
             self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
             return self._create_response(
@@ -2420,8 +2571,28 @@ IMPORTANT: Always extract both. If message has device name (iPhone, MacBook), us
                 message=message,
                 response=self._build_later_followup_response(),
                 mode=ChatMode.AI,
+                intent='exit_message',
+                products=None,
+                intent_content=exit_intent,
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
+        if self._is_later_followup_message(message):
+            self.user_modes[user_id] = ChatMode.AI
+            self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+            later_intent = self._normalize_intent_content_payload(self.user_intent_content.get(user_id) or {})
+            later_intent['exit'] = 1
+            later_intent['complain'] = False
+            self.user_intent_content[user_id] = later_intent
+            return self._create_response(
+                user_id=user_id,
+                message=message,
+                response=self._build_later_followup_response(),
+                mode=ChatMode.AI,
                 intent='deferred_follow_up_ack',
                 products=None,
+                intent_content=later_intent,
                 processing_time=(datetime.now() - start_time).total_seconds(),
                 conversation_status=AI_ACTIVE_STATUS
             )
@@ -4225,7 +4396,9 @@ Rules:
             self.user_last_intent[user_id] = str(intent)
         self._save_state()
         trimmed_products = products[:5] if products else None
-        resolved_intent_content = dict(intent_content or self.user_intent_content.get(user_id) or {})
+        resolved_intent_content = self._normalize_intent_content_payload(
+            intent_content or self.user_intent_content.get(user_id) or {}
+        )
         return {
             "success": mode == ChatMode.AI,
             "user_id": user_id,
