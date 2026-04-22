@@ -1964,7 +1964,9 @@ Rules:
 
         updated['buy'] = 'ok' if self._looks_like_order_buy_message(message) else updated['buy']
         updated['compare'] = 'yes' if self._is_comparison_query(message) else 'no'
-        updated['complain'] = bool(updated.get('complain', False))
+        # Normal search flow should clear previous complaint state unless
+        # complaint is detected explicitly in _handle_intent_schema_flow.
+        updated['complain'] = False
         updated['exit'] = 0
 
         # ✅ Ensure category is set - MANDATORY
@@ -3882,65 +3884,9 @@ Rules:
         """
         try:
             if database_message and products:
-                if self.groq_client:
-                    compact_products = []
-                    for idx, product in enumerate(products[:5], 1):
-                        compact_products.append({
-                            'index': idx,
-                            'title': product.get('title', ''),
-                            'price': product.get('price', ''),
-                            'url': product.get('url', '')
-                        })
-
-                    prompt = f"""তুমি BDStall.com এর একজন সহায়ক বাংলা সেলস অ্যাসিস্ট্যান্ট।
-
-Recent chat context:
-{conversation_context or 'N/A'}
-
-User latest message:
-{original_message}
-
-Available products (top matches):
-{json.dumps(compact_products, ensure_ascii=False)}
-
-Instructions:
-- Context পড়ে user intent বুঝে উত্তর দাও।
-- ৩টি প্রোডাক্ট সুন্দরভাবে 1-3 লিস্টে দাও (title, price, link)।
-- একটি natural, friendly Bengali intro লেখো যা user message অনুযায়ী বদলাবে.
-- একই opening line বারবার ব্যবহার কোরো না.
-- শেষে একটি short helpful closing দাও, কিন্তু একদম একই sentence repeat কোরো না.
-- ভদ্র, সংক্ষিপ্ত, বিক্রয় সহায়ক টোন রাখো.
-- অপ্রয়োজনীয় তথ্য দিও না।
-"""
-
-                    response = self.groq_client.chat.completions.create(
-                        model=self.groq_model,
-                        messages=[{"role": "user", "content": prompt}],
-                        temperature=0.5,
-                        max_tokens=700
-                    )
-
-                    ai_response = response.choices[0].message.content.strip()
-                    if ai_response:
-                        return {
-                            'success': True,
-                            'response': ai_response
-                        }
-
-                # Fallback deterministic product formatting if Groq unavailable.
-                seed_text = f"{original_message or ''} {database_message or ''}"
-                seed_value = sum(ord(char) for char in seed_text)
-                intro_options = [
-                    "স্যার, মিল পাওয়া কিছু প্রোডাক্ট দিলাম:",
-                    "আপনার জন্য এই অপশনগুলো পেলাম:",
-                    "দেখে নিতে পারেন এই প্রোডাক্টগুলো:"
-                ]
-                closing_options = [
-                    "চাইলে আরও অপশন খুঁজে দিচ্ছি.",
-                    "আরও দেখাতে পারি, বললেই হবে.",
-                    "আরও কিছু লাগলে জানাবেন."
-                ]
-                response_text = f"{intro_options[seed_value % len(intro_options)]}\n\n"
+                # Keep product listing format fixed so Messenger always shows the
+                # same intro, 3 products, and the exact closing line.
+                response_text = "স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
                 for idx, product in enumerate(products[:3], 1):
                     title = product.get('title', 'N/A')
                     price = product.get('price', 'N/A')
@@ -3952,7 +3898,7 @@ Instructions:
                         response_text += f"লিংক: {url}\n"
                     response_text += "\n"
 
-                response_text += closing_options[(seed_value // 3) % len(closing_options)]
+                response_text += "আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।"
                 return {
                     'success': True,
                     'response': response_text
@@ -3996,19 +3942,7 @@ Rules:
             # Never hand off to human when we already have product results.
             # Return deterministic product formatting as a safe fallback.
             if products:
-                seed_text = f"{original_message or ''} {database_message or ''}"
-                seed_value = sum(ord(char) for char in seed_text)
-                intro_options = [
-                    "স্যার, মিল পাওয়া কিছু প্রোডাক্ট দিলাম:",
-                    "আপনার জন্য এই অপশনগুলো পেলাম:",
-                    "দেখে নিতে পারেন এই প্রোডাক্টগুলো:"
-                ]
-                closing_options = [
-                    "চাইলে আরও অপশন খুঁজে দিচ্ছি.",
-                    "আরও দেখাতে পারি, বললেই হবে.",
-                    "আরও কিছু লাগলে জানাবেন."
-                ]
-                response_text = f"{intro_options[seed_value % len(intro_options)]}\n\n"
+                response_text = "স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
                 for idx, product in enumerate(products[:3], 1):
                     title = product.get('title', 'N/A')
                     price = product.get('price', 'N/A')
@@ -4020,7 +3954,7 @@ Rules:
                         response_text += f"লিংক: {url}\n"
                     response_text += "\n"
 
-                response_text += closing_options[(seed_value // 3) % len(closing_options)]
+                response_text += "আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।"
                 return {
                     'success': True,
                     'response': response_text
