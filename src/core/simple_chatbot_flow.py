@@ -1412,6 +1412,93 @@ Rules:
             logger.info("[FINISH_CHECK] failed: %s", e)
             return False
 
+    def _extract_brand_category_groq(self, message: str) -> Dict[str, Optional[str]]:
+        """
+        Extract brand and category from product search message using Groq.
+        Returns: {
+            'brand': 'Apple' or 'iPhone' or None,
+            'category': 'Smartphone' or 'Laptop' or None,
+            'title': 'brand category' (formatted as "Brand Category")
+        }
+        Both brand and category are MANDATORY for product searches.
+        """
+        if not self.groq_client:
+            return {'brand': None, 'category': None, 'title': None}
+
+        try:
+            prompt = f"""Extract BRAND and CATEGORY from this product message.
+
+Message: {message}
+
+Rules:
+1. Brand: Company/Device name (Apple, Samsung, iPhone, Dell, HP, Lenovo, etc.)
+2. Category: Product type (Smartphone, Laptop, Tablet, Monitor, Mouse, Keyboard, Phone, Tablet, AC, TV, etc.)
+3. Both MUST be extracted - if one is unclear, use the message context to infer
+4. Return them exactly as you identify them
+
+Examples:
+- "iphone ase" → Brand: Apple, Category: Smartphone (or "iPhone SE")
+- "dell laptop" → Brand: Dell, Category: Laptop
+- "samsung phone" → Brand: Samsung, Category: Phone/Smartphone
+- "hp laptop under 50k" → Brand: HP, Category: Laptop
+- "macbook pro" → Brand: Apple, Category: Laptop (or "MacBook")
+- "xiaomi phone 5G" → Brand: Xiaomi, Category: Smartphone/Phone
+
+Respond in EXACT format:
+Brand: [brand]
+Category: [category]
+
+IMPORTANT: Always extract both. If message has device name (iPhone, MacBook), use that as brand if no company name present.
+"""
+
+            response = self.groq_client.chat.completions.create(
+                model=self.groq_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+                max_tokens=100
+            )
+
+            result = response.choices[0].message.content.strip()
+            logger.info(f"[BRAND_CATEGORY_GROQ] Result: {result}")
+
+            brand = None
+            category = None
+
+            # Parse brand
+            brand_match = re.search(r'(?is)brand\s*[:\-]\s*([^\n,;|]+)', result)
+            if brand_match:
+                brand = brand_match.group(1).strip()
+                if brand.lower() in {'none', 'na', 'n/a', 'নেই', 'না', ''}:
+                    brand = None
+
+            # Parse category
+            category_match = re.search(r'(?is)category\s*[:\-]\s*([^\n,;|]+)', result)
+            if category_match:
+                category = category_match.group(1).strip()
+                if category.lower() in {'none', 'na', 'n/a', 'নেই', 'না', ''}:
+                    category = None
+
+            # If we got both, format title as "Brand Category"
+            title = None
+            if brand and category:
+                title = f"{brand} {category}".strip()
+            elif brand:
+                title = brand
+            elif category:
+                title = category
+
+            logger.info(f"[BRAND_CATEGORY_EXTRACTED] brand={brand}, category={category}, title={title}")
+
+            return {
+                'brand': brand,
+                'category': category,
+                'title': title
+            }
+
+        except Exception as e:
+            logger.warning(f"[BRAND_CATEGORY_GROQ] failed: {e}")
+            return {'brand': None, 'category': None, 'title': None}
+
     def _normalize_history_messages(self, payload: Any) -> list[str]:
         """Normalize history API payload into compact role-prefixed lines."""
         candidates = []
@@ -1686,6 +1773,27 @@ Rules:
             if extracted_product not in prev_title_lower:
                 title_raw = extracted_product
 
+        # ✅ NEW: Extract brand and category using Groq for product searches
+        # This ensures both brand and category are mandatory
+        if title_raw or brand_raw or self._looks_like_possible_product_signal(message):
+            logger.info(f"🔍 [PRODUCT_DETECTED] Extracting brand & category for: {message}")
+            groq_result = self._extract_brand_category_groq(message)
+            
+            # Get brand and category from Groq
+            groq_brand = str(groq_result.get('brand') or '').strip().lower()
+            groq_category = str(groq_result.get('category') or '').strip()
+            groq_title = str(groq_result.get('title') or '').strip()
+            
+            # If Groq found both brand and category, use them (they are mandatory)
+            if groq_brand and groq_category:
+                logger.info(f"✅ [GROQ_EXTRACTED] brand='{groq_brand}', category='{groq_category}', title='{groq_title}'")
+                brand_raw = groq_brand
+                title_raw = groq_title  # Title is "Brand Category" format
+            elif groq_brand:
+                brand_raw = groq_brand
+            elif groq_category:
+                title_raw = groq_category
+
         if title_raw:
             normalized_title = self._to_title_case(title_raw)
             previous_title = str(previous.get('title') or '').strip().lower()
@@ -1710,7 +1818,15 @@ Rules:
             # ─────────────────────────────────────────────────────────────────
 
             updated['title'] = normalized_title
-            updated['category'] = normalized_title
+            # ✅ IMPORTANT: Set category from the extracted brand+category title
+            # If title is "Apple Smartphone", category is "Smartphone"
+            # If title is "Brand Product", split and extract last part as category
+            title_parts = normalized_title.split()
+            if len(title_parts) > 1:
+                # "Apple Smartphone" → category = "Smartphone"
+                updated['category'] = ' '.join(title_parts[1:])
+            else:
+                updated['category'] = normalized_title
 
 
         if brand_raw:
@@ -1725,14 +1841,21 @@ Rules:
         updated['buy'] = 'ok' if self._looks_like_order_buy_message(message) else updated['buy']
         updated['compare'] = 'yes' if self._is_comparison_query(message) else 'no'
 
+        # ✅ Ensure category is set - MANDATORY
         if not updated.get('category') and updated.get('title'):
             updated['category'] = updated['title']
+        
+        # ✅ Ensure title is set - MANDATORY for product searches
+        # If we extracted brand and category but no proper title, create one
+        if (not updated.get('title') and updated.get('brand') and updated.get('category')):
+            updated['title'] = f"{updated['brand']} {updated['category']}".strip()
 
         # Save intent_content if there are meaningful updates (title, price, or brand)
         if updated.get('title') or price_from_text or brand_raw:
             self.user_intent_content[user_id] = dict(updated)
 
         return updated
+
 
     def _build_search_keywords_from_intent_content(self, intent_content: Dict[str, Any]) -> str:
         """Build the exact search API term from structured intent content."""
@@ -2476,8 +2599,23 @@ Rules:
         self.user_order_context[user_id] = False
         self.user_order_draft.pop(user_id, None)
 
-        if not intent_content.get('title'):
-            prompt = "কোন প্রোডাক্টটি খুঁজছেন স্যার?"
+        # ✅ MANDATORY CHECK: Both title and category must be present for product search
+        title = str(intent_content.get('title') or '').strip()
+        category = str(intent_content.get('category') or '').strip()
+        
+        if not title or not category:
+            logger.info(f"⚠️ [MANDATORY_CHECK] Missing title or category: title='{title}', category='{category}'")
+            
+            # Build appropriate prompt based on what's missing
+            if not title and not category:
+                prompt = "কোন প্রোডাক্টটি খুঁজছেন স্যার? (ব্র্যান্ড এবং ধরন উল্লেখ করুন, যেমন: iPhone স্মার্টফোন)"
+                intent_type = 'schema_need_title_category'
+            elif not category:
+                prompt = f"আপনি {title} খুঁজছেন? এটি কোন ধরনের প্রোডাক্ট?"
+                intent_type = 'schema_need_category'
+            else:
+                prompt = f"{category} এর কোন ব্র্যান্ড খুঁজছেন স্যার?"
+                intent_type = 'schema_need_title'
 
             self.user_modes[user_id] = ChatMode.AI
             self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
@@ -2486,14 +2624,13 @@ Rules:
                 message=message,
                 response=prompt,
                 mode=ChatMode.AI,
-                intent='schema_need_title',
+                intent=intent_type,
                 products=None,
                 intent_content=intent_content,
                 processing_time=(datetime.now() - start_time).total_seconds(),
                 conversation_status=AI_ACTIVE_STATUS
             )
 
-        title = str(intent_content.get('title') or '').strip()
         price = str(intent_content.get('price') or '').strip()
         brand = str(intent_content.get('brand') or '').strip()
         search_keywords = self._build_search_keywords_from_intent_content(intent_content)
