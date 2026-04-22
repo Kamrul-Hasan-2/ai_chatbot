@@ -68,6 +68,8 @@ USER_NAME_MAP_FILE = os.getenv(
     os.path.join(PROJECT_ROOT, 'data', 'user_names.json')
 )
 URL_PATTERN = re.compile(r'https?://[^\s<>"\']+', re.IGNORECASE)
+MESSENGER_TEXT_LIMIT = 2000
+MESSENGER_SAFE_CHUNK_SIZE = 1700
 
 def _log_api_call(
     api_name: str,
@@ -336,6 +338,105 @@ def _send_facebook_payload(recipient_id: str, payload: dict) -> bool:
         return False
 
 
+def _split_messenger_text(message_text: str, chunk_size: int = MESSENGER_SAFE_CHUNK_SIZE) -> list[str]:
+    """Split long message text into Messenger-safe chunks without cutting words aggressively."""
+    text = str(message_text or '').strip()
+    if not text:
+        return []
+
+    if len(text) <= chunk_size:
+        return [text]
+
+    chunks: list[str] = []
+    paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+
+    # First pass: pack paragraphs into chunks.
+    current = ''
+    for paragraph in paragraphs:
+        candidate = f"{current}\n\n{paragraph}" if current else paragraph
+        if len(candidate) <= chunk_size:
+            current = candidate
+            continue
+
+        if current:
+            chunks.append(current)
+            current = ''
+
+        # Oversized paragraph: split by lines/words.
+        lines = [ln.strip() for ln in paragraph.splitlines() if ln.strip()]
+        if not lines:
+            lines = [paragraph]
+
+        line_buffer = ''
+        for line in lines:
+            next_line = f"{line_buffer}\n{line}" if line_buffer else line
+            if len(next_line) <= chunk_size:
+                line_buffer = next_line
+                continue
+
+            if line_buffer:
+                chunks.append(line_buffer)
+                line_buffer = ''
+
+            # Still too long: hard split by words/chars.
+            if len(line) <= chunk_size:
+                line_buffer = line
+                continue
+
+            words = line.split()
+            word_buffer = ''
+            for word in words:
+                candidate_word = f"{word_buffer} {word}" if word_buffer else word
+                if len(candidate_word) <= chunk_size:
+                    word_buffer = candidate_word
+                    continue
+
+                if word_buffer:
+                    chunks.append(word_buffer)
+                if len(word) <= chunk_size:
+                    word_buffer = word
+                else:
+                    # Ultimate fallback for a single huge token/URL.
+                    for i in range(0, len(word), chunk_size):
+                        chunks.append(word[i:i + chunk_size])
+                    word_buffer = ''
+
+            if word_buffer:
+                line_buffer = word_buffer
+
+        if line_buffer:
+            chunks.append(line_buffer)
+
+    if current:
+        chunks.append(current)
+
+    return [chunk[:MESSENGER_TEXT_LIMIT] for chunk in chunks if chunk.strip()]
+
+
+def _send_facebook_text_message(recipient_id: str, message_text: str) -> bool:
+    """Send a text reply in one or more Messenger-safe payloads."""
+    chunks = _split_messenger_text(message_text)
+    if not chunks:
+        chunks = ["আপনার জন্য তথ্য প্রস্তুত আছে স্যার।"]
+
+    for index, chunk in enumerate(chunks, 1):
+        payload = {
+            "recipient": {"id": recipient_id},
+            "messaging_type": "RESPONSE",
+            "message": {"text": chunk}
+        }
+        if not _send_facebook_payload(recipient_id, payload):
+            logger.warning(
+                "Messenger text chunk send failed for %s (chunk %s/%s)",
+                recipient_id,
+                index,
+                len(chunks)
+            )
+            return False
+
+    return True
+
+
 def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Optional[list[dict[str, Any]]] = None) -> bool:
     """Send a Messenger reply with optional web_url buttons for product links."""
     if not PAGE_ACCESS_TOKEN:
@@ -354,14 +455,7 @@ def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Op
 
     if not buttons:
         plain_text = str(message_text or '').strip()
-        if not plain_text:
-            plain_text = "আপনার জন্য তথ্য প্রস্তুত আছে স্যার।"
-        text_payload = {
-            "recipient": {"id": recipient_id},
-            "messaging_type": "RESPONSE",
-            "message": {"text": plain_text}
-        }
-        return _send_facebook_payload(recipient_id, text_payload)
+        return _send_facebook_text_message(recipient_id, plain_text)
 
     plain_text = str(message_text or '').strip()
     intro_text = ''
@@ -374,12 +468,7 @@ def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Op
                 closing_text = 'আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।'
 
     if intro_text:
-        intro_payload = {
-            "recipient": {"id": recipient_id},
-            "messaging_type": "RESPONSE",
-            "message": {"text": intro_text}
-        }
-        if not _send_facebook_payload(recipient_id, intro_payload):
+        if not _send_facebook_text_message(recipient_id, intro_text):
             return False
 
     fallback_title = _strip_link_lines(message_text)
@@ -422,12 +511,7 @@ def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Op
             return False
 
     if closing_text:
-        closing_payload = {
-            "recipient": {"id": recipient_id},
-            "messaging_type": "RESPONSE",
-            "message": {"text": closing_text}
-        }
-        if not _send_facebook_payload(recipient_id, closing_payload):
+        if not _send_facebook_text_message(recipient_id, closing_text):
             return False
 
     return True
@@ -1112,12 +1196,20 @@ def messenger_webhook():
 
                 # In HUMAN handoff mode, chatbot intentionally returns empty response.
                 if not response_text:
+                    fallback_text = ''
+                    if result.get('mode') == 'human':
+                        fallback_text = "স্যার, আপনার মেসেজ আমাদের প্রতিনিধির কাছে পাঠানো হয়েছে। তিনি দ্রুত উত্তর দিবেন।"
+                    elif result.get('mode') == 'ai':
+                        fallback_text = "দুঃখিত স্যার, উত্তর তৈরি করতে সমস্যা হয়েছে। আবার প্রশ্নটি লিখে দিন।"
+
                     logger.info(
-                        "[WEBHOOK] No bot reply for sender_id=%s (mode=%s, status=%s)",
+                        "[WEBHOOK] Empty reply for sender_id=%s (mode=%s, status=%s)",
                         sender_id,
                         result.get('mode'),
                         result.get('conversation_status')
                     )
+                    if fallback_text and send_facebook_message(sender_id, fallback_text):
+                        replied_count += 1
                     continue
 
                 logger.info("[WEBHOOK] Sending reply to sender_id=%s", sender_id)
