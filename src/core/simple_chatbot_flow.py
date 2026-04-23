@@ -2099,6 +2099,7 @@ Latest user message:
         return buttons
 
     # ─────────────────────────────────────────────────────────────────
+    # Response builder────────────
     # Response builder
     # ─────────────────────────────────────────────────────────────────
     def _create_response(self, user_id: str, message: str, response: str, mode: ChatMode,
@@ -2158,3 +2159,224 @@ Latest user message:
 
     def get_user_mode(self, user_id: str) -> str:
         return self.user_modes.get(user_id, ChatMode.AI).value
+    
+    def _handle_main_flow(self, user_id: str, message: str, start_time: datetime) -> Dict[str, Any]:
+        # Handle simple non-Groq intents first
+        if self._is_later_followup_message(message) or self._is_deferred_reply_message(message):
+            self.user_modes[user_id] = ChatMode.AI
+            self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+            prev = self._normalize_intent_content_payload(self.user_intent_content.get(user_id) or {})
+            prev['exit'] = 1
+            self.user_intent_content[user_id] = prev
+            return self._create_response(
+                user_id=user_id, message=message, response=self._build_later_followup_response(),
+                mode=ChatMode.AI, intent='deferred_follow_up_ack', products=None, intent_content=prev,
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
+        # Comparison queries (short-circuit, no Groq needed)
+        if self._is_comparison_query(message) or self._is_comparison_followup_with_context(user_id, message):
+            self.user_modes[user_id] = ChatMode.AI
+            self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+            return self._create_response(
+                user_id=user_id, message=message, response=self._build_comparison_redirect_response(),
+                mode=ChatMode.AI, intent='product_comparison', products=None,
+                link_buttons=self._build_comparison_link_buttons(message, user_id),
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
+        if self._is_fixed_price_query(message):
+            self.user_modes[user_id] = ChatMode.AI
+            return self._create_response(
+                user_id=user_id, message=message,
+                response="জি স্যার, এগুলোর দাম ফিক্সড। বিস্তারিত জানতে ওয়েবসাইট ভিজিট করুন অথবা আমাদের কল করুন।",
+                mode=ChatMode.AI, intent='fixed_price_info', products=None,
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
+        if self._looks_like_order_buy_message(message):
+            self.user_modes[user_id] = ChatMode.AI
+            return self._create_response(
+                user_id=user_id, message=message, response=self._build_order_guide_response(),
+                mode=ChatMode.AI, intent='ordering_guide', products=None,
+                link_buttons=[{'text': 'Shopping Guide', 'url': 'https://www.bdstall.com/blog/safe-shopping-guide/'}],
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
+        # ───── Groq structured extraction (single call) ─────
+        conversation_context = self._get_history_cached(user_id)
+        previous_intent = self._load_previous_intent(user_id)
+
+        groq_result = self._step1_groq_extract(message, conversation_context, previous_intent)
+        intent = groq_result['intent']
+        entities = groq_result['entities']
+
+        logger.info(f"✅ Intent: {intent}, Entities: {entities}, Follow-up: {groq_result['is_followup']}")
+
+        # ───── Context merge ─────
+        merged_context = self._merge_intent_context(user_id, groq_result, previous_intent)
+        self.user_intent_content[user_id] = self._intent_to_normalized(merged_context, message)
+
+        # Clear cache if intent changed
+        prev_intent_label = self.user_last_intent.get(user_id)
+        if prev_intent_label and prev_intent_label != intent:
+            self._clear_product_search_cache(user_id, clear_pending=True)
+
+        # ═══════════════════════════════════════════════════════════════
+        # CATEGORY GUARD: if this message looks product-related but no
+        # category is known (neither from current message nor context),
+        # ask the user which product they want — before any other routing.
+        # ═══════════════════════════════════════════════════════════════
+        merged_category = merged_context.get('category', '')
+        looks_product_related = (
+            intent == 'product_search'
+            or intent == 'price_query'
+            or self._looks_like_possible_product_signal(message)
+            or bool(entities.get('brand'))
+            or bool(entities.get('title'))
+            or bool(merged_context.get('brand'))
+            or bool(merged_context.get('title'))
+        )
+
+        if looks_product_related and not merged_category:
+            self.user_modes[user_id] = ChatMode.AI
+            self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+            logger.info(f"⚠️ [CATEGORY_MISSING] Asking user for product type. message='{message}'")
+            return self._create_response(
+                user_id=user_id, message=message,
+                response="কোন প্রোডাক্টটি চাচ্ছেন স্যার? (যেমন: laptop, mobile, monitor, AC)",
+                mode=ChatMode.AI, intent='need_category', products=None,
+                intent_content=self._intent_to_normalized(merged_context, message),
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
+        # ───── Route by intent ─────
+        if intent == 'complaint':
+            prev = self._normalize_intent_content_payload(self.user_intent_content.get(user_id) or {})
+            prev['complain'] = True
+            self.user_intent_content[user_id] = prev
+            return self._handoff_to_human(
+                user_id=user_id, message=message, start_time=start_time,
+                intent='complain_handoff',
+                response_text="স্যার, এই বিষয়ে আমাদের একজন প্রতিনিধি এখনই আপনার সাথে যোগাযোগ করবেন।"
+            )
+
+        if intent == 'greeting':
+            self.user_modes[user_id] = ChatMode.AI
+            return self._create_response(
+                user_id=user_id, message=message,
+                response="আসসালামু-আলাইকুম স্যার, কোন বিষয়ে জানতে চাচ্ছেন?",
+                mode=ChatMode.AI, intent='greeting', products=None,
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
+        if intent == 'goodbye':
+            self.user_modes[user_id] = ChatMode.AI
+            return self._create_response(
+                user_id=user_id, message=message, response="ধন্যবাদ স্যার, ভালো থাকবেন।",
+                mode=ChatMode.AI, intent='goodbye', products=None,
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
+        if intent == 'thanks':
+            self.user_modes[user_id] = ChatMode.AI
+            return self._create_response(
+                user_id=user_id, message=message, response="Most welcome",
+                mode=ChatMode.AI, intent='thanks', products=None,
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
+        if intent == 'ordering':
+            self.user_order_context[user_id] = True
+            self.user_order_draft[user_id] = {}
+            self.user_modes[user_id] = ChatMode.AI
+            order_template = self._get_order_info_template(
+                user_id=user_id, message=message,
+                intent_hint=self._resolve_order_template_intent(message)
+            )
+            return self._create_response(
+                user_id=user_id, message=message, response=order_template,
+                mode=ChatMode.AI, intent=intent, products=None,
+                processing_time=(datetime.now() - start_time).total_seconds()
+            )
+
+        if intent == 'delivery':
+            delivery_response = self._fetch_delivery_intent_response()
+            if delivery_response:
+                self.user_modes[user_id] = ChatMode.AI
+                return self._create_response(
+                    user_id=user_id, message=message, response=delivery_response,
+                    mode=ChatMode.AI, intent=intent, products=None,
+                    processing_time=(datetime.now() - start_time).total_seconds()
+                )
+
+        # FAQ lookup for generic questions
+        safe_intents = {'faq', 'comparison', 'ordering', 'delivery'}
+        if intent in safe_intents and not self._looks_like_possible_product_signal(message):
+            db_response = self._search_database_faq(message)
+            if db_response:
+                self.user_modes[user_id] = ChatMode.AI
+                return self._create_response(
+                    user_id=user_id, message=message, response=db_response,
+                    mode=ChatMode.AI, intent=intent, products=None,
+                    processing_time=(datetime.now() - start_time).total_seconds()
+                )
+
+        # Price query (needs context)
+        if intent == 'price_query':
+            self.user_modes[user_id] = ChatMode.AI
+            context_reply = self._reply_price_from_context(user_id)
+            if context_reply:
+                return self._create_response(
+                    user_id=user_id, message=message, response=context_reply,
+                    mode=ChatMode.AI, intent='price_from_context', products=None,
+                    processing_time=(datetime.now() - start_time).total_seconds(),
+                    conversation_status=AI_ACTIVE_STATUS
+                )
+            return self._create_response(
+                user_id=user_id, message=message,
+                response="কোন প্রোডাক্টটি চাচ্ছেন স্যার? (যেমন: laptop, mobile, monitor, AC)",
+                mode=ChatMode.AI, intent='need_category', products=None,
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
+        # Product search (category is guaranteed to be present here)
+        if intent == 'product_search':
+            return self._handle_product_search(user_id, message, merged_context, start_time)
+
+        # Unknown
+        if intent == 'unknown':
+            if self._looks_like_possible_product_signal(message):
+                self.user_modes[user_id] = ChatMode.AI
+                self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+                return self._create_response(
+                    user_id=user_id, message=message,
+                    response="কোন প্রোডাক্টটি চাচ্ছেন স্যার? (যেমন: laptop, mobile, monitor, AC)",
+                    mode=ChatMode.AI, intent='need_category', products=None,
+                    processing_time=(datetime.now() - start_time).total_seconds(),
+                    conversation_status=AI_ACTIVE_STATUS
+                )
+            return self._handoff_to_human(
+                user_id=user_id, message=message, start_time=start_time, intent='unknown'
+            )
+
+        # Fallback: use Groq for general response
+        ai_response = self._step4_ai_format(message, None, None, conversation_context)
+        if not ai_response['success']:
+            return self._handoff_to_human(user_id=user_id, message=message, start_time=start_time, intent=intent)
+        self.user_modes[user_id] = ChatMode.AI
+        return self._create_response(
+            user_id=user_id, message=message, response=ai_response['response'],
+            mode=ChatMode.AI, intent=intent, products=None,
+            processing_time=(datetime.now() - start_time).total_seconds()
+        )
+
