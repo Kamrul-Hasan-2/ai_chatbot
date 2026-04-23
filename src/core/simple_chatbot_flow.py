@@ -954,6 +954,21 @@ class SimpleChatbot:
                         search_keywords
                     )
 
+            if intent == 'comparison':
+                self.user_modes[user_id] = ChatMode.AI
+                self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+                return self._create_response(
+                    user_id=user_id,
+                    message=message,
+                    response=self._build_comparison_redirect_response(),
+                    mode=ChatMode.AI,
+                    intent='product_comparison',
+                    products=None,
+                    link_buttons=self._build_comparison_link_buttons(message, user_id),
+                    processing_time=(datetime.now() - start_time).total_seconds(),
+                    conversation_status=AI_ACTIVE_STATUS
+                )
+
             # Order/buy intent should call template API with dynamic intent + listing id.
             if intent == 'ordering' or self._looks_like_order_buy_message(message):
                 self.user_order_context[user_id] = True
@@ -1222,7 +1237,7 @@ class SimpleChatbot:
         
         try:
             prompt = f"""Analyze this message and extract:
-1. Intent (product_search, price_search, laptop_search, ordering, delivery, greeting, question, support, warranty, availability, general, unknown)
+1. Intent (product_search, price_search, laptop_search, comparison, ordering, delivery, greeting, question, support, warranty, availability, general, unknown)
 2. Search keywords (for product search)
 
 Recent conversation context (oldest to newest):
@@ -1231,6 +1246,7 @@ Recent conversation context (oldest to newest):
 Intents:
 - product_search/laptop_search: Looking for specific products
 - price_search: Asking about prices
+- comparison: Comparing options / asking which is better (konta valo, konti valo, কোনটা ভালো)
 - ordering: Questions about how to order (কিভাবে অর্ডার, order korbo, kibabe, kivabe)
 - delivery: Questions about delivery time, charges, location
 - support: Contact numbers, customer service
@@ -1257,6 +1273,7 @@ Examples:
 - "kivabe order korbo" → Intent: ordering, Keywords: none
 - "delivery koto din lagbe" → Intent: delivery, Keywords: none
 - "mouse er dam koto?" → Intent: price_search, Keywords: mouse price
+- "konti valo vai" → Intent: comparison, Keywords: none
 - "hello" → Intent: greeting, Keywords: none
 - "customer support number" → Intent: support, Keywords: none
 - "ami amar product ferot dite chai" → Intent: unknown, Keywords: none
@@ -1296,7 +1313,7 @@ Examples:
 
             valid_intents = {
                 'product_search', 'price_search', 'laptop_search', 'ordering', 'delivery',
-                'greeting', 'question', 'support', 'warranty', 'availability', 'general',
+                'comparison', 'greeting', 'question', 'support', 'warranty', 'availability', 'general',
                 'unknown', 'irrelevant', 'faq', 'goodbye', 'thank_you', 'thanks'
             }
             if intent not in valid_intents:
@@ -2051,6 +2068,19 @@ Rules:
         """Deterministic fallback when Groq is unavailable or returns unparsable output."""
         text = str(message or '').strip().lower()
         logger.info("🔄 [LOCAL_FALLBACK] Fallback intent detection for message: %s", message[:50])
+
+        normalized_compare_text = self._normalize_comparison_text(message)
+        compare_fallback_terms = {
+            'which one is best', 'which one better',
+            'konta valo', 'konta bhalo', 'konti valo', 'konti bhalo',
+            'কোনটা ভালো', 'কোনটা ভাল', 'কোনটি ভালো', 'কোনটি ভাল',
+            'তুলনা', 'compare', 'vs'
+        }
+        if (
+            self._is_comparison_query(message)
+            or any(term in normalized_compare_text for term in compare_fallback_terms)
+        ):
+            return 'comparison', 'none'
 
         if self._looks_like_product_query(message):
             logger.info("🔄 [LOCAL_FALLBACK_PRODUCT] Detected as product query")
@@ -3099,8 +3129,11 @@ Rules:
     def _extract_schema_compare(self, message: str) -> Optional[str]:
         """Extract compare target only when comparison trigger appears."""
         text = str(message or '').strip()
-        lowered = text.lower()
-        compare_triggers = ['vs', 'compare', 'difference', 'kon ta valo', 'কোনটা ভালো', 'better', 'তুলনা']
+        lowered = self._normalize_comparison_text(text)
+        compare_triggers = [
+            'vs', 'compare', 'difference', 'kon ta valo', 'konta valo', 'konti valo',
+            'কোনটা ভালো', 'কোনটি ভালো', 'better', 'which one', 'তুলনা'
+        ]
         if not any(trigger in lowered for trigger in compare_triggers):
             return None
 
@@ -3134,7 +3167,7 @@ Rules:
 
     def _is_comparison_query(self, message: str) -> bool:
         """Detect compare/best-product questions like 'compare these' or 'which one is best'."""
-        text = str(message or '').strip().lower()
+        text = self._normalize_comparison_text(message)
         if not text:
             return False
 
@@ -3172,13 +3205,14 @@ Rules:
 
     def _is_comparison_followup_with_context(self, user_id: str, message: str) -> bool:
         """Detect short comparison follow-ups when category/product context already exists."""
-        text = str(message or '').strip().lower()
+        text = self._normalize_comparison_text(message)
         if not text:
             return False
 
         compare_markers = [
             'which one', 'which is best', 'best', 'better', 'compare', 'comparison',
             'konta valo', 'konta bhalo', 'konta bhalo', 'konta ভাল',
+            'konti valo', 'konti bhalo', 'konti ভাল',
             'কোনটা ভালো', 'কোনটা ভাল', 'তুলনা', 'ভালো', 'ভাল', 'বেস্ট'
         ]
         if not any(marker in text for marker in compare_markers):
@@ -3195,6 +3229,19 @@ Rules:
             or str(intent_payload.get('title') or '').strip()
         )
         return has_context
+
+    def _normalize_comparison_text(self, message: str) -> str:
+        """Normalize compare-like message text by removing common courtesy fillers."""
+        text = str(message or '').strip().lower()
+        if not text:
+            return ''
+
+        text = text.translate(str.maketrans('০১২৩৪৫৬৭৮৯', '0123456789'))
+        # Courtesy fillers often appear in Bangla transliteration and should not affect intent.
+        text = re.sub(r'\b(vai|bhai|bro|vaiya|bhaiya|pls|plz)\b', ' ', text)
+        text = re.sub(r'[!?.,;:]+', ' ', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text
 
     def _build_comparison_redirect_response(self) -> str:
         """Return standard comparison guidance with website URL for a single link button."""
