@@ -233,11 +233,6 @@ class SimpleChatbot:
                 return
             with open(self.state_file, 'r', encoding='utf-8') as f:
                 state = json.load(f)
-            self.user_modes = {
-                uid: ChatMode(m) for uid, m in (state.get('user_modes') or {}).items()
-                if m in {ChatMode.AI.value, ChatMode.HUMAN.value}
-            }
-           
             self.user_product_context = dict(state.get('user_product_context') or {})
             self.user_selected_product = dict(state.get('user_selected_product') or {})
             self.user_order_context = {
@@ -247,7 +242,6 @@ class SimpleChatbot:
             self.user_pending_product_query = dict(state.get('user_pending_product_query') or {})
             self.user_last_intent = dict(state.get('user_last_intent') or {})
             self.user_intent_content = dict(state.get('user_intent_content') or {})
-            
         except Exception as e:
             logger.error("❌ State restore failed: %s", e)
 
@@ -256,8 +250,6 @@ class SimpleChatbot:
             try:
                 os.makedirs(os.path.dirname(self.state_file), exist_ok=True)
                 state = {
-                    'user_modes': {uid: m.value for uid, m in self.user_modes.items()},
-                    
                     'user_product_context': self.user_product_context,
                     'user_selected_product': self.user_selected_product,
                     'user_order_context': self.user_order_context,
@@ -278,7 +270,6 @@ class SimpleChatbot:
                     raise
             except Exception as e:
                 logger.error("❌ State save failed: %s", e)
-
     # ─────────────────────────────────────────────────────────────
     # FAQ DB
     # ─────────────────────────────────────────────────────────────
@@ -1740,3 +1731,29 @@ class SimpleChatbot:
             )
             logger.warning("chatbot_save_message failed: %s", e)
             return False
+    def get_user_mode(self, user_id: str) -> str:
+        """Mode is always read live from the responder API — never from memory."""
+        responder_type = self._check_responder_type(user_id)
+        return 'human' if responder_type == 'agent' else 'ai'
+
+    def switch_to_human(self, user_id: str) -> None:
+        """Trigger assign_agent API to set human mode in the DB."""
+        try:
+            requests.post(
+                self.assign_agent_api_url,
+                json={'key': self.assign_agent_api_key, 'user_id': user_id, 'intent': 'manual_switch'},
+                timeout=5
+            )
+        except Exception as e:
+            logger.warning("switch_to_human failed: %s", e)
+
+    def switch_to_ai(self, user_id: str) -> None:
+        """Trigger assign_bot API to restore AI mode in the DB."""
+        try:
+            requests.post(
+                self.assign_bot_api_url,
+                json={'key': self.api_key, 'user_id': user_id},
+                timeout=5
+            )
+        except Exception as e:
+            logger.warning("switch_to_ai failed: %s", e)
