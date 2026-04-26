@@ -1054,18 +1054,28 @@ Return ONLY the JSON object."""
                 'updated_at': datetime.now().isoformat(),
             }
 
-        # Only carry previous category forward when Groq explicitly says it's a follow-up.
-        # If Groq found no category but also did NOT mark it as a follow-up,
-        # the category is genuinely missing — do NOT bleed previous category in.
+        # Treat as follow-up if message has no category word but has price/brand/title only
+        # This covers "under 20k", "50k er vitor", "hp er ta" etc.
+        has_only_refinement = (
+            not new_category
+            and (
+                new_entities.get('price_max') is not None
+                or new_entities.get('price_min') is not None
+                or new_entities.get('brand')
+                or new_entities.get('title')
+            )
+        )
+        if has_only_refinement:
+            is_followup = True
+
+        # Determine effective category
         if new_category:
             effective_category = new_category
         elif is_followup:
             effective_category = prev_category
         else:
-            # Groq found no category and said it's not a follow-up → ask user
             effective_category = ''
 
-        # If category changed to empty from a non-empty previous, clear product cache
         if prev_category and not effective_category:
             self._clear_product_search_cache(user_id, clear_pending=False)
 
@@ -1081,7 +1091,6 @@ Return ONLY the JSON object."""
                         else previous.get('price_min')),
             'updated_at': datetime.now().isoformat(),
         }
-
 
     def _intent_to_normalized(self, merged: Dict, message: str) -> Dict[str, Any]:
         price_max = merged.get('price_max')
