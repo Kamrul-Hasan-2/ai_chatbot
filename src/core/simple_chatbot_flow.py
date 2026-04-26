@@ -78,7 +78,8 @@ HUMAN_SUPPORT_REQUIRED_STATUS = "Human Support Required"
 
 VALID_INTENTS = {
     'product_search', 'price_query', 'comparison', 'ordering', 'delivery',
-    'greeting', 'goodbye', 'thanks', 'complaint', 'faq', 'human_request', 'unknown'
+    'greeting', 'goodbye', 'thanks', 'complaint', 'faq', 'human_request',
+    'buy', 'exit', 'unknown'
 }
 
 # Intents that REQUIRE a category (Rule 4)
@@ -122,7 +123,26 @@ class SimpleChatbot:
             r'মানুষ|প্রতিনিধি|কাস্টমার|এজেন্ট)\b',
             re.IGNORECASE,
         ),
+        # Point 4: buy intent
+        'buy': re.compile(
+            r'\b(how\s*to\s*buy|how\s*to\s*order|how\s*to\s*purchase|'
+            r'kivabe\s*(buy|order|kini|purchase)|'
+            r'কিভাবে\s*(কিনবো|কিনব|অর্ডার|বাই)|'
+            r'order\s*process|buy\s*process|buying\s*guide)\b',
+            re.IGNORECASE,
+        ),
+        # Point 5: exit / purchase-later intent
+        'exit': re.compile(
+            r'\b(pore\s*kinbo|pore\s*nebo|later|'
+            r'good\s*bye|alvida|boro|bor|'
+            r'পরে\s*কিনবো|পরে\s*নেবো|পরে\s*দেখবো|'
+            r'ভালো\s*থাকবেন|আবার\s*আসবো|'
+            r'notun\s*kichu\s*lagbe\s*na|'
+            r'এখন\s*লাগবে\s*না|পরে\s*হবে)\b',
+            re.IGNORECASE,
+        ),
     }
+
 
     COMPLAINT_PATTERNS = re.compile(
         r'\b(refund|complain|complaint|scam|fraud|cheat|fake|defect|broken|'
@@ -439,13 +459,19 @@ class SimpleChatbot:
         msg = message.strip()
         if not msg:
             return None
-        for name in ('greeting', 'goodbye', 'thanks', 'ok_ack'):
-            if self.FAST_PATH_PATTERNS[name].match(msg):
-                return name
+        for name in ('greeting', 'goodbye', 'thanks', 'ok_ack', 'buy', 'exit'):
+            pat = self.FAST_PATH_PATTERNS[name]
+            # buy/exit use search; greeting/goodbye/thanks/ok_ack use match
+            if name in ('buy', 'exit', 'human_request'):
+                if pat.search(msg):
+                    return name
+            else:
+                if pat.match(msg):
+                    return name
         return None
 
     def _handle_fast_path(self, user_id: str, message: str, intent: str,
-                          start_time: datetime) -> Dict[str, Any]:
+                        start_time: datetime) -> Dict[str, Any]:
         self.user_modes[user_id] = ChatMode.AI
         self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
         self._reset_clarification_counter(user_id)
@@ -478,6 +504,13 @@ class SimpleChatbot:
                 processing_time=(datetime.now() - start_time).total_seconds(),
                 conversation_status=AI_ACTIVE_STATUS
             )
+        # Point 4: buy intent — fixed message, placeholder for future logic
+        if intent == 'buy':
+            return self.handle_buy(user_id, message, start_time)
+        # Point 5: exit / purchase-later intent
+        if intent == 'exit':
+            return self.handle_exit(user_id, message, start_time)
+        # ok_ack / catch-all
         return self._create_response(
             user_id=user_id, message=message,
             response="ধন্যবাদ স্যার, আর কিভাবে আমি আপনাকে সাহায্য করতে পারি?",
@@ -490,7 +523,7 @@ class SimpleChatbot:
     # MAIN flow — routes to separated intent handlers (Rule 8)
     # ═════════════════════════════════════════════════════════════
     def _handle_main_flow(self, user_id: str, message: str,
-                          start_time: datetime) -> Dict[str, Any]:
+                        start_time: datetime) -> Dict[str, Any]:
         # 1. Extract via Groq
         conversation_context = self._get_history_cached(user_id)
         previous_intent = self._load_previous_intent(user_id)
@@ -519,17 +552,18 @@ class SimpleChatbot:
         # Clear search cache on intent change
         prev_intent = self.user_last_intent.get(user_id)
         if prev_intent and prev_intent != intent:
-            # Don't clear caches if just switching between fact-finding intents
             if intent in PRODUCT_RELATED_INTENTS or prev_intent in PRODUCT_RELATED_INTENTS:
-                pass  # Don't blow away product context unnecessarily
+                pass
             else:
                 self._clear_product_search_cache(user_id, clear_pending=True)
 
         # 5. Route to dedicated handler (Rule 8)
         if intent == 'comparison':
             return self.handle_comparison(user_id, message, merged, start_time)
-        if intent == 'ordering':
-            return self.handle_ordering(user_id, message, merged, start_time)
+        if intent in ('ordering', 'buy'):
+            return self.handle_buy(user_id, message, start_time)
+        if intent == 'exit':
+            return self.handle_exit(user_id, message, start_time)
         if intent in ('greeting', 'goodbye', 'thanks'):
             self._reset_clarification_counter(user_id)
             return self._handle_fast_path(user_id, message, intent, start_time)
@@ -550,7 +584,7 @@ class SimpleChatbot:
     # ═════════════════════════════════════════════════════════════
 
     def handle_product_search(self, user_id: str, message: str, merged: Dict,
-                              start_time: datetime) -> Dict[str, Any]:
+                            start_time: datetime) -> Dict[str, Any]:
         """
         Purpose: Search products using validated category + brand + title + price.
         Trigger: intent=product_search
@@ -597,14 +631,17 @@ class SimpleChatbot:
         products = result['products']
         self.user_product_context[user_id] = products[:5]
 
+        listing_text, listing_buttons = self._format_product_listing(products[:3])
         return self._create_response(
             user_id=user_id, message=message,
-            response=self._format_product_listing(products[:3]),
+            response=listing_text,
             mode=ChatMode.AI, intent='product_search', products=products,
             search_keywords=keywords,
+            link_buttons=listing_buttons,
             intent_content=self._intent_to_normalized(merged, message),
             processing_time=(datetime.now() - start_time).total_seconds()
         )
+
 
     def handle_price_query(self, user_id: str, message: str, merged: Dict,
                            start_time: datetime) -> Dict[str, Any]:
@@ -681,6 +718,54 @@ class SimpleChatbot:
             processing_time=(datetime.now() - start_time).total_seconds(),
             conversation_status=AI_ACTIVE_STATUS
         )
+    def handle_buy(self, user_id: str, message: str,
+                start_time: datetime) -> Dict[str, Any]:
+        """
+        Purpose: Answer "how to buy / kivabe order korbo" with a fixed guide message.
+        Trigger: intent=buy (fast-path regex) or intent=ordering from Groq.
+        Required fields: none — this is a process question, not product-specific.
+        Fallback: none needed; message is always returned.
+        Note: fixed message only for now — update this function when buy flow is ready.
+        """
+        self._reset_clarification_counter(user_id)
+        response = "স্যার এই লিংকে গিয়ে আপনি দেখতে পারেন কিভাবে অর্ডার অথবা বাই করা যায়"
+        return self._create_response(
+            user_id=user_id, message=message,
+            response=response,
+            mode=ChatMode.AI, intent='buy', products=None,
+            link_buttons=[{
+                'text': 'Shopping Guide',
+                'url': 'https://www.bdstall.com/blog/safe-shopping-guide/'
+            }],
+            intent_content=self._normalize_intent_content_payload(
+                self.user_intent_content.get(user_id) or {}
+            ),
+            processing_time=(datetime.now() - start_time).total_seconds(),
+            conversation_status=AI_ACTIVE_STATUS
+        )
+    def handle_exit(self, user_id: str, message: str,
+                    start_time: datetime) -> Dict[str, Any]:
+        """
+        Purpose: Handle "pore kinbo / purchase later / good bye" gracefully.
+        Trigger: intent=exit (fast-path regex).
+        Required fields: none.
+        Side-effect: sets intent_content['exit'] = 1, saves via chatbot_save_message.
+        """
+        self._reset_clarification_counter(user_id)
+        prev = self._normalize_intent_content_payload(
+            self.user_intent_content.get(user_id) or {}
+        )
+        prev['exit'] = 1
+        self.user_intent_content[user_id] = prev
+        return self._create_response(
+            user_id=user_id, message=message,
+            response="সাথে থাকার জন্য ধন্যবাদ।",
+            mode=ChatMode.AI, intent='exit', products=None,
+            intent_content=prev,
+            processing_time=(datetime.now() - start_time).total_seconds(),
+            conversation_status=AI_ACTIVE_STATUS
+        )
+
 
     def handle_delivery(self, user_id: str, message: str, merged: Dict,
                         start_time: datetime) -> Dict[str, Any]:
@@ -1368,18 +1453,19 @@ Return ONLY the JSON object."""
         text += "\nআপনি চাইলে আমি অর্ডার করার ধাপগুলোও বলে দিতে পারি।"
         return text
 
-    def _format_product_listing(self, products: list) -> str:
+    def _format_product_listing(self, products: list) -> Tuple[str, List[Dict]]:
+        """Returns (text, link_buttons) — each product gets its own View button."""
         text = "স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
+        link_buttons = []
         for i, p in enumerate(products[:3], 1):
             title = p.get('title', 'N/A')
             price = p.get('price', 'N/A')
             url = p.get('url', '')
-            text += f"{i}. {title}\nমূল্য: {price}\n"
+            text += f"{i}. {title}\nমূল্য: {price}\n\n"
             if url:
-                text += f"লিংক: {url}\n"
-            text += "\n"
+                link_buttons.append({'text': f"{i}. View", 'url': url})
         text += "আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।"
-        return text
+        return text, link_buttons
 
     def _reply_price_from_context(self, user_id: str) -> Optional[str]:
         selected = self.user_selected_product.get(user_id) or {}
