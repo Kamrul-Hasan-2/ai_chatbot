@@ -832,14 +832,14 @@ class SimpleChatbot:
     # Ask for category (Rule 4 + Rule 11 attempt counter)
     # ─────────────────────────────────────────────────────────────
     def _ask_for_category(self, user_id: str, message: str, merged: Dict,
-                        start_time: datetime) -> Dict[str, Any]:
-        return self._create_response(
-            user_id=user_id, message=message, response=CATEGORY_PROMPT,
-            mode=ChatMode.AI, intent='need_category', products=None,
-            intent_content=self._intent_to_normalized(merged, message),
-            processing_time=(datetime.now() - start_time).total_seconds(),
-            conversation_status=AI_ACTIVE_STATUS
-        )
+                      start_time: datetime) -> Dict[str, Any]:
+    return self._create_response(
+        user_id=user_id, message=message, response=CATEGORY_PROMPT,
+        mode=ChatMode.AI, intent='need_category', products=None,
+        intent_content=self._intent_to_normalized(merged, message),
+        processing_time=(datetime.now() - start_time).total_seconds(),
+        conversation_status=AI_ACTIVE_STATUS
+    )
 
     # ─────────────────────────────────────────────────────────────
     # Groq extraction
