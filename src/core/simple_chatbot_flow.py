@@ -524,19 +524,18 @@ class SimpleChatbot:
     # ═════════════════════════════════════════════════════════════
     def _handle_main_flow(self, user_id: str, message: str,
                         start_time: datetime) -> Dict[str, Any]:
-        # 1. Extract via Groq
+        # 1. Extract via Groq — single source of truth for intent + entities
         conversation_context = self._get_history_cached(user_id)
         previous_intent = self._load_previous_intent(user_id)
         groq_result = self._step1_groq_extract(message, conversation_context, previous_intent)
         intent = groq_result['intent']
         entities = groq_result['entities']
 
-        # 2. Validate category against cat_list (Rule 5)
+        # 2. Validate category against cat_list ONLY if Groq explicitly returned one (Rule 5)
+        #    Never inject a category by scanning the raw message — that bypasses Groq.
         resolved_cat = None
         if entities.get('category'):
             resolved_cat = self.category_validator.resolve(entities['category'])
-        if not resolved_cat:
-            resolved_cat = self.category_validator.resolve_from_message(message)
         entities['category'] = resolved_cat['category_name'] if resolved_cat else ''
 
         logger.info("✅ Intent=%s entities=%s followup=%s resolved=%s",
@@ -544,18 +543,10 @@ class SimpleChatbot:
                     resolved_cat['category_name'] if resolved_cat else None)
 
         # 3. Merge / reset (Rules 6 & 10)
-        merged = self._merge_intent_context(user_id, groq_result, previous_intent)
+        merged = self._merge_intent_context(user_id, groq_result, previous_intent, intent)
 
         # 4. Persist current view
         self.user_intent_content[user_id] = self._intent_to_normalized(merged, message)
-
-        # Clear search cache on intent change
-        prev_intent = self.user_last_intent.get(user_id)
-        if prev_intent and prev_intent != intent:
-            if intent in PRODUCT_RELATED_INTENTS or prev_intent in PRODUCT_RELATED_INTENTS:
-                pass
-            else:
-                self._clear_product_search_cache(user_id, clear_pending=True)
 
         # 5. Route to dedicated handler (Rule 8)
         if intent == 'comparison':
@@ -578,6 +569,7 @@ class SimpleChatbot:
 
         # unknown / fallback
         return self.handle_fallback(user_id, message, merged, start_time)
+
 
     # ═════════════════════════════════════════════════════════════
     # SEPARATED INTENT HANDLERS (Rule 8)
@@ -995,35 +987,30 @@ Return ONLY the JSON object."""
 
     def _minimal_fallback(self, message: str) -> Dict[str, Any]:
         """
-        No-Groq fallback only. Groq handles all real classification.
-        This runs only when Groq is unavailable or throws an error.
-        Covers buy and exit in addition to original intents.
+        Emergency fallback used ONLY when Groq is unavailable or throws.
+        No keyword dictionaries — Groq is the sole intent classifier.
+        Only regex fast-path patterns (greetings, explicit human request, complaint)
+        are safe to detect without AI; everything else becomes unknown.
         """
-        text = message.lower().strip()
+        budget = self._extract_budget_range(message)
+
         if self.FAST_PATH_PATTERNS['greeting'].match(message):
             intent = 'greeting'
         elif self.FAST_PATH_PATTERNS['goodbye'].match(message):
             intent = 'goodbye'
         elif self.FAST_PATH_PATTERNS['thanks'].match(message):
             intent = 'thanks'
-        elif self.FAST_PATH_PATTERNS['human_request'].search(message):
-            intent = 'human_request'
-        elif self.COMPLAINT_PATTERNS.search(message):
-            intent = 'complaint'
         elif self.FAST_PATH_PATTERNS['exit'].search(message):
             intent = 'exit'
         elif self.FAST_PATH_PATTERNS['buy'].search(message):
             intent = 'buy'
-        elif any(w in text for w in ['price koto', 'dam koto', 'koto dam', 'দাম কত', 'কত দাম']):
-            intent = 'price_query'
-        elif any(w in text for w in ['delivery', 'koto din', 'ডেলিভারি']):
-            intent = 'delivery'
-        elif self.category_validator.resolve_from_message(message):
-            intent = 'product_search'
+        elif self.FAST_PATH_PATTERNS['human_request'].search(message):
+            intent = 'human_request'
+        elif self.COMPLAINT_PATTERNS.search(message):
+            intent = 'complaint'
         else:
             intent = 'unknown'
 
-        budget = self._extract_budget_range(message)
         return {
             'intent': intent,
             'entities': {
@@ -1031,10 +1018,11 @@ Return ONLY the JSON object."""
                 'price_max': budget.get('max_price'),
                 'price_min': budget.get('min_price'),
             },
-            'missing': ['category'] if intent == 'product_search' else [],
+            'missing': [],
             'is_followup': False,
-            'confidence': 0.4,
+            'confidence': 0.3,
         }
+
 
 
 
@@ -1057,16 +1045,20 @@ Return ONLY the JSON object."""
             prev['category'] = prev['cat']
         return prev
 
-    def _merge_intent_context(self, user_id: str, groq_result: Dict, previous: Dict) -> Dict:
+    def _merge_intent_context(self, user_id: str, groq_result: Dict,
+                            previous: Dict, intent: str = '') -> Dict:
         """
-        Rule 6: category switch → FULL reset (incl. product_context, selected_product)
-        Rule 10: same/empty new category → merge new fields into previous
+        Rule 6: category switch → FULL reset.
+        Rule 10: genuine follow-up → merge previous fields.
+        NEW: product-related intent with no new category and is_followup=False
+            → do NOT bleed previous category in; let the handler ask for it.
         """
         new_entities = groq_result['entities']
         new_category = new_entities.get('category', '')
         prev_category = previous.get('category', '')
+        is_followup = groq_result.get('is_followup', False)
 
-        # Rule 6: full reset on category switch
+        # Rule 6: explicit category switch → full reset
         if new_category and prev_category and new_category.lower() != prev_category.lower():
             logger.info("🔄 Category switch %s → %s. Full reset.", prev_category, new_category)
             self._clear_product_search_cache(user_id, clear_pending=True)
@@ -1079,20 +1071,35 @@ Return ONLY the JSON object."""
                 'updated_at': datetime.now().isoformat(),
             }
 
-        # Rule 10: merge — new values override only if non-empty
-        merged = {
-            'category': new_category or prev_category,
+        # Determine whether previous category should carry forward:
+        # Only carry it if Groq marked this as a follow-up OR it is not a product-related intent.
+        # For product intents where Groq found no category and is_followup=False,
+        # the category is genuinely missing — the handler must ask.
+        carry_prev_category = (
+            is_followup
+            or intent not in PRODUCT_RELATED_INTENTS
+            or bool(new_category)
+        )
+
+        effective_category = new_category or (prev_category if carry_prev_category else '')
+
+        # If category changed as a result of carry-forward, still do a reset on the product cache
+        if (not new_category and carry_prev_category and prev_category
+                and prev_category != effective_category):
+            self._clear_product_search_cache(user_id, clear_pending=True)
+
+        return {
+            'category': effective_category,
             'brand': new_entities.get('brand') or previous.get('brand', ''),
             'title': new_entities.get('title') or previous.get('title', ''),
             'price_max': (new_entities.get('price_max')
-                          if new_entities.get('price_max') is not None
-                          else previous.get('price_max')),
+                        if new_entities.get('price_max') is not None
+                        else previous.get('price_max')),
             'price_min': (new_entities.get('price_min')
-                          if new_entities.get('price_min') is not None
-                          else previous.get('price_min')),
+                        if new_entities.get('price_min') is not None
+                        else previous.get('price_min')),
             'updated_at': datetime.now().isoformat(),
         }
-        return merged
 
     def _intent_to_normalized(self, merged: Dict, message: str) -> Dict[str, Any]:
         """Build intent_content payload for save (Rule 12)."""
