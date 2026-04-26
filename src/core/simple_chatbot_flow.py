@@ -1745,7 +1745,16 @@ class SimpleChatbot:
                 timeout=5
             )
         except Exception as e:
-            logger.warning("switch_to_human failed: %s", e)
+            logger.error("❌ Unhandled error: %s", e, exc_info=True)
+            return {
+                'response': "দুঃখিত স্যার, একটি সমস্যা হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।",
+                'mode': 'ai',
+                'intent': 'system_error',
+                'conversation_status': AI_ACTIVE_STATUS,
+                'products': [],
+                'processing_time': 0.0,
+                'error': str(e)
+            }
 
     def switch_to_ai(self, user_id: str) -> None:
         """Trigger assign_bot API to restore AI mode in the DB."""
