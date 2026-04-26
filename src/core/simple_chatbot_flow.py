@@ -507,7 +507,7 @@ class SimpleChatbot:
     # MAIN flow
     # ═════════════════════════════════════════════════════════════
     def _handle_main_flow(self, user_id: str, message: str,
-                          start_time: datetime) -> Dict[str, Any]:
+                        start_time: datetime) -> Dict[str, Any]:
         conversation_context = self._get_history_cached(user_id)
         previous_intent = self._load_previous_intent(user_id)
         groq_result = self._step1_groq_extract(message, conversation_context, previous_intent)
@@ -544,6 +544,16 @@ class SimpleChatbot:
             return self.handle_price_query(user_id, message, merged, start_time)
         if intent == 'product_search':
             return self.handle_product_search(user_id, message, merged, start_time)
+
+        # Safety net: Groq returned unknown but message matches buy/exit/comparison patterns
+        if self.FAST_PATH_PATTERNS['buy'].search(message):
+            return self.handle_buy(user_id, message, start_time)
+        if self.FAST_PATH_PATTERNS['exit'].search(message):
+            return self.handle_exit(user_id, message, start_time)
+        msg_lower = message.lower()
+        if any(w in msg_lower for w in ['konta valo', 'konta bhalo', 'konti valo', 'which is better',
+                                        'কোনটা ভালো', 'কোনটা ভাল', 'তুলনা']):
+            return self.handle_comparison(user_id, message, merged, start_time)
 
         return self.handle_fallback(user_id, message, merged, start_time)
 
@@ -620,11 +630,9 @@ class SimpleChatbot:
 
         return self.handle_product_search(user_id, message, merged, start_time)
 
-    def handle_comparison(self, user_id: str, message: str, merged: Dict,
-                          start_time: datetime) -> Dict[str, Any]:
-        if not merged.get('category'):
-            return self._ask_for_category(user_id, message, merged, start_time)
 
+    def handle_comparison(self, user_id: str, message: str, merged: Dict,
+                        start_time: datetime) -> Dict[str, Any]:
         self._reset_clarification_counter(user_id)
         return self._create_response(
             user_id=user_id, message=message,
@@ -820,6 +828,8 @@ BANGLISH / BANGLA QUICK REFERENCE:
 - "refund chai", "baje", "faltu", "kharap"                                 → complaint
 - "human chai", "agent er sathe kotha"                                     → human_request
 - "X ache", "X ki ache", "X paoa jabe" → product_search with category=X (ache = is available/do you have)       → human_request
+- "order korbo kivabe", "kivabe order korbo", "how to buy", "order process" → buy (no category needed)
+- "konti valo", "konta valo", "konta bhalo", "which is better", "কোনটা ভালো", "কোনটি ভালো" → comparison (no category needed)
 
 PREVIOUS CONTEXT (is_followup detection only — do NOT copy into entities):
 {json.dumps(previous_intent or {}, ensure_ascii=False)}
@@ -926,6 +936,13 @@ Return ONLY the JSON object."""
     # ─────────────────────────────────────────────────────────────
     def _load_previous_intent(self, user_id: str) -> Dict:
         prev = dict(self.user_intent_content.get(user_id) or {})
+
+        # If nothing in memory, pull from DB (covers server restart / first message)
+        if not prev or not prev.get('cat'):
+            db_prev = self._fetch_intent_content_from_db(user_id)
+            if db_prev:
+                prev = db_prev
+
         updated_at = prev.get('updated_at')
         if updated_at:
             try:
@@ -935,9 +952,59 @@ Return ONLY the JSON object."""
                     return {}
             except Exception:
                 pass
+
+        # Translate stored 'cat' back to 'category' for merge logic
         if prev.get('cat') and not prev.get('category'):
             prev['category'] = prev['cat']
         return prev
+
+    def _fetch_intent_content_from_db(self, user_id: str) -> Dict:
+        """
+        Pull the last saved intent_content from the chat history API.
+        Used to restore category context after server restart or on first message.
+        """
+        try:
+            urls = self._build_chat_history_urls(user_id, 10)
+            for url in urls:
+                try:
+                    resp = requests.get(url, timeout=5)
+                    if not (200 <= resp.status_code < 300):
+                        continue
+                    data = resp.json() if resp.text else {}
+
+                    # Normalise to a list of message dicts
+                    candidates = []
+                    if isinstance(data, list):
+                        candidates = data
+                    elif isinstance(data, dict):
+                        for k in ['data', 'messages', 'history', 'chat_history', 'conversation', 'result']:
+                            v = data.get(k)
+                            if isinstance(v, list):
+                                candidates = v
+                                break
+
+                    # Walk newest-first looking for a bot message with intent_content
+                    for item in reversed(candidates):
+                        if not isinstance(item, dict):
+                            continue
+                        # Only look at bot messages (sender_type=2)
+                        sender = str(item.get('sender_type') or '').strip()
+                        if sender != '2':
+                            continue
+                        ic = item.get('intent_content')
+                        if isinstance(ic, str):
+                            try:
+                                ic = json.loads(ic)
+                            except Exception:
+                                continue
+                        if isinstance(ic, dict) and ic.get('cat'):
+                            logger.info("[INTENT_DB] Restored intent_content for %s: %s", user_id, ic)
+                            return ic
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.warning("_fetch_intent_content_from_db failed: %s", e)
+        return {}
 
     def _merge_intent_context(self, user_id: str, groq_result: Dict,
                             previous: Dict, intent: str = '') -> Dict:
