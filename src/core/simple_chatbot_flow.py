@@ -166,8 +166,8 @@ class SimpleChatbot:
             logger.warning("⚠️ Groq API not available")
 
         # Per-user state
-        self.user_modes: Dict[str, ChatMode] = {}
-        self.user_conversation_status: Dict[str, str] = {}
+        
+        
         self.user_product_context: Dict[str, list] = {}
         self.user_selected_product: Dict[str, Dict[str, Any]] = {}
         self.user_order_context: Dict[str, bool] = {}
@@ -237,7 +237,7 @@ class SimpleChatbot:
                 uid: ChatMode(m) for uid, m in (state.get('user_modes') or {}).items()
                 if m in {ChatMode.AI.value, ChatMode.HUMAN.value}
             }
-            self.user_conversation_status = dict(state.get('user_conversation_status') or {})
+           
             self.user_product_context = dict(state.get('user_product_context') or {})
             self.user_selected_product = dict(state.get('user_selected_product') or {})
             self.user_order_context = {
@@ -257,7 +257,7 @@ class SimpleChatbot:
                 os.makedirs(os.path.dirname(self.state_file), exist_ok=True)
                 state = {
                     'user_modes': {uid: m.value for uid, m in self.user_modes.items()},
-                    'user_conversation_status': self.user_conversation_status,
+                    
                     'user_product_context': self.user_product_context,
                     'user_selected_product': self.user_selected_product,
                     'user_order_context': self.user_order_context,
@@ -356,45 +356,30 @@ class SimpleChatbot:
     def process_message(self, user_id: str, message: str) -> Dict[str, Any]:
         try:
             start_time = datetime.now()
-            current_mode = self.user_modes.get(user_id, ChatMode.AI)
-            current_status = self.user_conversation_status.get(user_id, AI_ACTIVE_STATUS)
-
-            logger.info("📨 user=%s mode=%s msg=%r", user_id, current_mode.value, message)
+            logger.info("📨 user=%s msg=%r", user_id, message)
 
             if self._is_blocked_automated_message(message):
                 return self._create_response(
                     user_id=user_id, message=message, response="",
                     mode=ChatMode.AI, intent='ignored_automated_template', products=None,
                     processing_time=(datetime.now() - start_time).total_seconds(),
-                    conversation_status=self.user_conversation_status.get(user_id, AI_ACTIVE_STATUS)
+                    conversation_status=AI_ACTIVE_STATUS
                 )
 
-            # Responder API
+            # Mode derived live from responder API — never from memory (Rule 13)
             responder_type = self._check_responder_type(user_id)
-            if responder_type == 'agent':
-                self.user_modes[user_id] = ChatMode.HUMAN
-                self.user_conversation_status[user_id] = HUMAN_SUPPORT_REQUIRED_STATUS
-                self._save_state()
+            is_human_mode = (responder_type == 'agent')
+
+            if is_human_mode:
+                # Human agent is active — bot stays completely silent
                 return self._create_response(
                     user_id=user_id, message=message, response="",
                     mode=ChatMode.HUMAN, intent='human_mode_active', products=None,
                     processing_time=(datetime.now() - start_time).total_seconds(),
                     conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
                 )
-            if responder_type == 'bot' and current_mode == ChatMode.HUMAN:
-                self.user_modes[user_id] = ChatMode.AI
-                self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
-                current_mode = ChatMode.AI
 
-            if current_mode == ChatMode.HUMAN and current_status == HUMAN_SUPPORT_REQUIRED_STATUS:
-                return self._create_response(
-                    user_id=user_id, message=message, response="",
-                    mode=ChatMode.HUMAN, intent='human_support_required', products=None,
-                    processing_time=(datetime.now() - start_time).total_seconds(),
-                    conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
-                )
-
-            # FAST PATH: explicit human (Rule 11)
+            # FAST PATH: explicit human request (Rule 11)
             if self.FAST_PATH_PATTERNS['human_request'].search(message):
                 return self._handoff_to_human(
                     user_id, message, start_time,
@@ -449,6 +434,10 @@ class SimpleChatbot:
                 intent='system_error', error=str(e)
             )
 
+
+
+
+
     # ─────────────────────────────────────────────────────────────
     # Fast path (regex, no Groq)
     # ─────────────────────────────────────────────────────────────
@@ -469,8 +458,6 @@ class SimpleChatbot:
 
     def _handle_fast_path(self, user_id: str, message: str, intent: str,
                         start_time: datetime) -> Dict[str, Any]:
-        self.user_modes[user_id] = ChatMode.AI
-        self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
         self._reset_clarification_counter(user_id)
 
         if intent == 'greeting':
@@ -501,13 +488,10 @@ class SimpleChatbot:
                 processing_time=(datetime.now() - start_time).total_seconds(),
                 conversation_status=AI_ACTIVE_STATUS
             )
-        # Point 4: buy intent — fixed message, placeholder for future logic
         if intent == 'buy':
             return self.handle_buy(user_id, message, start_time)
-        # Point 5: exit / purchase-later intent
         if intent == 'exit':
             return self.handle_exit(user_id, message, start_time)
-        # ok_ack / catch-all
         return self._create_response(
             user_id=user_id, message=message,
             response="ধন্যবাদ স্যার, আর কিভাবে আমি আপনাকে সাহায্য করতে পারি?",
@@ -1589,21 +1573,7 @@ class SimpleChatbot:
         response_text: str = "স্যার, আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।",
         error: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """
-        Purpose: Transfer conversation to a human agent and notify via assign_agent API.
-        Trigger: explicit human request, complaint detected, 3 failed clarifications,
-                 order submission, or unhandled system error (Rule 11).
-        Required fields: user_id.
-        Fallback: if assign_agent API fails, still set HUMAN mode locally so bot stays silent.
-        """
-        self.user_modes[user_id] = ChatMode.HUMAN
-        self.user_conversation_status[user_id] = HUMAN_SUPPORT_REQUIRED_STATUS
-        self._save_state()
-
-        # Invalidate responder cache so next message re-checks
-        self._responder_cache.pop(user_id, None)
-
-        # Call assign_agent API (fire-and-forget; failure must not block the response)
+        # Call assign_agent API — this sets mode in the DB, which the responder API will reflect
         try:
             started = datetime.now()
             payload = {
@@ -1611,11 +1581,7 @@ class SimpleChatbot:
                 'user_id': user_id,
                 'intent': intent,
             }
-            resp = requests.post(
-                self.assign_agent_api_url,
-                json=payload,
-                timeout=5,
-            )
+            resp = requests.post(self.assign_agent_api_url, json=payload, timeout=5)
             duration_ms = int((datetime.now() - started).total_seconds() * 1000)
             _log_api_call(
                 'assign_agent', 'POST', self.assign_agent_api_url,
@@ -1673,20 +1639,9 @@ class SimpleChatbot:
         link_buttons: Optional[List[Dict]] = None,
         conversation_status: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """
-        Purpose: Build the unified response dict AND persist via chatbot_save_message (Rule 3).
-        Every bot reply — including empty/ignored ones — must pass through here.
-        """
         if conversation_status is None:
-            conversation_status = self.user_conversation_status.get(
-                user_id, AI_ACTIVE_STATUS
-            )
+            conversation_status = AI_ACTIVE_STATUS
 
-        # Persist mode / status
-        self.user_modes[user_id] = mode
-        self.user_conversation_status[user_id] = conversation_status
-
-        # Normalise intent_content; always carry forward cat/brand/title if not supplied
         if intent_content is None:
             intent_content = self._normalize_intent_content_payload(
                 self.user_intent_content.get(user_id) or {}
@@ -1694,13 +1649,13 @@ class SimpleChatbot:
         else:
             intent_content = self._normalize_intent_content_payload(intent_content)
 
-        # Update in-memory store so the next call can read it
+        # Only non-mode state stored in memory
         self.user_intent_content[user_id] = intent_content
         self.user_last_intent[user_id] = intent
         self._save_state()
 
-        # Rule 3: save every interaction
-        if response:  # skip empty echo-suppressed messages
+        # Save every interaction with a non-empty response (Rule 3)
+        if response:
             self._save_chat_message(
                 user_id=user_id,
                 message=message,
@@ -1724,6 +1679,7 @@ class SimpleChatbot:
         if link_buttons:
             result['link_buttons'] = link_buttons
         return result
+
 
     # ─────────────────────────────────────────────────────────────
     # chatbot_save_message (Rule 3) — called by _create_response
