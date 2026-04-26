@@ -715,16 +715,42 @@ class SimpleChatbot:
 
     def handle_fallback(self, user_id: str, message: str, merged: Dict,
                         start_time: datetime) -> Dict[str, Any]:
+        # If category already known, search products
         if merged.get('category'):
             return self.handle_product_search(user_id, message, merged, start_time)
 
+        # Try to resolve the message itself as a category reply
         resolved = self.category_validator.resolve(message.strip())
         if resolved:
             merged['category'] = resolved['category_name']
             self._reset_clarification_counter(user_id)
             return self.handle_product_search(user_id, message, merged, start_time)
 
+        # Safety net: delivery-related messages never need a category
+        msg_lower = message.lower()
+        delivery_hints = [
+            'delivery', 'ডেলিভারি', 'koto din', 'কত দিন', 'deliver',
+            'shipping', 'পাঠাবে', 'পাবো কবে', 'dibo kobe', 'lagbe koto din',
+            'charge koto', 'চার্জ কত',
+        ]
+        if any(h in msg_lower for h in delivery_hints):
+            return self.handle_delivery(user_id, message, merged, start_time)
+
+        # Safety net: buy/comparison/exit never need a category
+        if self.FAST_PATH_PATTERNS['buy'].search(message):
+            return self.handle_buy(user_id, message, start_time)
+        if self.FAST_PATH_PATTERNS['exit'].search(message):
+            return self.handle_exit(user_id, message, start_time)
+        if any(w in msg_lower for w in ['konta valo', 'konti valo', 'konta bhalo',
+                                        'which is better', 'কোনটা ভালো', 'কোনটি ভালো']):
+            return self.handle_comparison(user_id, message, merged, start_time)
+
         return self._ask_for_category(user_id, message, merged, start_time)
+
+
+
+
+
 
     # ─────────────────────────────────────────────────────────────
     # Ask for category
@@ -830,6 +856,8 @@ BANGLISH / BANGLA QUICK REFERENCE:
 - "X ache", "X ki ache", "X paoa jabe" → product_search with category=X (ache = is available/do you have)       → human_request
 - "order korbo kivabe", "kivabe order korbo", "how to buy", "order process" → buy (no category needed)
 - "konti valo", "konta valo", "konta bhalo", "which is better", "কোনটা ভালো", "কোনটি ভালো" → comparison (no category needed)
+- "delivery koto din", "delivery charge", "koto din lagbe", "delivery kobe dibe" → delivery
+- "কত দিন লাগবে", "ডেলিভারি কত দিন", "কত দিনে পাবো", "ডেলিভারি চার্জ"        → delivery
 
 PREVIOUS CONTEXT (is_followup detection only — do NOT copy into entities):
 {json.dumps(previous_intent or {}, ensure_ascii=False)}
