@@ -734,14 +734,25 @@ class SimpleChatbot:
 
 
     def handle_delivery(self, user_id: str, message: str, merged: Dict,
-                        start_time: datetime) -> Dict[str, Any]:
-        """
-        Purpose: Answer "delivery koto din?" / "delivery charge koto?".
-        Trigger: intent=delivery
-        Required fields: none (delivery info is general).
-        Fallback: no template available → FAQ DB lookup → final fallback.
-        Example: "delivery koto din lagbe" → fetch ai_template?intent=delivery.
-        """
+                            start_time: datetime) -> Dict[str, Any]:
+            self._reset_clarification_counter(user_id)
+            tmpl = self._fetch_delivery_intent_response()
+            if tmpl:
+                return self._create_response(
+                    user_id=user_id, message=message, response=tmpl,
+                    mode=ChatMode.AI, intent='delivery', products=None,
+                    intent_content=self._intent_to_normalized(merged, message),
+                    processing_time=(datetime.now() - start_time).total_seconds()
+                )
+            faq = self._search_database_faq(message)
+            if faq:
+                return self._create_response(
+                    user_id=user_id, message=message, response=faq,
+                    mode=ChatMode.AI, intent='delivery', products=None,
+                    intent_content=self._intent_to_normalized(merged, message),
+                    processing_time=(datetime.now() - start_time).total_seconds()
+                )
+            return self.handle_fallback(user_id, message, merged, start_time)
     def _reset_clarification_counter(self, user_id: str) -> None:
         pass  # Counter removed — human handoff is handled by the responder API
         if tmpl:
@@ -770,7 +781,8 @@ class SimpleChatbot:
         Fallback: no FAQ match → fallback handler.
         Example: "kivabe order korbo" → DB lookup for ordering steps.
         """
-        self._reset_clarification_counter(user_id)
+        def _reset_clarification_counter(self, user_id: str) -> None:
+        pass  # Counter removed — human handoff is handled by the responder API
         faq = self._search_database_faq(message)
         if faq:
             return self._create_response(
@@ -808,13 +820,26 @@ class SimpleChatbot:
     # ─────────────────────────────────────────────────────────────
     def _ask_for_category(self, user_id: str, message: str, merged: Dict,
                       start_time: datetime) -> Dict[str, Any]:
-    return self._create_response(
-        user_id=user_id, message=message, response=CATEGORY_PROMPT,
-        mode=ChatMode.AI, intent='need_category', products=None,
-        intent_content=self._intent_to_normalized(merged, message),
-        processing_time=(datetime.now() - start_time).total_seconds(),
-        conversation_status=AI_ACTIVE_STATUS
-    )
+        attempts = self.user_clarification_attempts.get(user_id, 0) + 1
+        self.user_clarification_attempts[user_id] = attempts
+
+        if attempts >= MAX_CLARIFICATION_ATTEMPTS:
+            self._reset_clarification_counter(user_id)
+            return self._handoff_to_human(
+                user_id, message, start_time,
+                intent='repeated_clarification_failure',
+                response_text="স্যার, আমাদের একজন প্রতিনিধি এই বিষয়ে আপনাকে সাহায্য করবেন।"
+            )
+
+        self.user_modes[user_id] = ChatMode.AI
+        self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+        return self._create_response(
+            user_id=user_id, message=message, response=CATEGORY_PROMPT,
+            mode=ChatMode.AI, intent='need_category', products=None,
+            intent_content=self._intent_to_normalized(merged, message),
+            processing_time=(datetime.now() - start_time).total_seconds(),
+            conversation_status=AI_ACTIVE_STATUS
+        )
 
     # ─────────────────────────────────────────────────────────────
     # Groq extraction
