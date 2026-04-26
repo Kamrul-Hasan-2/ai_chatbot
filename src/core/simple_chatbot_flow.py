@@ -331,9 +331,6 @@ class SimpleChatbot:
     # ─────────────────────────────────────────────────────────────
     def _check_responder_type(self, user_id: str) -> Optional[str]:
         now = time.time()
-        cached = self._responder_cache.get(user_id)
-        if cached and (now - cached[0]) < self._responder_cache_ttl and cached[1]:
-            return cached[1]
         try:
             url = f"{self.responder_api_url}?key={self.responder_api_key}&user_id={user_id}"
             resp = requests.get(url, timeout=3)
@@ -342,16 +339,18 @@ class SimpleChatbot:
                 data = resp.json()
                 if data.get('success') and data.get('data'):
                     label = data['data'].get('responder_label', 'bot')
-                    _log_api_call('responder_type_check', 'GET', url,
-                                  {'user_id': user_id}, resp.status_code,
-                                  duration_ms, 'PASS',
-                                  json.dumps(data.get('data', {}), ensure_ascii=False)[:200])
-                    self._responder_cache[user_id] = (now, label)
+                    _log_api_call(
+                        'responder_type_check', 'GET', url,
+                        {'user_id': user_id}, resp.status_code,
+                        duration_ms, 'PASS',
+                        json.dumps(data.get('data', {}), ensure_ascii=False)[:200]
+                    )
                     return label
             return None
         except Exception as e:
             logger.warning("Responder check error: %s", e)
             return None
+
 
     # ═════════════════════════════════════════════════════════════
     # MAIN ENTRY
