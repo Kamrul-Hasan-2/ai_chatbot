@@ -862,13 +862,13 @@ class SimpleChatbot:
     # ─────────────────────────────────────────────────────────────
     def _step1_groq_extract(self, message: str, conversation_context: str,
                         previous_intent: Dict) -> Dict[str, Any]:
-    if not self.groq_client:
-        return self._minimal_fallback(message)
+        if not self.groq_client:
+            return self._minimal_fallback(message)
 
-    sample_categories = self.category_validator.names_english()[:30]
-    sample_str = ", ".join(sample_categories) if sample_categories else "(none loaded yet)"
+        sample_categories = self.category_validator.names_english()[:30]
+        sample_str = ", ".join(sample_categories) if sample_categories else "(none loaded yet)"
 
-    system_prompt = f"""You are a strict JSON extractor for a Bangladeshi e-commerce chatbot (BDStall).
+        system_prompt = f"""You are a strict JSON extractor for a Bangladeshi e-commerce chatbot (BDStall).
 The user may write in Bangla, English, or Banglish (romanised Bangla). Understand all three equally.
 Return ONLY valid JSON matching this schema. No prose, no markdown.
 
@@ -929,7 +929,7 @@ PREVIOUS CONTEXT (use only to detect is_followup; do NOT copy fields into entiti
 {json.dumps(previous_intent or {}, ensure_ascii=False)}
 """
 
-    user_prompt = f"""Recent conversation:
+        user_prompt = f"""Recent conversation:
 {conversation_context or 'N/A'}
 
 Current user message:
@@ -937,26 +937,26 @@ Current user message:
 
 Return ONLY the JSON object."""
 
-    try:
-        response = self.groq_client.chat.completions.create(
-            model=self.groq_model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.1,
-            max_tokens=400,
-            response_format={"type": "json_object"}
-        )
-        raw = response.choices[0].message.content.strip()
-        parsed = json.loads(raw)
-        return self._validate_groq_schema(parsed)
-    except json.JSONDecodeError as e:
-        logger.warning("Groq JSON parse failed: %s", e)
-        return self._minimal_fallback(message)
-    except Exception as e:
-        logger.warning("Groq call failed: %s", e)
-        return self._minimal_fallback(message)
+        try:
+            response = self.groq_client.chat.completions.create(
+                model=self.groq_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.1,
+                max_tokens=400,
+                response_format={"type": "json_object"}
+            )
+            raw = response.choices[0].message.content.strip()
+            parsed = json.loads(raw)
+            return self._validate_groq_schema(parsed)
+        except json.JSONDecodeError as e:
+            logger.warning("Groq JSON parse failed: %s", e)
+            return self._minimal_fallback(message)
+        except Exception as e:
+            logger.warning("Groq call failed: %s", e)
+            return self._minimal_fallback(message)
 
     def _validate_groq_schema(self, parsed: Dict) -> Dict[str, Any]:
         intent = str(parsed.get('intent', 'unknown')).lower().strip()
