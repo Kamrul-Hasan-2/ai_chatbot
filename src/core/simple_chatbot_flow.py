@@ -345,89 +345,86 @@ class SimpleChatbot:
     # MAIN ENTRY
     # ═════════════════════════════════════════════════════════════
     def process_message(self, user_id: str, message: str) -> Dict[str, Any]:
-        try:
-            start_time = datetime.now()
-            logger.info("📨 user=%s msg=%r", user_id, message)
+            try:
+                start_time = datetime.now()
+                logger.info("📨 user=%s msg=%r", user_id, message)
 
-            if self._is_blocked_automated_message(message):
-                return self._create_response(
-                    user_id=user_id, message=message, response="",
-                    mode=ChatMode.AI, intent='ignored_automated_template', products=None,
-                    processing_time=(datetime.now() - start_time).total_seconds(),
-                    conversation_status=AI_ACTIVE_STATUS
-                )
+                if self._is_blocked_automated_message(message):
+                    return self._create_response(
+                        user_id=user_id, message=message, response="",
+                        mode=ChatMode.AI, intent='ignored_automated_template', products=None,
+                        processing_time=(datetime.now() - start_time).total_seconds(),
+                        conversation_status=AI_ACTIVE_STATUS
+                    )
 
-            # Mode derived live from responder API — never from memory (Rule 13)
-            responder_type = self._check_responder_type(user_id)
-            is_human_mode = (responder_type == 'agent')
+                # Mode derived live from responder API — never from memory
+                responder_type = self._check_responder_type(user_id)
+                if responder_type == 'agent':
+                    return self._create_response(
+                        user_id=user_id, message=message, response="",
+                        mode=ChatMode.HUMAN, intent='human_mode_active', products=None,
+                        processing_time=(datetime.now() - start_time).total_seconds(),
+                        conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
+                    )
 
-            if is_human_mode:
-                # Human agent is active — bot stays completely silent
-                return self._create_response(
-                    user_id=user_id, message=message, response="",
-                    mode=ChatMode.HUMAN, intent='human_mode_active', products=None,
-                    processing_time=(datetime.now() - start_time).total_seconds(),
-                    conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
-                )
+                # FAST PATH: explicit human request
+                if self.FAST_PATH_PATTERNS['human_request'].search(message):
+                    return self._handoff_to_human(
+                        user_id, message, start_time,
+                        intent='explicit_human_request',
+                        response_text="স্যার, আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।"
+                    )
 
-            # FAST PATH: explicit human request (Rule 11)
-            if self.FAST_PATH_PATTERNS['human_request'].search(message):
-                return self._handoff_to_human(
-                    user_id, message, start_time,
-                    intent='explicit_human_request',
-                    response_text="স্যার, আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।"
-                )
+                # FAST PATH: complaint
+                if self.COMPLAINT_PATTERNS.search(message):
+                    prev = self._normalize_intent_content_payload(
+                        self.user_intent_content.get(user_id) or {}
+                    )
+                    prev['complain'] = True
+                    self.user_intent_content[user_id] = prev
+                    return self._handoff_to_human(
+                        user_id, message, start_time, intent='complaint_handoff',
+                        response_text="স্যার, এই বিষয়ে আমাদের একজন প্রতিনিধি এখনই আপনার সাথে যোগাযোগ করবেন।"
+                    )
 
-            # FAST PATH: complaint (Rule 11)
-            if self.COMPLAINT_PATTERNS.search(message):
-                prev = self._normalize_intent_content_payload(
-                    self.user_intent_content.get(user_id) or {}
-                )
-                prev['complain'] = True
-                self.user_intent_content[user_id] = prev
-                return self._handoff_to_human(
-                    user_id, message, start_time, intent='complaint_handoff',
-                    response_text="স্যার, এই বিষয়ে আমাদের একজন প্রতিনিধি এখনই আপনার সাথে যোগাযোগ করবেন।"
-                )
+                # FAST PATH: product selection (1-5)
+                selected_index = self._extract_product_selection(message)
+                user_products = self.user_product_context.get(user_id, [])
+                if selected_index and user_products and len(user_products) >= selected_index:
+                    selected = user_products[selected_index - 1]
+                    self.user_selected_product[user_id] = selected
+                    self._reset_clarification_counter(user_id)
+                    return self._create_response(
+                        user_id=user_id, message=message,
+                        response=self._format_selected_product_response(selected, selected_index),
+                        mode=ChatMode.AI, intent='product_selection', products=user_products,
+                        processing_time=(datetime.now() - start_time).total_seconds()
+                    )
 
-            # FAST PATH: product selection (1-5)
-            selected_index = self._extract_product_selection(message)
-            user_products = self.user_product_context.get(user_id, [])
-            if selected_index and user_products and len(user_products) >= selected_index:
-                selected = user_products[selected_index - 1]
-                self.user_selected_product[user_id] = selected
-                self._reset_clarification_counter(user_id)
-                return self._create_response(
-                    user_id=user_id, message=message,
-                    response=self._format_selected_product_response(selected, selected_index),
-                    mode=ChatMode.AI, intent='product_selection', products=user_products,
-                    processing_time=(datetime.now() - start_time).total_seconds()
-                )
+                # FAST PATH: order form
+                order_response = self._maybe_handle_order_flow(user_id, message, start_time)
+                if order_response is not None:
+                    return order_response
 
-            # FAST PATH: order form
-            order_response = self._maybe_handle_order_flow(user_id, message, start_time)
-            if order_response is not None:
-                return order_response
+                # FAST PATH: regex-matched simple intents
+                fast_intent = self._fast_path_intent(message)
+                if fast_intent:
+                    return self._handle_fast_path(user_id, message, fast_intent, start_time)
 
-            # FAST PATH: regex-matched simple intents
-            fast_intent = self._fast_path_intent(message)
-            if fast_intent:
-                return self._handle_fast_path(user_id, message, fast_intent, start_time)
+                # MAIN PATH: Groq → resolve → merge → route
+                return self._handle_main_flow(user_id, message, start_time)
 
-            # MAIN PATH: Groq → resolve → merge → route
-            return self._handle_main_flow(user_id, message, start_time)
-
-        except Exception as e:
-            logger.error("❌ Unhandled error: %s", e, exc_info=True)
-            return self._handoff_to_human(
-                user_id=user_id, message=message,
-                start_time=start_time if 'start_time' in locals() else datetime.now(),
-                intent='system_error', error=str(e)
-            )
-
-
-
-
+            except Exception as e:
+                logger.error("❌ Unhandled error: %s", e, exc_info=True)
+                return {
+                    'response': "দুঃখিত স্যার, একটি সমস্যা হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।",
+                    'mode': 'ai',
+                    'intent': 'system_error',
+                    'conversation_status': AI_ACTIVE_STATUS,
+                    'products': [],
+                    'processing_time': 0.0,
+                    'error': str(e)
+                }
 
     # ─────────────────────────────────────────────────────────────
     # Fast path (regex, no Groq)
