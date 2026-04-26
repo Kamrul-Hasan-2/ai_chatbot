@@ -791,6 +791,8 @@ RULES:
 - "hp laptop" → brand="hp", category="laptop".
 - "hp 840 g3" → brand="hp", title="840 g3", category="" (no product type word — add "category" to missing[]).
 - NEVER leave category="" if a product type word exists anywhere in the message.
+- "smart watch ache", "laptop ache", "mobile ache" → category=the product word, intent=product_search. "ache" means "available/do you have" — it is NOT a category word.
+
 
 BRAND vs CATEGORY:
 - brand = manufacturer name (samsung, hp, dell, apple, walton, asus, acer, lenovo).
@@ -817,6 +819,7 @@ BANGLISH / BANGLA QUICK REFERENCE:
 - "delivery koto din", "delivery charge"                                   → delivery
 - "refund chai", "baje", "faltu", "kharap"                                 → complaint
 - "human chai", "agent er sathe kotha"                                     → human_request
+- "X ache", "X ki ache", "X paoa jabe" → product_search with category=X (ache = is available/do you have)       → human_request
 
 PREVIOUS CONTEXT (is_followup detection only — do NOT copy into entities):
 {json.dumps(previous_intent or {}, ensure_ascii=False)}
@@ -937,7 +940,7 @@ Return ONLY the JSON object."""
         return prev
 
     def _merge_intent_context(self, user_id: str, groq_result: Dict,
-                              previous: Dict, intent: str = '') -> Dict:
+                            previous: Dict, intent: str = '') -> Dict:
         new_entities = groq_result['entities']
         new_category = new_entities.get('category', '')
         prev_category = previous.get('category', '')
@@ -956,26 +959,34 @@ Return ONLY the JSON object."""
                 'updated_at': datetime.now().isoformat(),
             }
 
-        carry_prev_category = (
-            is_followup
-            or intent not in PRODUCT_RELATED_INTENTS
-            or bool(new_category)
-        )
+        # Only carry previous category forward when Groq explicitly says it's a follow-up.
+        # If Groq found no category but also did NOT mark it as a follow-up,
+        # the category is genuinely missing — do NOT bleed previous category in.
+        if new_category:
+            effective_category = new_category
+        elif is_followup:
+            effective_category = prev_category
+        else:
+            # Groq found no category and said it's not a follow-up → ask user
+            effective_category = ''
 
-        effective_category = new_category or (prev_category if carry_prev_category else '')
+        # If category changed to empty from a non-empty previous, clear product cache
+        if prev_category and not effective_category:
+            self._clear_product_search_cache(user_id, clear_pending=False)
 
         return {
             'category': effective_category,
             'brand': new_entities.get('brand') or previous.get('brand', ''),
             'title': new_entities.get('title') or previous.get('title', ''),
             'price_max': (new_entities.get('price_max')
-                          if new_entities.get('price_max') is not None
-                          else previous.get('price_max')),
+                        if new_entities.get('price_max') is not None
+                        else previous.get('price_max')),
             'price_min': (new_entities.get('price_min')
-                          if new_entities.get('price_min') is not None
-                          else previous.get('price_min')),
+                        if new_entities.get('price_min') is not None
+                        else previous.get('price_min')),
             'updated_at': datetime.now().isoformat(),
         }
+
 
     def _intent_to_normalized(self, merged: Dict, message: str) -> Dict[str, Any]:
         price_max = merged.get('price_max')
