@@ -853,7 +853,7 @@ class SimpleChatbot:
     # Groq extraction
     # ─────────────────────────────────────────────────────────────
     def _step1_groq_extract(self, message: str, conversation_context: str,
-                        previous_intent: Dict) -> Dict[str, Any]:
+                            previous_intent: Dict) -> Dict[str, Any]:
         if not self.groq_client:
             return self._minimal_fallback(message)
 
@@ -861,73 +861,85 @@ class SimpleChatbot:
         sample_str = ", ".join(sample_categories) if sample_categories else "(none loaded yet)"
 
         system_prompt = f"""You are a strict JSON extractor for a Bangladeshi e-commerce chatbot (BDStall).
-The user may write in Bangla, English, or Banglish (romanised Bangla). Understand all three equally.
-Return ONLY valid JSON matching this schema. No prose, no markdown.
+    The user may write in English, Bangla, or Banglish (romanised Bangla). Understand all three equally.
+    Return ONLY valid JSON. No prose, no markdown, no explanation.
 
-SCHEMA:
-{{
-  "intent": "product_search" | "price_query" | "comparison" | "ordering" | "buy" | "exit" | "delivery" | "greeting" | "goodbye" | "thanks" | "complaint" | "faq" | "human_request" | "unknown",
-  "entities": {{
-    "category": string,
-    "brand": string,
-    "title": string,
-    "price_max": integer or null,
-    "price_min": integer or null
-  }},
-  "missing": array of strings,
-  "is_followup": boolean,
-  "confidence": number 0-1
-}}
+    SCHEMA:
+    {{
+    "intent": string,
+    "entities": {{
+        "category": string,
+        "brand": string,
+        "title": string,
+        "price_max": integer or null,
+        "price_min": integer or null
+    }},
+    "missing": array of strings,
+    "is_followup": boolean,
+    "confidence": number 0-1
+    }}
 
-INTENT DEFINITIONS — pick the single best match:
-- product_search : user wants to see/find/browse products
-- price_query    : user is asking about price/cost/dam
-- comparison     : user wants to compare or know which is better
-- buy            : user wants to know HOW to buy/order (process question, not product search)
-- ordering       : treat same as buy — user wants to place or understand an order
-- exit           : user is leaving, says later / not now / will come back / goodbye with no product intent
-- delivery       : user asks about delivery time, charge, or process
-- greeting       : hello / hi / salam type openers
-- goodbye        : explicit farewell with no product context
-- thanks         : thank you messages
-- complaint      : refund, scam, broken, bad experience
-- faq            : general questions about the site or policies
-- human_request  : wants to speak to a human agent
-- unknown        : cannot determine
+    INTENT VALUES (pick exactly one):
+    product_search | price_query | comparison | buy | exit | delivery | greeting | goodbye | thanks | complaint | faq | human_request | unknown
 
-BANGLISH / BANGLA MAPPINGS (not exhaustive — use understanding, not just keyword match):
-- "koto dam", "dam koto", "price koto", "কত দাম", "দাম কত"           → price_query
-- "konta valo", "which is better", "কোনটা ভালো", "তুলনা"              → comparison
-- "kivabe order", "order korbo", "kinbo", "কিনবো", "অর্ডার করবো"      → buy
-- "how to buy", "buying process", "kivabe kini"                        → buy
-- "pore kinbo", "pore janabo", "pore nebo", "ekhon na", "পরে কিনবো",
-  "পরে জানাবো", "এখন লাগবে না", "পরে হবে", "notun kichu lagbe na"     → exit
-- "delivery koto din", "delivery charge", "ডেলিভারি"                  → delivery
-- "refund", "baje", "faltu", "kharap", "প্রতারণা", "অভিযোগ"           → complaint
-- "human chai", "agent dorkar", "প্রতিনিধি", "কাস্টমার"               → human_request
+    INTENT DEFINITIONS:
+    - product_search : user wants to see, find, or browse products
+    - price_query    : user is asking about price or cost of a product/category
+    - comparison     : user wants to compare products or know which is better
+    - buy            : user wants to know HOW to buy or place an order (process question)
+    - exit           : user is leaving or says they will come back later / not interested now
+    - delivery       : user asks about delivery time, charge, or process
+    - greeting       : hello / hi / salam type openers with no product intent
+    - goodbye        : farewell with no product intent
+    - thanks         : thank you messages
+    - complaint      : refund, scam, broken product, bad experience
+    - faq            : general questions about the site or policies
+    - human_request  : user wants to speak to a human agent
+    - unknown        : none of the above can be determined
 
-STRICT RULES:
-1. NEVER invent or guess entities. Unsure → "" (string) or null (number).
-2. "category" = generic product type user mentioned. Validate loosely against: {sample_str}
-3. "brand" = brand name user wrote, lowercase. "" if absent.
-4. "title" = specific model/variant. "" if absent.
-5. Budget: "50k"=50000, "30 hazar"=30000, "under 20k"→price_max=20000.
-6. exit intent NEVER has a category — do not populate entities for exit.
-7. buy/ordering intent does NOT require a category — it is a process question.
-8. If message is a follow-up (no new category, just brand/price/model), set is_followup=true, category="".
-9. If intent=product_search and category="", add "category" to missing[].
+    ENTITY RULES:
+    1. "category" = the GENERIC product type the user mentioned or implied.
+    Examples from the database (not exhaustive): {sample_str}
+    - "laptop price", "laptop dam koto", "laptop er dam" → category="laptop"
+    - "mobile kinte chai" → category="mobile"
+    - "ac price" → category="AC"
+    - If the user wrote a recognisable product type word, always extract it as category.
+    - NEVER leave category="" if a product type word is present in the message.
+    2. "brand" = brand name the user wrote, lowercase. "" if absent.
+    A brand is a manufacturer name (samsung, hp, dell, walton) NOT a product type.
+    3. "title" = specific model or variant (e.g. "iphone 15 pro", "galaxy s24"). "" if absent.
+    4. Budget: "50k"=50000, "30 hazar"=30000, "under 20k"→price_max=20000. null if absent.
+    5. is_followup = true ONLY when the message contains NO product type word AND relies entirely
+    on previous context (e.g. user says only a number, only a brand, only a price range).
+    If the message contains a product type word, is_followup = false regardless of context.
 
-PREVIOUS CONTEXT (use only to detect is_followup; do NOT copy fields into entities):
-{json.dumps(previous_intent or {}, ensure_ascii=False)}
-"""
+    MISSING ARRAY RULES:
+    - For intents product_search, price_query, comparison: if category="" after extraction, add "category" to missing[].
+    - For all other intents: missing = [].
+
+    BANGLISH / BANGLA EXAMPLES (understand by meaning, not just keyword):
+    - "laptop price", "laptop dam koto", "laptop er dam koto"   → intent=price_query, category=laptop
+    - "mobile price list", "phone dekhao"                       → intent=product_search, category=mobile
+    - "konta valo", "which is better", "কোনটা ভালো"            → intent=comparison
+    - "kivabe order korbo", "how to buy", "buy process"         → intent=buy
+    - "pore kinbo", "pore janabo", "ekhon na", "notun kichu lagbe na",
+    "পরে জানাবো", "পরে কিনবো", "এখন লাগবে না"              → intent=exit
+    - "delivery koto din", "delivery charge koto"               → intent=delivery
+    - "refund chai", "baje product", "প্রতারণা"                → intent=complaint
+    - "human chai", "agent er sathe kotha bolte chai"           → intent=human_request
+    - "price koto" with NO product type word in message         → intent=price_query, category=""
+
+    PREVIOUS CONTEXT (for is_followup detection only — do NOT copy fields into entities):
+    {json.dumps(previous_intent or {}, ensure_ascii=False)}
+    """
 
         user_prompt = f"""Recent conversation:
-{conversation_context or 'N/A'}
+    {conversation_context or 'N/A'}
 
-Current user message:
-{message}
+    Current user message:
+    {message}
 
-Return ONLY the JSON object."""
+    Return ONLY the JSON object."""
 
         try:
             response = self.groq_client.chat.completions.create(
@@ -936,7 +948,7 @@ Return ONLY the JSON object."""
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.1,
+                temperature=0.0,
                 max_tokens=400,
                 response_format={"type": "json_object"}
             )
@@ -950,40 +962,9 @@ Return ONLY the JSON object."""
             logger.warning("Groq call failed: %s", e)
             return self._minimal_fallback(message)
 
-    def _validate_groq_schema(self, parsed: Dict) -> Dict[str, Any]:
-        intent = str(parsed.get('intent', 'unknown')).lower().strip()
-        if intent not in VALID_INTENTS:
-            intent = 'unknown'
 
-        entities = parsed.get('entities') or {}
-        category = str(entities.get('category') or '').strip()
-        brand = str(entities.get('brand') or '').strip().lower()
-        title = str(entities.get('title') or '').strip()
 
-        def _coerce_price(v):
-            if v is None or v == '':
-                return None
-            try:
-                n = int(float(v))
-                return n if 0 < n < 100_000_000 else None
-            except (ValueError, TypeError):
-                return None
 
-        price_max = _coerce_price(entities.get('price_max'))
-        price_min = _coerce_price(entities.get('price_min'))
-
-        missing = [str(m) for m in (parsed.get('missing') or []) if isinstance(m, str)]
-
-        return {
-            'intent': intent,
-            'entities': {
-                'category': category, 'brand': brand, 'title': title,
-                'price_max': price_max, 'price_min': price_min,
-            },
-            'missing': missing,
-            'is_followup': bool(parsed.get('is_followup', False)),
-            'confidence': max(0.0, min(1.0, float(parsed.get('confidence', 0.5)))),
-        }
 
     def _minimal_fallback(self, message: str) -> Dict[str, Any]:
         """
