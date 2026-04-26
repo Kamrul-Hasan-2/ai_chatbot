@@ -1,19 +1,20 @@
 """
 Simple Chatbot Flow — refactored with separated intent handlers.
 =================================================================
-Strict rules enforced (per spec):
-- Rule 1: NO HARDCODING — categories/brands/products come only from APIs/runtime
-- Rule 2: API-only — no static fallback data
-- Rule 3: every bot reply persists intent_content (via app_simple.save_chat_message)
-- Rule 4: category mandatory for product/price/compare/order intents
-- Rule 5: category validated via CategoryValidator (cat_list API)
-- Rule 6: category switch → FULL reset
-- Rule 7: post-merge category guard — empty category → ask user
-- Rule 8: separated handlers per intent
-- Rule 9: comparison/buy intents return fixed messages
+Rules:
+- Rule 1:  NO HARDCODING — categories/brands/products come only from APIs/runtime
+- Rule 2:  API-only — no static fallback data
+- Rule 3:  every bot reply returns intent_content; saving is done by the API layer
+- Rule 4:  category mandatory for product/price/compare/order intents
+- Rule 5:  category validated via CategoryValidator (cat_list API)
+- Rule 6:  category switch → FULL reset
+- Rule 7:  post-merge category guard — empty category → ask user
+- Rule 8:  separated handlers per intent
+- Rule 9:  comparison/buy intents return fixed messages
 - Rule 10: short message + previous context = follow-up (category must still exist)
-- Rule 11: human handoff only on explicit request, complaint, or 3 failed clarifications
+- Rule 11: human handoff only on explicit request or complaint
 - Rule 12: intent_content schema = {title, cat, brand, price, compare, buy}
+- Rule 13: mode NEVER stored in memory — responder API is sole source of truth
 """
 import os
 import sys
@@ -82,11 +83,9 @@ VALID_INTENTS = {
     'buy', 'exit', 'unknown'
 }
 
-# Intents that REQUIRE a category (Rule 4)
 PRODUCT_RELATED_INTENTS = {'product_search', 'price_query', 'comparison', 'ordering'}
 
-CONTEXT_TTL_SECONDS = 1800       # 30 min
-MAX_CLARIFICATION_ATTEMPTS = 3   # Rule 11
+CONTEXT_TTL_SECONDS = 1800
 
 CATEGORY_PROMPT = (
     "Apni kon category khujchen sir? "
@@ -123,7 +122,6 @@ class SimpleChatbot:
             r'মানুষ|প্রতিনিধি|কাস্টমার|এজেন্ট)\b',
             re.IGNORECASE,
         ),
-        # Point 4: buy intent
         'buy': re.compile(
             r'\b(how\s*to\s*buy|how\s*to\s*order|how\s*to\s*purchase|'
             r'kivabe\s*(buy|order|kini|purchase)|'
@@ -131,18 +129,13 @@ class SimpleChatbot:
             r'order\s*process|buy\s*process|buying\s*guide)\b',
             re.IGNORECASE,
         ),
-        # Point 5: exit / purchase-later intent
         'exit': re.compile(
-            r'\b(pore\s*kinbo|pore\s*nebo|later|'
-            r'good\s*bye|alvida|boro|bor|'
-            r'পরে\s*কিনবো|পরে\s*নেবো|পরে\s*দেখবো|'
-            r'ভালো\s*থাকবেন|আবার\s*আসবো|'
-            r'notun\s*kichu\s*lagbe\s*na|'
-            r'এখন\s*লাগবে\s*না|পরে\s*হবে)\b',
+            r'\b(pore\s*kinbo|pore\s*janabo|pore\s*nebo|pore\s*dekhbo|ekhon\s*na|'
+            r'later|পরে\s*কিনবো|পরে\s*জানাবো|পরে\s*নেবো|পরে\s*দেখবো|'
+            r'এখন\s*লাগবে\s*না|পরে\s*হবে|notun\s*kichu\s*lagbe\s*na)\b',
             re.IGNORECASE,
         ),
     }
-
 
     COMPLAINT_PATTERNS = re.compile(
         r'\b(refund|complain|complaint|scam|fraud|cheat|fake|defect|broken|'
@@ -156,7 +149,6 @@ class SimpleChatbot:
         self.state_file = os.path.join(self.project_root, 'data', 'chatbot_state.json')
         self._state_lock = threading.Lock()
 
-        # Groq
         groq_api_key = os.getenv('GROQ_API_KEY')
         if groq_api_key and Groq:
             self.groq_client = Groq(api_key=groq_api_key)
@@ -165,9 +157,7 @@ class SimpleChatbot:
             self.groq_client = None
             logger.warning("⚠️ Groq API not available")
 
-        # Per-user state
-        
-        
+        # Per-user state — NO mode/status here (Rule 13)
         self.user_product_context: Dict[str, list] = {}
         self.user_selected_product: Dict[str, Dict[str, Any]] = {}
         self.user_order_context: Dict[str, bool] = {}
@@ -175,16 +165,13 @@ class SimpleChatbot:
         self.user_pending_product_query: Dict[str, Dict[str, Any]] = {}
         self.user_last_intent: Dict[str, str] = {}
         self.user_intent_content: Dict[str, Dict[str, Any]] = {}
-        
 
-        # Caches
+        # Caches (no responder cache — must always be live)
         self._search_cache: Dict[str, Tuple[float, Dict]] = {}
         self._search_cache_ttl = 300
         self._search_cache_max = 200
         self._history_cache: Dict[str, Tuple[float, str]] = {}
         self._history_cache_ttl = 60
-        self._responder_cache: Dict[str, Tuple[float, Optional[str]]] = {}
-        self._responder_cache_ttl = 60
 
         # BDStall config
         self.api_url = "https://www.bdstall.com/api/item/ai_search/"
@@ -225,7 +212,7 @@ class SimpleChatbot:
         logger.info("📂 Loaded %d categories", len(self.category_validator.names_english()))
 
     # ─────────────────────────────────────────────────────────────
-    # State persistence
+    # State persistence — mode/status excluded (Rule 13)
     # ─────────────────────────────────────────────────────────────
     def _load_state(self) -> None:
         try:
@@ -270,6 +257,7 @@ class SimpleChatbot:
                     raise
             except Exception as e:
                 logger.error("❌ State save failed: %s", e)
+
     # ─────────────────────────────────────────────────────────────
     # FAQ DB
     # ─────────────────────────────────────────────────────────────
@@ -316,7 +304,7 @@ class SimpleChatbot:
         return None
 
     # ─────────────────────────────────────────────────────────────
-    # Responder API
+    # Responder API — always live, never cached (Rule 13)
     # ─────────────────────────────────────────────────────────────
     def _check_responder_type(self, user_id: str) -> Optional[str]:
         now = time.time()
@@ -340,91 +328,118 @@ class SimpleChatbot:
             logger.warning("Responder check error: %s", e)
             return None
 
+    # ─────────────────────────────────────────────────────────────
+    # Public mode helpers (for API layer compatibility)
+    # ─────────────────────────────────────────────────────────────
+    def get_user_mode(self, user_id: str) -> str:
+        responder_type = self._check_responder_type(user_id)
+        return 'human' if responder_type == 'agent' else 'ai'
+
+    def switch_to_human(self, user_id: str) -> None:
+        try:
+            requests.post(
+                self.assign_agent_api_url,
+                json={'key': self.assign_agent_api_key, 'user_id': user_id, 'intent': 'manual_switch'},
+                timeout=5
+            )
+        except Exception as e:
+            logger.warning("switch_to_human failed: %s", e)
+
+    def switch_to_ai(self, user_id: str) -> None:
+        try:
+            requests.post(
+                self.assign_bot_api_url,
+                json={'key': self.api_key, 'user_id': user_id},
+                timeout=5
+            )
+        except Exception as e:
+            logger.warning("switch_to_ai failed: %s", e)
 
     # ═════════════════════════════════════════════════════════════
     # MAIN ENTRY
     # ═════════════════════════════════════════════════════════════
     def process_message(self, user_id: str, message: str) -> Dict[str, Any]:
-            try:
-                start_time = datetime.now()
-                logger.info("📨 user=%s msg=%r", user_id, message)
+        try:
+            start_time = datetime.now()
+            logger.info("📨 user=%s msg=%r", user_id, message)
 
-                if self._is_blocked_automated_message(message):
-                    return self._create_response(
-                        user_id=user_id, message=message, response="",
-                        mode=ChatMode.AI, intent='ignored_automated_template', products=None,
-                        processing_time=(datetime.now() - start_time).total_seconds(),
-                        conversation_status=AI_ACTIVE_STATUS
-                    )
+            if self._is_blocked_automated_message(message):
+                return self._create_response(
+                    user_id=user_id, message=message, response="",
+                    mode=ChatMode.AI, intent='ignored_automated_template', products=None,
+                    processing_time=(datetime.now() - start_time).total_seconds(),
+                    conversation_status=AI_ACTIVE_STATUS
+                )
 
-                # Mode derived live from responder API — never from memory
-                responder_type = self._check_responder_type(user_id)
-                if responder_type == 'agent':
-                    return self._create_response(
-                        user_id=user_id, message=message, response="",
-                        mode=ChatMode.HUMAN, intent='human_mode_active', products=None,
-                        processing_time=(datetime.now() - start_time).total_seconds(),
-                        conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
-                    )
+            # Mode derived live from responder API — never from memory (Rule 13)
+            responder_type = self._check_responder_type(user_id)
+            if responder_type == 'agent':
+                return self._create_response(
+                    user_id=user_id, message=message, response="",
+                    mode=ChatMode.HUMAN, intent='human_mode_active', products=None,
+                    processing_time=(datetime.now() - start_time).total_seconds(),
+                    conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
+                )
 
-                # FAST PATH: explicit human request
-                if self.FAST_PATH_PATTERNS['human_request'].search(message):
-                    return self._handoff_to_human(
-                        user_id, message, start_time,
-                        intent='explicit_human_request',
-                        response_text="স্যার, আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।"
-                    )
+            # FAST PATH: explicit human request
+            if self.FAST_PATH_PATTERNS['human_request'].search(message):
+                return self._handoff_to_human(
+                    user_id, message, start_time,
+                    intent='explicit_human_request',
+                    response_text="স্যার, আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।"
+                )
 
-                # FAST PATH: complaint
-                if self.COMPLAINT_PATTERNS.search(message):
-                    prev = self._normalize_intent_content_payload(
-                        self.user_intent_content.get(user_id) or {}
-                    )
-                    prev['complain'] = True
-                    self.user_intent_content[user_id] = prev
-                    return self._handoff_to_human(
-                        user_id, message, start_time, intent='complaint_handoff',
-                        response_text="স্যার, এই বিষয়ে আমাদের একজন প্রতিনিধি এখনই আপনার সাথে যোগাযোগ করবেন।"
-                    )
+            # FAST PATH: complaint
+            if self.COMPLAINT_PATTERNS.search(message):
+                prev = self._normalize_intent_content_payload(
+                    self.user_intent_content.get(user_id) or {}
+                )
+                prev['complain'] = True
+                self.user_intent_content[user_id] = prev
+                return self._handoff_to_human(
+                    user_id, message, start_time, intent='complaint_handoff',
+                    response_text="স্যার, এই বিষয়ে আমাদের একজন প্রতিনিধি এখনই আপনার সাথে যোগাযোগ করবেন।"
+                )
 
-                # FAST PATH: product selection (1-5)
-                selected_index = self._extract_product_selection(message)
-                user_products = self.user_product_context.get(user_id, [])
-                if selected_index and user_products and len(user_products) >= selected_index:
-                    selected = user_products[selected_index - 1]
-                    self.user_selected_product[user_id] = selected
-                    self._reset_clarification_counter(user_id)
-                    return self._create_response(
-                        user_id=user_id, message=message,
-                        response=self._format_selected_product_response(selected, selected_index),
-                        mode=ChatMode.AI, intent='product_selection', products=user_products,
-                        processing_time=(datetime.now() - start_time).total_seconds()
-                    )
+            # FAST PATH: product selection (1-5)
+            selected_index = self._extract_product_selection(message)
+            user_products = self.user_product_context.get(user_id, [])
+            if selected_index and user_products and len(user_products) >= selected_index:
+                selected = user_products[selected_index - 1]
+                self.user_selected_product[user_id] = selected
+                self._reset_clarification_counter(user_id)
+                return self._create_response(
+                    user_id=user_id, message=message,
+                    response=self._format_selected_product_response(selected, selected_index),
+                    mode=ChatMode.AI, intent='product_selection', products=user_products,
+                    processing_time=(datetime.now() - start_time).total_seconds()
+                )
 
-                # FAST PATH: order form
-                order_response = self._maybe_handle_order_flow(user_id, message, start_time)
-                if order_response is not None:
-                    return order_response
+            # FAST PATH: order form
+            order_response = self._maybe_handle_order_flow(user_id, message, start_time)
+            if order_response is not None:
+                return order_response
 
-                # FAST PATH: regex-matched simple intents
-                fast_intent = self._fast_path_intent(message)
-                if fast_intent:
-                    return self._handle_fast_path(user_id, message, fast_intent, start_time)
+            # FAST PATH: regex-matched simple intents
+            fast_intent = self._fast_path_intent(message)
+            if fast_intent:
+                return self._handle_fast_path(user_id, message, fast_intent, start_time)
 
-                # MAIN PATH: Groq → resolve → merge → route
-                return self._handle_main_flow(user_id, message, start_time)
+            # MAIN PATH: Groq → resolve → merge → route
+            return self._handle_main_flow(user_id, message, start_time)
 
-            except Exception as e:
-                logger.error("❌ Unhandled error: %s", e, exc_info=True)
-                return {
-                    'response': "দুঃখিত স্যার, একটি সমস্যা হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।",
-                    'mode': 'ai',
-                    'intent': 'system_error',
-                    'conversation_status': AI_ACTIVE_STATUS,
-                    'products': [],
-                    'processing_time': 0.0,
-                    'error': str(e)
-                }
+        except Exception as e:
+            logger.error("❌ Unhandled error: %s", e, exc_info=True)
+            return {
+                'response': "দুঃখিত স্যার, একটি সমস্যা হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।",
+                'mode': 'ai',
+                'intent': 'system_error',
+                'intent_content': {},
+                'conversation_status': AI_ACTIVE_STATUS,
+                'products': [],
+                'processing_time': 0.0,
+                'error': str(e)
+            }
 
     # ─────────────────────────────────────────────────────────────
     # Fast path (regex, no Groq)
@@ -435,8 +450,7 @@ class SimpleChatbot:
             return None
         for name in ('greeting', 'goodbye', 'thanks', 'ok_ack', 'buy', 'exit'):
             pat = self.FAST_PATH_PATTERNS[name]
-            # buy/exit use search; greeting/goodbye/thanks/ok_ack use match
-            if name in ('buy', 'exit', 'human_request'):
+            if name in ('buy', 'exit'):
                 if pat.search(msg):
                     return name
             else:
@@ -445,7 +459,7 @@ class SimpleChatbot:
         return None
 
     def _handle_fast_path(self, user_id: str, message: str, intent: str,
-                        start_time: datetime) -> Dict[str, Any]:
+                          start_time: datetime) -> Dict[str, Any]:
         self._reset_clarification_counter(user_id)
 
         if intent == 'greeting':
@@ -480,6 +494,7 @@ class SimpleChatbot:
             return self.handle_buy(user_id, message, start_time)
         if intent == 'exit':
             return self.handle_exit(user_id, message, start_time)
+        # ok_ack / catch-all
         return self._create_response(
             user_id=user_id, message=message,
             response="ধন্যবাদ স্যার, আর কিভাবে আমি আপনাকে সাহায্য করতে পারি?",
@@ -489,19 +504,17 @@ class SimpleChatbot:
         )
 
     # ═════════════════════════════════════════════════════════════
-    # MAIN flow — routes to separated intent handlers (Rule 8)
+    # MAIN flow
     # ═════════════════════════════════════════════════════════════
     def _handle_main_flow(self, user_id: str, message: str,
-                        start_time: datetime) -> Dict[str, Any]:
-        # 1. Extract via Groq — single source of truth for intent + entities
+                          start_time: datetime) -> Dict[str, Any]:
         conversation_context = self._get_history_cached(user_id)
         previous_intent = self._load_previous_intent(user_id)
         groq_result = self._step1_groq_extract(message, conversation_context, previous_intent)
         intent = groq_result['intent']
         entities = groq_result['entities']
 
-        # 2. Validate category against cat_list ONLY if Groq explicitly returned one (Rule 5)
-        #    Never inject a category by scanning the raw message — that bypasses Groq.
+        # Validate category — only if Groq explicitly returned one
         resolved_cat = None
         if entities.get('category'):
             resolved_cat = self.category_validator.resolve(entities['category'])
@@ -511,13 +524,9 @@ class SimpleChatbot:
                     intent, entities, groq_result['is_followup'],
                     resolved_cat['category_name'] if resolved_cat else None)
 
-        # 3. Merge / reset (Rules 6 & 10)
         merged = self._merge_intent_context(user_id, groq_result, previous_intent, intent)
-
-        # 4. Persist current view
         self.user_intent_content[user_id] = self._intent_to_normalized(merged, message)
 
-        # 5. Route to dedicated handler (Rule 8)
         if intent == 'comparison':
             return self.handle_comparison(user_id, message, merged, start_time)
         if intent in ('ordering', 'buy'):
@@ -536,23 +545,14 @@ class SimpleChatbot:
         if intent == 'product_search':
             return self.handle_product_search(user_id, message, merged, start_time)
 
-        # unknown / fallback
         return self.handle_fallback(user_id, message, merged, start_time)
 
-
     # ═════════════════════════════════════════════════════════════
-    # SEPARATED INTENT HANDLERS (Rule 8)
+    # INTENT HANDLERS
     # ═════════════════════════════════════════════════════════════
 
     def handle_product_search(self, user_id: str, message: str, merged: Dict,
-                            start_time: datetime) -> Dict[str, Any]:
-        """
-        Purpose: Search products using validated category + brand + title + price.
-        Trigger: intent=product_search
-        Required fields: category (mandatory). Brand/title/price optional.
-        Fallback: empty category → ask user. No results → broaden once → message.
-        Example: "hp laptop under 50k" → search "hp laptop 50000"
-        """
+                              start_time: datetime) -> Dict[str, Any]:
         if not merged.get('category'):
             return self._ask_for_category(user_id, message, merged, start_time)
 
@@ -602,23 +602,11 @@ class SimpleChatbot:
             processing_time=(datetime.now() - start_time).total_seconds()
         )
 
-
-
     def handle_price_query(self, user_id: str, message: str, merged: Dict,
-                        start_time: datetime) -> Dict[str, Any]:
-        """
-        Purpose: Answer "price koto?" type questions.
-        Trigger: intent=price_query
-        Required fields: category is always mandatory first (Rule 4/7).
-        Flow: category missing → ask. Category present + context → list prices.
-            Category present + no context → search then list.
-        Example: "price koto" alone → ask category. "price koto" after laptop search → list prices.
-        """
-        # Rule 7: category is mandatory even for price queries — ask first
+                           start_time: datetime) -> Dict[str, Any]:
         if not merged.get('category'):
             return self._ask_for_category(user_id, message, merged, start_time)
 
-        # Category is confirmed — now try to answer from existing context
         ctx_reply = self._reply_price_from_context(user_id)
         if ctx_reply:
             self._reset_clarification_counter(user_id)
@@ -630,18 +618,10 @@ class SimpleChatbot:
                 conversation_status=AI_ACTIVE_STATUS
             )
 
-        # Category known but no products in context yet → search
         return self.handle_product_search(user_id, message, merged, start_time)
 
     def handle_comparison(self, user_id: str, message: str, merged: Dict,
                           start_time: datetime) -> Dict[str, Any]:
-        """
-        Purpose: Respond to "konta valo" / "which is better" with a fixed redirect (Rule 9).
-        Trigger: intent=comparison
-        Required fields: category (mandatory).
-        Fallback: empty category → ask user.
-        Example: "konta valo" with prior laptop context → redirect to laptop reviews.
-        """
         if not merged.get('category'):
             return self._ask_for_category(user_id, message, merged, start_time)
 
@@ -656,45 +636,12 @@ class SimpleChatbot:
             conversation_status=AI_ACTIVE_STATUS
         )
 
-    def handle_ordering(self, user_id: str, message: str, merged: Dict,
-                        start_time: datetime) -> Dict[str, Any]:
-        """
-        Purpose: Respond to "order korbo kibabe" with fixed buy-guide message (Rule 9).
-        Trigger: intent=ordering
-        Required fields: category (mandatory per Rule 4).
-        Fallback: empty category → ask user.
-        Example: "kivabe order korbo laptop" → fixed shopping-guide reply.
-        """
-        if not merged.get('category'):
-            return self._ask_for_category(user_id, message, merged, start_time)
-
-        self._reset_clarification_counter(user_id)
-        return self._create_response(
-            user_id=user_id, message=message,
-            response=self._build_order_guide_response(),
-            mode=ChatMode.AI, intent='ordering', products=None,
-            link_buttons=[{
-                'text': 'Shopping Guide',
-                'url': 'https://www.bdstall.com/blog/safe-shopping-guide/'
-            }],
-            intent_content=self._intent_to_normalized(merged, message),
-            processing_time=(datetime.now() - start_time).total_seconds(),
-            conversation_status=AI_ACTIVE_STATUS
-        )
     def handle_buy(self, user_id: str, message: str,
-                start_time: datetime) -> Dict[str, Any]:
-        """
-        Purpose: Answer "how to buy / kivabe order korbo" with a fixed guide message.
-        Trigger: intent=buy (fast-path regex) or intent=ordering from Groq.
-        Required fields: none — this is a process question, not product-specific.
-        Fallback: none needed; message is always returned.
-        Note: fixed message only for now — update this function when buy flow is ready.
-        """
+                   start_time: datetime) -> Dict[str, Any]:
         self._reset_clarification_counter(user_id)
-        response = "স্যার এই লিংকে গিয়ে আপনি দেখতে পারেন কিভাবে অর্ডার অথবা বাই করা যায়"
         return self._create_response(
             user_id=user_id, message=message,
-            response=response,
+            response="স্যার এই লিংকে গিয়ে আপনি দেখতে পারেন কিভাবে অর্ডার অথবা বাই করা যায়",
             mode=ChatMode.AI, intent='buy', products=None,
             link_buttons=[{
                 'text': 'Shopping Guide',
@@ -706,14 +653,9 @@ class SimpleChatbot:
             processing_time=(datetime.now() - start_time).total_seconds(),
             conversation_status=AI_ACTIVE_STATUS
         )
+
     def handle_exit(self, user_id: str, message: str,
                     start_time: datetime) -> Dict[str, Any]:
-        """
-        Purpose: Handle "pore kinbo / purchase later / good bye" gracefully.
-        Trigger: intent=exit (fast-path regex).
-        Required fields: none.
-        Side-effect: sets intent_content['exit'] = 1, saves via chatbot_save_message.
-        """
         self._reset_clarification_counter(user_id)
         prev = self._normalize_intent_content_payload(
             self.user_intent_content.get(user_id) or {}
@@ -729,29 +671,10 @@ class SimpleChatbot:
             conversation_status=AI_ACTIVE_STATUS
         )
 
-
     def handle_delivery(self, user_id: str, message: str, merged: Dict,
-                            start_time: datetime) -> Dict[str, Any]:
-            self._reset_clarification_counter(user_id)
-            tmpl = self._fetch_delivery_intent_response()
-            if tmpl:
-                return self._create_response(
-                    user_id=user_id, message=message, response=tmpl,
-                    mode=ChatMode.AI, intent='delivery', products=None,
-                    intent_content=self._intent_to_normalized(merged, message),
-                    processing_time=(datetime.now() - start_time).total_seconds()
-                )
-            faq = self._search_database_faq(message)
-            if faq:
-                return self._create_response(
-                    user_id=user_id, message=message, response=faq,
-                    mode=ChatMode.AI, intent='delivery', products=None,
-                    intent_content=self._intent_to_normalized(merged, message),
-                    processing_time=(datetime.now() - start_time).total_seconds()
-                )
-            return self.handle_fallback(user_id, message, merged, start_time)
-    def _reset_clarification_counter(self, user_id: str) -> None:
-        pass  # Counter removed — human handoff is handled by the responder API
+                        start_time: datetime) -> Dict[str, Any]:
+        self._reset_clarification_counter(user_id)
+        tmpl = self._fetch_delivery_intent_response()
         if tmpl:
             return self._create_response(
                 user_id=user_id, message=message, response=tmpl,
@@ -771,15 +694,7 @@ class SimpleChatbot:
 
     def handle_faq(self, user_id: str, message: str, merged: Dict,
                    start_time: datetime) -> Dict[str, Any]:
-        """
-        Purpose: Answer common questions from local FAQ database.
-        Trigger: intent=faq
-        Required fields: none.
-        Fallback: no FAQ match → fallback handler.
-        Example: "kivabe order korbo" → DB lookup for ordering steps.
-        """
-        def _reset_clarification_counter(self, user_id: str) -> None:
-        pass  # Counter removed — human handoff is handled by the responder API
+        self._reset_clarification_counter(user_id)
         faq = self._search_database_faq(message)
         if faq:
             return self._create_response(
@@ -792,19 +707,9 @@ class SimpleChatbot:
 
     def handle_fallback(self, user_id: str, message: str, merged: Dict,
                         start_time: datetime) -> Dict[str, Any]:
-        """
-        Purpose: Handle unknown / unclear messages without guessing.
-        Trigger: intent=unknown OR no other handler matched.
-        Special case: single-word or short messages that are a valid category name
-        (e.g. user replied "laptop" to a category question) — treat as product_search.
-        Fallback: counts attempts on truly empty messages; after 3 → human handoff.
-        """
-        # If category is already in merged (Groq found it), route to product search
         if merged.get('category'):
             return self.handle_product_search(user_id, message, merged, start_time)
 
-        # Try to resolve the message itself as a category reply
-        # (covers: user replies "laptop" to the category question)
         resolved = self.category_validator.resolve(message.strip())
         if resolved:
             merged['category'] = resolved['category_name']
@@ -812,24 +717,12 @@ class SimpleChatbot:
             return self.handle_product_search(user_id, message, merged, start_time)
 
         return self._ask_for_category(user_id, message, merged, start_time)
+
     # ─────────────────────────────────────────────────────────────
-    # Ask for category (Rule 4 + Rule 11 attempt counter)
+    # Ask for category
     # ─────────────────────────────────────────────────────────────
     def _ask_for_category(self, user_id: str, message: str, merged: Dict,
-                      start_time: datetime) -> Dict[str, Any]:
-        attempts = self.user_clarification_attempts.get(user_id, 0) + 1
-        self.user_clarification_attempts[user_id] = attempts
-
-        if attempts >= MAX_CLARIFICATION_ATTEMPTS:
-            self._reset_clarification_counter(user_id)
-            return self._handoff_to_human(
-                user_id, message, start_time,
-                intent='repeated_clarification_failure',
-                response_text="স্যার, আমাদের একজন প্রতিনিধি এই বিষয়ে আপনাকে সাহায্য করবেন।"
-            )
-
-        self.user_modes[user_id] = ChatMode.AI
-        self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
+                          start_time: datetime) -> Dict[str, Any]:
         return self._create_response(
             user_id=user_id, message=message, response=CATEGORY_PROMPT,
             mode=ChatMode.AI, intent='need_category', products=None,
@@ -837,6 +730,9 @@ class SimpleChatbot:
             processing_time=(datetime.now() - start_time).total_seconds(),
             conversation_status=AI_ACTIVE_STATUS
         )
+
+    def _reset_clarification_counter(self, user_id: str) -> None:
+        pass  # Counter removed — human handoff handled by responder API
 
     # ─────────────────────────────────────────────────────────────
     # Groq extraction
@@ -850,89 +746,89 @@ class SimpleChatbot:
         sample_str = ", ".join(sample_categories) if sample_categories else "(none loaded yet)"
 
         system_prompt = f"""You are a strict JSON extractor for a Bangladeshi e-commerce chatbot (BDStall).
-    The user may write in English, Bangla, or Banglish (romanised Bangla). Understand all three equally.
-    Return ONLY valid JSON. No prose, no markdown, no explanation.
+The user may write in English, Bangla, or Banglish (romanised Bangla). Understand all three equally.
+Return ONLY valid JSON. No prose, no markdown, no explanation.
 
-    SCHEMA:
-    {{
-    "intent": string,
-    "entities": {{
-        "category": string,
-        "brand": string,
-        "title": string,
-        "price_max": integer or null,
-        "price_min": integer or null
-    }},
-    "missing": array of strings,
-    "is_followup": boolean,
-    "confidence": number 0-1
-    }}
+SCHEMA:
+{{
+  "intent": string,
+  "entities": {{
+    "category": string,
+    "brand": string,
+    "title": string,
+    "price_max": integer or null,
+    "price_min": integer or null
+  }},
+  "missing": array of strings,
+  "is_followup": boolean,
+  "confidence": number 0-1
+}}
 
-    INTENT VALUES (pick exactly one):
-    product_search | price_query | comparison | buy | exit | delivery | greeting | goodbye | thanks | complaint | faq | human_request | unknown
+INTENT VALUES (pick exactly one):
+product_search | price_query | comparison | buy | exit | delivery | greeting | goodbye | thanks | complaint | faq | human_request | unknown
 
-    INTENT DEFINITIONS:
-    - product_search : user wants to see, find, or browse products
-    - price_query    : user is asking about price or cost of a product/category
-    - comparison     : user wants to compare products or know which is better
-    - buy            : user wants to know HOW to buy or place an order (process question)
-    - exit           : user is leaving, says later / not now / will come back
-    - delivery       : user asks about delivery time, charge, or process
-    - greeting       : hello / hi / salam with no product intent
-    - goodbye        : farewell with no product intent
-    - thanks         : thank you messages
-    - complaint      : refund, scam, broken product, bad experience
-    - faq            : general questions about the site or policies
-    - human_request  : user wants to speak to a human agent
-    - unknown        : truly cannot determine
+INTENT DEFINITIONS:
+- product_search : user wants to see, find, or browse products
+- price_query    : user is asking about price or cost of a product/category
+- comparison     : user wants to compare products or know which is better
+- buy            : user wants to know HOW to buy or place an order (process question)
+- exit           : user is leaving, says later / not now / will come back
+- delivery       : user asks about delivery time, charge, or process
+- greeting       : hello / hi / salam with no product intent
+- goodbye        : farewell with no product intent
+- thanks         : thank you messages
+- complaint      : refund, scam, broken product, bad experience
+- faq            : general questions about the site or policies
+- human_request  : user wants to speak to a human agent
+- unknown        : truly cannot determine
 
-    CATEGORY EXTRACTION — most important rule:
-    A "category" is a generic product type. Known examples (not exhaustive): {sample_str}
-    RULES:
-    - If the message contains a recognisable product type word → ALWAYS set category to that word.
-    - A single word that is a product type (e.g. "laptop", "mobile", "AC", "fridge") → category = that word, intent = product_search.
-    - "laptop price" / "laptop dam koto" / "laptop er dam" → category="laptop", intent=price_query.
-    - "hp laptop" → brand="hp", category="laptop".
-    - "hp 840 g3" → brand="hp", title="840 g3", category="" (no product type word present — add "category" to missing[]).
-    - NEVER leave category="" if a product type word exists anywhere in the message.
+CATEGORY EXTRACTION — most important rule:
+A "category" is a generic product type. Known examples (not exhaustive): {sample_str}
+RULES:
+- If the message contains a recognisable product type word → ALWAYS set category to that word.
+- A single word that is a product type (e.g. "laptop", "mobile", "AC", "fridge") → category = that word, intent = product_search.
+- "laptop price" / "laptop dam koto" / "laptop er dam" → category="laptop", intent=price_query.
+- "hp laptop" → brand="hp", category="laptop".
+- "hp 840 g3" → brand="hp", title="840 g3", category="" (no product type word — add "category" to missing[]).
+- NEVER leave category="" if a product type word exists anywhere in the message.
 
-    BRAND vs CATEGORY:
-    - brand = manufacturer name (samsung, hp, dell, apple, walton, asus, acer, lenovo).
-    - category = product type (laptop, mobile, phone, AC, fridge, television, tablet).
-    - "samsung" alone → brand="samsung", category="" (missing).
-    - "samsung mobile" → brand="samsung", category="mobile".
+BRAND vs CATEGORY:
+- brand = manufacturer name (samsung, hp, dell, apple, walton, asus, acer, lenovo).
+- category = product type (laptop, mobile, phone, AC, fridge, television, tablet).
+- "samsung" alone → brand="samsung", category="" (missing).
+- "samsung mobile" → brand="samsung", category="mobile".
 
-    is_followup RULE:
-    - true ONLY when message has NO product type word AND depends entirely on previous context.
-    - If any product type word is present → is_followup = false.
-    - "hp 840 g3" → is_followup=true (no product type, relies on context for category).
-    - "laptop price" → is_followup=false (product type "laptop" is present).
+is_followup RULE:
+- true ONLY when message has NO product type word AND depends entirely on previous context.
+- If any product type word is present → is_followup = false.
+- "hp 840 g3" → is_followup=true (no product type, relies on context for category).
+- "laptop price" → is_followup=false (product type "laptop" is present).
 
-    MISSING ARRAY:
-    - Add "category" to missing[] when intent is product_search, price_query, or comparison AND category="".
-    - All other intents: missing=[].
+MISSING ARRAY:
+- Add "category" to missing[] when intent is product_search, price_query, or comparison AND category="".
+- All other intents: missing=[].
 
-    BUDGET PARSING: "50k"=50000, "30 hazar"=30000, "under 20k"→price_max=20000. null if absent.
+BUDGET PARSING: "50k"=50000, "30 hazar"=30000, "under 20k"→price_max=20000. null if absent.
 
-    BANGLISH / BANGLA QUICK REFERENCE:
-    - "pore kinbo", "pore janabo", "ekhon na", "পরে জানাবো", "এখন লাগবে না" → exit
-    - "kivabe order korbo", "how to buy"                                       → buy
-    - "konta valo", "which is better", "কোনটা ভালো"                           → comparison
-    - "delivery koto din", "delivery charge"                                   → delivery
-    - "refund chai", "baje", "faltu", "kharap"                                 → complaint
-    - "human chai", "agent er sathe kotha"                                     → human_request
+BANGLISH / BANGLA QUICK REFERENCE:
+- "pore kinbo", "pore janabo", "ekhon na", "পরে জানাবো", "এখন লাগবে না" → exit
+- "kivabe order korbo", "how to buy"                                       → buy
+- "konta valo", "which is better", "কোনটা ভালো"                           → comparison
+- "delivery koto din", "delivery charge"                                   → delivery
+- "refund chai", "baje", "faltu", "kharap"                                 → complaint
+- "human chai", "agent er sathe kotha"                                     → human_request
 
-    PREVIOUS CONTEXT (is_followup detection only — do NOT copy into entities):
-    {json.dumps(previous_intent or {}, ensure_ascii=False)}
-    """
+PREVIOUS CONTEXT (is_followup detection only — do NOT copy into entities):
+{json.dumps(previous_intent or {}, ensure_ascii=False)}
+"""
 
         user_prompt = f"""Recent conversation:
-    {conversation_context or 'N/A'}
+{conversation_context or 'N/A'}
 
-    Current user message:
-    {message}
+Current user message:
+{message}
 
-    Return ONLY the JSON object."""
+Return ONLY the JSON object."""
 
         try:
             response = self.groq_client.chat.completions.create(
@@ -955,16 +851,42 @@ class SimpleChatbot:
             logger.warning("Groq call failed: %s", e)
             return self._minimal_fallback(message)
 
+    def _validate_groq_schema(self, parsed: Dict) -> Dict[str, Any]:
+        intent = str(parsed.get('intent', 'unknown')).lower().strip()
+        if intent not in VALID_INTENTS:
+            intent = 'unknown'
 
+        entities = parsed.get('entities') or {}
+        category = str(entities.get('category') or '').strip()
+        brand = str(entities.get('brand') or '').strip().lower()
+        title = str(entities.get('title') or '').strip()
 
+        def _coerce_price(v):
+            if v is None or v == '':
+                return None
+            try:
+                n = int(float(v))
+                return n if 0 < n < 100_000_000 else None
+            except (ValueError, TypeError):
+                return None
+
+        price_max = _coerce_price(entities.get('price_max'))
+        price_min = _coerce_price(entities.get('price_min'))
+        missing = [str(m) for m in (parsed.get('missing') or []) if isinstance(m, str)]
+
+        return {
+            'intent': intent,
+            'entities': {
+                'category': category, 'brand': brand, 'title': title,
+                'price_max': price_max, 'price_min': price_min,
+            },
+            'missing': missing,
+            'is_followup': bool(parsed.get('is_followup', False)),
+            'confidence': max(0.0, min(1.0, float(parsed.get('confidence', 0.5)))),
+        }
 
     def _minimal_fallback(self, message: str) -> Dict[str, Any]:
-        """
-        Emergency fallback used ONLY when Groq is unavailable or throws.
-        No keyword dictionaries — Groq is the sole intent classifier.
-        Only regex fast-path patterns (greetings, explicit human request, complaint)
-        are safe to detect without AI; everything else becomes unknown.
-        """
+        """Emergency fallback — only when Groq is unavailable."""
         budget = self._extract_budget_range(message)
 
         if self.FAST_PATH_PATTERNS['greeting'].match(message):
@@ -996,9 +918,6 @@ class SimpleChatbot:
             'confidence': 0.3,
         }
 
-
-
-
     # ─────────────────────────────────────────────────────────────
     # Context merge (Rules 6, 7, 10)
     # ─────────────────────────────────────────────────────────────
@@ -1013,19 +932,12 @@ class SimpleChatbot:
                     return {}
             except Exception:
                 pass
-        # Translate stored 'cat' back to 'category' for merge logic
         if prev.get('cat') and not prev.get('category'):
             prev['category'] = prev['cat']
         return prev
 
     def _merge_intent_context(self, user_id: str, groq_result: Dict,
-                            previous: Dict, intent: str = '') -> Dict:
-        """
-        Rule 6: category switch → FULL reset.
-        Rule 10: genuine follow-up → merge previous fields.
-        NEW: product-related intent with no new category and is_followup=False
-            → do NOT bleed previous category in; let the handler ask for it.
-        """
+                              previous: Dict, intent: str = '') -> Dict:
         new_entities = groq_result['entities']
         new_category = new_entities.get('category', '')
         prev_category = previous.get('category', '')
@@ -1044,10 +956,6 @@ class SimpleChatbot:
                 'updated_at': datetime.now().isoformat(),
             }
 
-        # Determine whether previous category should carry forward:
-        # Only carry it if Groq marked this as a follow-up OR it is not a product-related intent.
-        # For product intents where Groq found no category and is_followup=False,
-        # the category is genuinely missing — the handler must ask.
         carry_prev_category = (
             is_followup
             or intent not in PRODUCT_RELATED_INTENTS
@@ -1056,26 +964,20 @@ class SimpleChatbot:
 
         effective_category = new_category or (prev_category if carry_prev_category else '')
 
-        # If category changed as a result of carry-forward, still do a reset on the product cache
-        if (not new_category and carry_prev_category and prev_category
-                and prev_category != effective_category):
-            self._clear_product_search_cache(user_id, clear_pending=True)
-
         return {
             'category': effective_category,
             'brand': new_entities.get('brand') or previous.get('brand', ''),
             'title': new_entities.get('title') or previous.get('title', ''),
             'price_max': (new_entities.get('price_max')
-                        if new_entities.get('price_max') is not None
-                        else previous.get('price_max')),
+                          if new_entities.get('price_max') is not None
+                          else previous.get('price_max')),
             'price_min': (new_entities.get('price_min')
-                        if new_entities.get('price_min') is not None
-                        else previous.get('price_min')),
+                          if new_entities.get('price_min') is not None
+                          else previous.get('price_min')),
             'updated_at': datetime.now().isoformat(),
         }
 
     def _intent_to_normalized(self, merged: Dict, message: str) -> Dict[str, Any]:
-        """Build intent_content payload for save (Rule 12)."""
         price_max = merged.get('price_max')
         price_min = merged.get('price_min')
         if price_min and price_max:
@@ -1255,7 +1157,7 @@ class SimpleChatbot:
             return {'products_found': 0, 'products': []}
 
     # ─────────────────────────────────────────────────────────────
-    # History (cached)
+    # History
     # ─────────────────────────────────────────────────────────────
     def _get_history_cached(self, user_id: str) -> str:
         now = time.time()
@@ -1467,7 +1369,6 @@ class SimpleChatbot:
         return text
 
     def _format_product_listing(self, products: list) -> Tuple[str, List[Dict]]:
-        """Returns (text, link_buttons) — title + price in text, one View button per product."""
         text = "স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
         link_buttons = []
         for i, p in enumerate(products[:3], 1):
@@ -1508,7 +1409,7 @@ class SimpleChatbot:
         return "\n".join(lines)
 
     # ─────────────────────────────────────────────────────────────
-    # Fixed messages (Rule 9)
+    # Fixed messages
     # ─────────────────────────────────────────────────────────────
     def _build_comparison_redirect_response(self) -> str:
         return ("স্যার, আমাদের সকল প্রোডাক্টই ভালো। "
@@ -1574,8 +1475,19 @@ class SimpleChatbot:
         ]
         return sum(1 for p in blocked if p in text) >= 2
 
-# ─────────────────────────────────────────────────────────────
-    # Human handoff (Rule 11)
+    # ─────────────────────────────────────────────────────────────
+    # Cache helpers
+    # ─────────────────────────────────────────────────────────────
+    def _clear_product_search_cache(self, user_id: str, clear_pending: bool = False) -> None:
+        self.user_product_context.pop(user_id, None)
+        self.user_selected_product.pop(user_id, None)
+        if clear_pending:
+            self.user_pending_product_query.pop(user_id, None)
+            self.user_order_context.pop(user_id, None)
+            self.user_order_draft.pop(user_id, None)
+
+    # ─────────────────────────────────────────────────────────────
+    # Human handoff
     # ─────────────────────────────────────────────────────────────
     def _handoff_to_human(
         self,
@@ -1586,7 +1498,6 @@ class SimpleChatbot:
         response_text: str = "স্যার, আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।",
         error: Optional[str] = None,
     ) -> Dict[str, Any]:
-        # Call assign_agent API — this sets mode in the DB, which the responder API will reflect
         try:
             started = datetime.now()
             payload = {
@@ -1624,19 +1535,8 @@ class SimpleChatbot:
         )
 
     # ─────────────────────────────────────────────────────────────
-    # Cache helpers
-    # ─────────────────────────────────────────────────────────────
-    def _clear_product_search_cache(self, user_id: str, clear_pending: bool = False) -> None:
-        """Clear per-user product state on category switch or intent reset."""
-        self.user_product_context.pop(user_id, None)
-        self.user_selected_product.pop(user_id, None)
-        if clear_pending:
-            self.user_pending_product_query.pop(user_id, None)
-            self.user_order_context.pop(user_id, None)
-            self.user_order_draft.pop(user_id, None)
-
-    # ─────────────────────────────────────────────────────────────
-    # _create_response — single exit point (Rule 3)
+    # _create_response — single exit point
+    # Saving is done by the API layer (ai_simple_chat.py)
     # ─────────────────────────────────────────────────────────────
     def _create_response(
         self,
@@ -1662,27 +1562,16 @@ class SimpleChatbot:
         else:
             intent_content = self._normalize_intent_content_payload(intent_content)
 
-        # Only non-mode state stored in memory
+        # Update local state only — no mode/status stored (Rule 13)
         self.user_intent_content[user_id] = intent_content
         self.user_last_intent[user_id] = intent
         self._save_state()
-
-        # Save every interaction with a non-empty response (Rule 3)
-        if response:
-            self._save_chat_message(
-                user_id=user_id,
-                message=message,
-                response=response,
-                intent=intent,
-                intent_content=intent_content,
-                conversation_status=conversation_status,
-                products=products,
-            )
 
         result: Dict[str, Any] = {
             'response': response,
             'mode': mode.value,
             'intent': intent,
+            'intent_content': intent_content,
             'conversation_status': conversation_status,
             'products': products or [],
             'processing_time': round(processing_time, 3),
@@ -1692,99 +1581,3 @@ class SimpleChatbot:
         if link_buttons:
             result['link_buttons'] = link_buttons
         return result
-
-
-    # ─────────────────────────────────────────────────────────────
-    # chatbot_save_message (Rule 3) — called by _create_response
-    # ─────────────────────────────────────────────────────────────
-    def _save_chat_message(
-        self,
-        user_id: str,
-        message: str,
-        response: str,
-        intent: str,
-        intent_content: Dict[str, Any],
-        conversation_status: str,
-        products: Optional[List[Dict]],
-    ) -> bool:
-        """
-        Purpose: Persist every user↔bot turn to the BDStall chatbot_save_message API.
-        Rule 3: NO exception — this must be called for every response.
-        Returns True on success, False on failure (failure is logged, never raised).
-        """
-        save_url = os.getenv(
-            'CHATBOT_SAVE_API_URL',
-            'https://www.bdstall.com/api/item/chatbot_save_message/',
-        )
-        payload: Dict[str, Any] = {
-            'key': self.api_key,
-            'user_id': user_id,
-            'message': str(message or '').strip(),
-            'response': str(response or '').strip(),
-            'intent': intent,
-            'intent_content': intent_content,
-            'conversation_status': conversation_status,
-        }
-        if products:
-            payload['products'] = products[:5]
-
-        started = datetime.now()
-        try:
-            resp = requests.post(save_url, json=payload, timeout=5)
-            duration_ms = int((datetime.now() - started).total_seconds() * 1000)
-            success = resp.status_code == 200
-            _log_api_call(
-                'chatbot_save_message', 'POST', save_url,
-                payload, resp.status_code, duration_ms,
-                'PASS' if success else 'FAIL',
-                resp.text[:400] if resp.text else '',
-            )
-            if not success:
-                logger.warning(
-                    "chatbot_save_message non-200: %s body=%s",
-                    resp.status_code, resp.text[:200],
-                )
-            return success
-        except Exception as e:
-            duration_ms = int((datetime.now() - started).total_seconds() * 1000)
-            _log_api_call(
-                'chatbot_save_message', 'POST', save_url,
-                payload, 0, duration_ms, 'ERROR', str(e),
-            )
-            logger.warning("chatbot_save_message failed: %s", e)
-            return False
-    def get_user_mode(self, user_id: str) -> str:
-        """Mode is always read live from the responder API — never from memory."""
-        responder_type = self._check_responder_type(user_id)
-        return 'human' if responder_type == 'agent' else 'ai'
-
-    def switch_to_human(self, user_id: str) -> None:
-        """Trigger assign_agent API to set human mode in the DB."""
-        try:
-            requests.post(
-                self.assign_agent_api_url,
-                json={'key': self.assign_agent_api_key, 'user_id': user_id, 'intent': 'manual_switch'},
-                timeout=5
-            )
-        except Exception as e:
-            logger.error("❌ Unhandled error: %s", e, exc_info=True)
-            return {
-                'response': "দুঃখিত স্যার, একটি সমস্যা হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।",
-                'mode': 'ai',
-                'intent': 'system_error',
-                'conversation_status': AI_ACTIVE_STATUS,
-                'products': [],
-                'processing_time': 0.0,
-                'error': str(e)
-            }
-
-    def switch_to_ai(self, user_id: str) -> None:
-        """Trigger assign_bot API to restore AI mode in the DB."""
-        try:
-            requests.post(
-                self.assign_bot_api_url,
-                json={'key': self.api_key, 'user_id': user_id},
-                timeout=5
-            )
-        except Exception as e:
-            logger.warning("switch_to_ai failed: %s", e)
