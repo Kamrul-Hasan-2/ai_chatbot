@@ -175,7 +175,7 @@ class SimpleChatbot:
         self.user_pending_product_query: Dict[str, Dict[str, Any]] = {}
         self.user_last_intent: Dict[str, str] = {}
         self.user_intent_content: Dict[str, Dict[str, Any]] = {}
-        self.user_clarification_attempts: Dict[str, int] = {}
+        
 
         # Caches
         self._search_cache: Dict[str, Tuple[float, Dict]] = {}
@@ -247,8 +247,7 @@ class SimpleChatbot:
             self.user_pending_product_query = dict(state.get('user_pending_product_query') or {})
             self.user_last_intent = dict(state.get('user_last_intent') or {})
             self.user_intent_content = dict(state.get('user_intent_content') or {})
-            self.user_clarification_attempts = dict(state.get('user_clarification_attempts') or {})
-            logger.info("✅ Restored state for %s users", len(self.user_modes))
+            
         except Exception as e:
             logger.error("❌ State restore failed: %s", e)
 
@@ -266,7 +265,6 @@ class SimpleChatbot:
                     'user_pending_product_query': self.user_pending_product_query,
                     'user_last_intent': self.user_last_intent,
                     'user_intent_content': self.user_intent_content,
-                    'user_clarification_attempts': self.user_clarification_attempts,
                 }
                 dir_name = os.path.dirname(self.state_file)
                 tmp_fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
@@ -769,8 +767,8 @@ class SimpleChatbot:
         Fallback: no template available → FAQ DB lookup → final fallback.
         Example: "delivery koto din lagbe" → fetch ai_template?intent=delivery.
         """
-        self._reset_clarification_counter(user_id)
-        tmpl = self._fetch_delivery_intent_response()
+    def _reset_clarification_counter(self, user_id: str) -> None:
+        pass  # Counter removed — human handoff is handled by the responder API
         if tmpl:
             return self._create_response(
                 user_id=user_id, message=message, response=tmpl,
@@ -835,34 +833,6 @@ class SimpleChatbot:
     # ─────────────────────────────────────────────────────────────
     def _ask_for_category(self, user_id: str, message: str, merged: Dict,
                         start_time: datetime) -> Dict[str, Any]:
-        """
-        Ask the user which category they want.
-        Handoff counter only increments when the message contains NO useful signal
-        (no brand, no title, no price, no category — truly empty intent).
-        Messages that have brand/model/price but are missing category do NOT count
-        toward the handoff limit — the user is cooperating, just incomplete.
-        """
-        # Check if the message carried any useful signal despite missing category
-        has_signal = bool(
-            merged.get('brand')
-            or merged.get('title')
-            or merged.get('price_max')
-            or merged.get('price_min')
-        )
-
-        if not has_signal:
-            attempts = self.user_clarification_attempts.get(user_id, 0) + 1
-            self.user_clarification_attempts[user_id] = attempts
-            if attempts >= MAX_CLARIFICATION_ATTEMPTS:
-                self._reset_clarification_counter(user_id)
-                return self._handoff_to_human(
-                    user_id, message, start_time,
-                    intent='repeated_clarification_failure',
-                    response_text="স্যার, আমাদের একজন প্রতিনিধি এই বিষয়ে আপনাকে সাহায্য করবেন।"
-                )
-
-        self.user_modes[user_id] = ChatMode.AI
-        self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
         return self._create_response(
             user_id=user_id, message=message, response=CATEGORY_PROMPT,
             mode=ChatMode.AI, intent='need_category', products=None,
@@ -870,7 +840,6 @@ class SimpleChatbot:
             processing_time=(datetime.now() - start_time).total_seconds(),
             conversation_status=AI_ACTIVE_STATUS
         )
-
 
     # ─────────────────────────────────────────────────────────────
     # Groq extraction
