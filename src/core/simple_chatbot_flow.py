@@ -592,7 +592,6 @@ class SimpleChatbot:
         Fallback: empty category → ask user. No results → broaden once → message.
         Example: "hp laptop under 50k" → search "hp laptop 50000"
         """
-        # Rule 7: hard guard
         if not merged.get('category'):
             return self._ask_for_category(user_id, message, merged, start_time)
 
@@ -643,15 +642,22 @@ class SimpleChatbot:
         )
 
 
+
     def handle_price_query(self, user_id: str, message: str, merged: Dict,
-                           start_time: datetime) -> Dict[str, Any]:
+                        start_time: datetime) -> Dict[str, Any]:
         """
         Purpose: Answer "price koto?" type questions.
         Trigger: intent=price_query
-        Required fields: category (mandatory). Plus prior product context to read price from.
-        Fallback: no context → ask category → search.
-        Example: "price koto" after seeing 3 laptops → list prices.
+        Required fields: category is always mandatory first (Rule 4/7).
+        Flow: category missing → ask. Category present + context → list prices.
+            Category present + no context → search then list.
+        Example: "price koto" alone → ask category. "price koto" after laptop search → list prices.
         """
+        # Rule 7: category is mandatory even for price queries — ask first
+        if not merged.get('category'):
+            return self._ask_for_category(user_id, message, merged, start_time)
+
+        # Category is confirmed — now try to answer from existing context
         ctx_reply = self._reply_price_from_context(user_id)
         if ctx_reply:
             self._reset_clarification_counter(user_id)
@@ -663,11 +669,7 @@ class SimpleChatbot:
                 conversation_status=AI_ACTIVE_STATUS
             )
 
-        # Rule 7: no context, category mandatory
-        if not merged.get('category'):
-            return self._ask_for_category(user_id, message, merged, start_time)
-
-        # Have category but no products yet → run a search
+        # Category known but no products in context yet → search
         return self.handle_product_search(user_id, message, merged, start_time)
 
     def handle_comparison(self, user_id: str, message: str, merged: Dict,
@@ -859,19 +861,20 @@ class SimpleChatbot:
     # Groq extraction
     # ─────────────────────────────────────────────────────────────
     def _step1_groq_extract(self, message: str, conversation_context: str,
-                            previous_intent: Dict) -> Dict[str, Any]:
-        if not self.groq_client:
-            return self._minimal_fallback(message)
+                        previous_intent: Dict) -> Dict[str, Any]:
+    if not self.groq_client:
+        return self._minimal_fallback(message)
 
-        sample_categories = self.category_validator.names_english()[:30]
-        sample_str = ", ".join(sample_categories) if sample_categories else "(none loaded yet)"
+    sample_categories = self.category_validator.names_english()[:30]
+    sample_str = ", ".join(sample_categories) if sample_categories else "(none loaded yet)"
 
-        system_prompt = f"""You are a strict JSON extractor for a Bangladeshi e-commerce chatbot (BDStall).
+    system_prompt = f"""You are a strict JSON extractor for a Bangladeshi e-commerce chatbot (BDStall).
+The user may write in Bangla, English, or Banglish (romanised Bangla). Understand all three equally.
 Return ONLY valid JSON matching this schema. No prose, no markdown.
 
 SCHEMA:
 {{
-  "intent": "product_search" | "price_query" | "comparison" | "ordering" | "delivery" | "greeting" | "goodbye" | "thanks" | "complaint" | "faq" | "human_request" | "unknown",
+  "intent": "product_search" | "price_query" | "comparison" | "ordering" | "buy" | "exit" | "delivery" | "greeting" | "goodbye" | "thanks" | "complaint" | "faq" | "human_request" | "unknown",
   "entities": {{
     "category": string,
     "brand": string,
@@ -884,27 +887,49 @@ SCHEMA:
   "confidence": number 0-1
 }}
 
-STRICT RULES:
-1. NEVER invent or guess. Unsure → "" (string) or null (number).
-2. "category" should be the GENERIC product type the user mentioned (laptop, mobile, ac, fridge, ফ্রিজ).
-   The backend validates against the real DB. You may sample from these examples (not exhaustive): {sample_str}.
-3. "brand" = brand string user wrote, lowercase. "" if absent.
-4. "title" = specific model/variant user wrote. "" if absent.
-5. Budget: "50k"=50000, "30 hazar"=30000, "under 20k"→price_max=20000.
-6. Banglish hints:
-   - "koto dam", "price koto" → price_query
-   - "konta valo", "which is better" → comparison
-   - "order korbo", "kinbo" → ordering
-   - "delivery koto din" → delivery
-   - "human chai", "agent dorkar" → human_request
-   - "refund chai", "baje", "faltu" → complaint
-7. If message is JUST a budget/brand/model with no new category, set is_followup=true and category="".
-8. If intent=product_search and category="", add "category" to missing[].
+INTENT DEFINITIONS — pick the single best match:
+- product_search : user wants to see/find/browse products
+- price_query    : user is asking about price/cost/dam
+- comparison     : user wants to compare or know which is better
+- buy            : user wants to know HOW to buy/order (process question, not product search)
+- ordering       : treat same as buy — user wants to place or understand an order
+- exit           : user is leaving, says later / not now / will come back / goodbye with no product intent
+- delivery       : user asks about delivery time, charge, or process
+- greeting       : hello / hi / salam type openers
+- goodbye        : explicit farewell with no product context
+- thanks         : thank you messages
+- complaint      : refund, scam, broken, bad experience
+- faq            : general questions about the site or policies
+- human_request  : wants to speak to a human agent
+- unknown        : cannot determine
 
-PREVIOUS CONTEXT (use only to detect is_followup; do NOT copy fields):
+BANGLISH / BANGLA MAPPINGS (not exhaustive — use understanding, not just keyword match):
+- "koto dam", "dam koto", "price koto", "কত দাম", "দাম কত"           → price_query
+- "konta valo", "which is better", "কোনটা ভালো", "তুলনা"              → comparison
+- "kivabe order", "order korbo", "kinbo", "কিনবো", "অর্ডার করবো"      → buy
+- "how to buy", "buying process", "kivabe kini"                        → buy
+- "pore kinbo", "pore janabo", "pore nebo", "ekhon na", "পরে কিনবো",
+  "পরে জানাবো", "এখন লাগবে না", "পরে হবে", "notun kichu lagbe na"     → exit
+- "delivery koto din", "delivery charge", "ডেলিভারি"                  → delivery
+- "refund", "baje", "faltu", "kharap", "প্রতারণা", "অভিযোগ"           → complaint
+- "human chai", "agent dorkar", "প্রতিনিধি", "কাস্টমার"               → human_request
+
+STRICT RULES:
+1. NEVER invent or guess entities. Unsure → "" (string) or null (number).
+2. "category" = generic product type user mentioned. Validate loosely against: {sample_str}
+3. "brand" = brand name user wrote, lowercase. "" if absent.
+4. "title" = specific model/variant. "" if absent.
+5. Budget: "50k"=50000, "30 hazar"=30000, "under 20k"→price_max=20000.
+6. exit intent NEVER has a category — do not populate entities for exit.
+7. buy/ordering intent does NOT require a category — it is a process question.
+8. If message is a follow-up (no new category, just brand/price/model), set is_followup=true, category="".
+9. If intent=product_search and category="", add "category" to missing[].
+
+PREVIOUS CONTEXT (use only to detect is_followup; do NOT copy fields into entities):
 {json.dumps(previous_intent or {}, ensure_ascii=False)}
 """
-        user_prompt = f"""Recent conversation:
+
+    user_prompt = f"""Recent conversation:
 {conversation_context or 'N/A'}
 
 Current user message:
@@ -912,26 +937,26 @@ Current user message:
 
 Return ONLY the JSON object."""
 
-        try:
-            response = self.groq_client.chat.completions.create(
-                model=self.groq_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.1,
-                max_tokens=400,
-                response_format={"type": "json_object"}
-            )
-            raw = response.choices[0].message.content.strip()
-            parsed = json.loads(raw)
-            return self._validate_groq_schema(parsed)
-        except json.JSONDecodeError as e:
-            logger.warning("Groq JSON parse failed: %s", e)
-            return self._minimal_fallback(message)
-        except Exception as e:
-            logger.warning("Groq call failed: %s", e)
-            return self._minimal_fallback(message)
+    try:
+        response = self.groq_client.chat.completions.create(
+            model=self.groq_model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.1,
+            max_tokens=400,
+            response_format={"type": "json_object"}
+        )
+        raw = response.choices[0].message.content.strip()
+        parsed = json.loads(raw)
+        return self._validate_groq_schema(parsed)
+    except json.JSONDecodeError as e:
+        logger.warning("Groq JSON parse failed: %s", e)
+        return self._minimal_fallback(message)
+    except Exception as e:
+        logger.warning("Groq call failed: %s", e)
+        return self._minimal_fallback(message)
 
     def _validate_groq_schema(self, parsed: Dict) -> Dict[str, Any]:
         intent = str(parsed.get('intent', 'unknown')).lower().strip()
@@ -969,7 +994,11 @@ Return ONLY the JSON object."""
         }
 
     def _minimal_fallback(self, message: str) -> Dict[str, Any]:
-        """No-Groq fallback. Does NOT guess category."""
+        """
+        No-Groq fallback only. Groq handles all real classification.
+        This runs only when Groq is unavailable or throws an error.
+        Covers buy and exit in addition to original intents.
+        """
         text = message.lower().strip()
         if self.FAST_PATH_PATTERNS['greeting'].match(message):
             intent = 'greeting'
@@ -981,10 +1010,12 @@ Return ONLY the JSON object."""
             intent = 'human_request'
         elif self.COMPLAINT_PATTERNS.search(message):
             intent = 'complaint'
-        elif any(w in text for w in ['price koto', 'dam koto', 'koto dam', 'দাম কত']):
+        elif self.FAST_PATH_PATTERNS['exit'].search(message):
+            intent = 'exit'
+        elif self.FAST_PATH_PATTERNS['buy'].search(message):
+            intent = 'buy'
+        elif any(w in text for w in ['price koto', 'dam koto', 'koto dam', 'দাম কত', 'কত দাম']):
             intent = 'price_query'
-        elif any(w in text for w in ['order korbo', 'kivabe order', 'kinbo', 'কিনবো', 'অর্ডার']):
-            intent = 'ordering'
         elif any(w in text for w in ['delivery', 'koto din', 'ডেলিভারি']):
             intent = 'delivery'
         elif self.category_validator.resolve_from_message(message):
@@ -1004,6 +1035,8 @@ Return ONLY the JSON object."""
             'is_followup': False,
             'confidence': 0.4,
         }
+
+
 
     # ─────────────────────────────────────────────────────────────
     # Context merge (Rules 6, 7, 10)
@@ -1454,7 +1487,7 @@ Return ONLY the JSON object."""
         return text
 
     def _format_product_listing(self, products: list) -> Tuple[str, List[Dict]]:
-        """Returns (text, link_buttons) — each product gets its own View button."""
+        """Returns (text, link_buttons) — title + price in text, one View button per product."""
         text = "স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
         link_buttons = []
         for i, p in enumerate(products[:3], 1):
