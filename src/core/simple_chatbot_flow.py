@@ -1483,10 +1483,14 @@ Return ONLY the JSON object."""
             url = p.get('url', '')
             text += f"{i}. {title}\nমূল্য: {price}\n\n"
             if url:
-                link_buttons.append({'text': f"{i}. View", 'url': url})
+                link_buttons.append({
+                    'text': f"{i}. View",
+                    'url': url,
+                    'title': title,
+                    'price': price,
+                })
         text += "আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।"
         return text, link_buttons
-
     def _reply_price_from_context(self, user_id: str) -> Optional[str]:
         selected = self.user_selected_product.get(user_id) or {}
         if selected:
