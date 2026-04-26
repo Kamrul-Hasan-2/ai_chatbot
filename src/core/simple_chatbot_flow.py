@@ -814,27 +814,53 @@ class SimpleChatbot:
         """
         Purpose: Handle unknown / unclear messages without guessing.
         Trigger: intent=unknown OR no other handler matched.
-        Required fields: tries to resolve category from message; otherwise asks.
-        Fallback: counts attempts; after 3 → human handoff (Rule 11).
-        Example: "kichu dekhan" → ask category. Repeat 3× → human.
+        Special case: single-word or short messages that are a valid category name
+        (e.g. user replied "laptop" to a category question) — treat as product_search.
+        Fallback: counts attempts on truly empty messages; after 3 → human handoff.
         """
-        return self._ask_for_category(user_id, message, merged, start_time)
+        # If category is already in merged (Groq found it), route to product search
+        if merged.get('category'):
+            return self.handle_product_search(user_id, message, merged, start_time)
 
+        # Try to resolve the message itself as a category reply
+        # (covers: user replies "laptop" to the category question)
+        resolved = self.category_validator.resolve(message.strip())
+        if resolved:
+            merged['category'] = resolved['category_name']
+            self._reset_clarification_counter(user_id)
+            return self.handle_product_search(user_id, message, merged, start_time)
+
+        return self._ask_for_category(user_id, message, merged, start_time)
     # ─────────────────────────────────────────────────────────────
     # Ask for category (Rule 4 + Rule 11 attempt counter)
     # ─────────────────────────────────────────────────────────────
     def _ask_for_category(self, user_id: str, message: str, merged: Dict,
-                          start_time: datetime) -> Dict[str, Any]:
-        attempts = self.user_clarification_attempts.get(user_id, 0) + 1
-        self.user_clarification_attempts[user_id] = attempts
+                        start_time: datetime) -> Dict[str, Any]:
+        """
+        Ask the user which category they want.
+        Handoff counter only increments when the message contains NO useful signal
+        (no brand, no title, no price, no category — truly empty intent).
+        Messages that have brand/model/price but are missing category do NOT count
+        toward the handoff limit — the user is cooperating, just incomplete.
+        """
+        # Check if the message carried any useful signal despite missing category
+        has_signal = bool(
+            merged.get('brand')
+            or merged.get('title')
+            or merged.get('price_max')
+            or merged.get('price_min')
+        )
 
-        if attempts >= MAX_CLARIFICATION_ATTEMPTS:
-            self._reset_clarification_counter(user_id)
-            return self._handoff_to_human(
-                user_id, message, start_time,
-                intent='repeated_clarification_failure',
-                response_text="স্যার, আমাদের একজন প্রতিনিধি এই বিষয়ে আপনাকে সাহায্য করবেন।"
-            )
+        if not has_signal:
+            attempts = self.user_clarification_attempts.get(user_id, 0) + 1
+            self.user_clarification_attempts[user_id] = attempts
+            if attempts >= MAX_CLARIFICATION_ATTEMPTS:
+                self._reset_clarification_counter(user_id)
+                return self._handoff_to_human(
+                    user_id, message, start_time,
+                    intent='repeated_clarification_failure',
+                    response_text="স্যার, আমাদের একজন প্রতিনিধি এই বিষয়ে আপনাকে সাহায্য করবেন।"
+                )
 
         self.user_modes[user_id] = ChatMode.AI
         self.user_conversation_status[user_id] = AI_ACTIVE_STATUS
@@ -846,8 +872,6 @@ class SimpleChatbot:
             conversation_status=AI_ACTIVE_STATUS
         )
 
-    def _reset_clarification_counter(self, user_id: str) -> None:
-        self.user_clarification_attempts.pop(user_id, None)
 
     # ─────────────────────────────────────────────────────────────
     # Groq extraction
@@ -887,49 +911,53 @@ class SimpleChatbot:
     - price_query    : user is asking about price or cost of a product/category
     - comparison     : user wants to compare products or know which is better
     - buy            : user wants to know HOW to buy or place an order (process question)
-    - exit           : user is leaving or says they will come back later / not interested now
+    - exit           : user is leaving, says later / not now / will come back
     - delivery       : user asks about delivery time, charge, or process
-    - greeting       : hello / hi / salam type openers with no product intent
+    - greeting       : hello / hi / salam with no product intent
     - goodbye        : farewell with no product intent
     - thanks         : thank you messages
     - complaint      : refund, scam, broken product, bad experience
     - faq            : general questions about the site or policies
     - human_request  : user wants to speak to a human agent
-    - unknown        : none of the above can be determined
+    - unknown        : truly cannot determine
 
-    ENTITY RULES:
-    1. "category" = the GENERIC product type the user mentioned or implied.
-    Examples from the database (not exhaustive): {sample_str}
-    - "laptop price", "laptop dam koto", "laptop er dam" → category="laptop"
-    - "mobile kinte chai" → category="mobile"
-    - "ac price" → category="AC"
-    - If the user wrote a recognisable product type word, always extract it as category.
-    - NEVER leave category="" if a product type word is present in the message.
-    2. "brand" = brand name the user wrote, lowercase. "" if absent.
-    A brand is a manufacturer name (samsung, hp, dell, walton) NOT a product type.
-    3. "title" = specific model or variant (e.g. "iphone 15 pro", "galaxy s24"). "" if absent.
-    4. Budget: "50k"=50000, "30 hazar"=30000, "under 20k"→price_max=20000. null if absent.
-    5. is_followup = true ONLY when the message contains NO product type word AND relies entirely
-    on previous context (e.g. user says only a number, only a brand, only a price range).
-    If the message contains a product type word, is_followup = false regardless of context.
+    CATEGORY EXTRACTION — most important rule:
+    A "category" is a generic product type. Known examples (not exhaustive): {sample_str}
+    RULES:
+    - If the message contains a recognisable product type word → ALWAYS set category to that word.
+    - A single word that is a product type (e.g. "laptop", "mobile", "AC", "fridge") → category = that word, intent = product_search.
+    - "laptop price" / "laptop dam koto" / "laptop er dam" → category="laptop", intent=price_query.
+    - "hp laptop" → brand="hp", category="laptop".
+    - "hp 840 g3" → brand="hp", title="840 g3", category="" (no product type word present — add "category" to missing[]).
+    - NEVER leave category="" if a product type word exists anywhere in the message.
 
-    MISSING ARRAY RULES:
-    - For intents product_search, price_query, comparison: if category="" after extraction, add "category" to missing[].
-    - For all other intents: missing = [].
+    BRAND vs CATEGORY:
+    - brand = manufacturer name (samsung, hp, dell, apple, walton, asus, acer, lenovo).
+    - category = product type (laptop, mobile, phone, AC, fridge, television, tablet).
+    - "samsung" alone → brand="samsung", category="" (missing).
+    - "samsung mobile" → brand="samsung", category="mobile".
 
-    BANGLISH / BANGLA EXAMPLES (understand by meaning, not just keyword):
-    - "laptop price", "laptop dam koto", "laptop er dam koto"   → intent=price_query, category=laptop
-    - "mobile price list", "phone dekhao"                       → intent=product_search, category=mobile
-    - "konta valo", "which is better", "কোনটা ভালো"            → intent=comparison
-    - "kivabe order korbo", "how to buy", "buy process"         → intent=buy
-    - "pore kinbo", "pore janabo", "ekhon na", "notun kichu lagbe na",
-    "পরে জানাবো", "পরে কিনবো", "এখন লাগবে না"              → intent=exit
-    - "delivery koto din", "delivery charge koto"               → intent=delivery
-    - "refund chai", "baje product", "প্রতারণা"                → intent=complaint
-    - "human chai", "agent er sathe kotha bolte chai"           → intent=human_request
-    - "price koto" with NO product type word in message         → intent=price_query, category=""
+    is_followup RULE:
+    - true ONLY when message has NO product type word AND depends entirely on previous context.
+    - If any product type word is present → is_followup = false.
+    - "hp 840 g3" → is_followup=true (no product type, relies on context for category).
+    - "laptop price" → is_followup=false (product type "laptop" is present).
 
-    PREVIOUS CONTEXT (for is_followup detection only — do NOT copy fields into entities):
+    MISSING ARRAY:
+    - Add "category" to missing[] when intent is product_search, price_query, or comparison AND category="".
+    - All other intents: missing=[].
+
+    BUDGET PARSING: "50k"=50000, "30 hazar"=30000, "under 20k"→price_max=20000. null if absent.
+
+    BANGLISH / BANGLA QUICK REFERENCE:
+    - "pore kinbo", "pore janabo", "ekhon na", "পরে জানাবো", "এখন লাগবে না" → exit
+    - "kivabe order korbo", "how to buy"                                       → buy
+    - "konta valo", "which is better", "কোনটা ভালো"                           → comparison
+    - "delivery koto din", "delivery charge"                                   → delivery
+    - "refund chai", "baje", "faltu", "kharap"                                 → complaint
+    - "human chai", "agent er sathe kotha"                                     → human_request
+
+    PREVIOUS CONTEXT (is_followup detection only — do NOT copy into entities):
     {json.dumps(previous_intent or {}, ensure_ascii=False)}
     """
 
@@ -961,7 +989,6 @@ class SimpleChatbot:
         except Exception as e:
             logger.warning("Groq call failed: %s", e)
             return self._minimal_fallback(message)
-
 
 
 
