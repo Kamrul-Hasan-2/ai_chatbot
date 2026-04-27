@@ -14,6 +14,13 @@ import requests
 from datetime import datetime
 from typing import Any, Optional
 
+# Prevent Windows console encoding crashes on emoji/status prints.
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
+
 # Add paths
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
