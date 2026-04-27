@@ -437,22 +437,6 @@ class SimpleChatbot:
 
         merged = self._merge_intent_context(user_id, groq_result, previous_intent, intent)
 
-        # Minimal safety net: catch obvious advice patterns Groq still misses
-        # Keep this list small — Groq should handle most cases via the prompt
-        if intent not in ('hate_speech', 'human_request', 'complaint', 'greeting',
-                          'goodbye', 'thanks', 'exit', 'buy', 'delivery', 'faq',
-                          'technical_advice'):
-            msg_lower = message.lower()
-            advice_signals = [
-                'upgrade kora jay', 'upgrade possible', 'upgrade hobe ki',
-                'compatible hobe', 'fit hobe', 'kora jay ki', 'hobe ki',
-                'valo hobe naki', 'valo naki', 'ki valo', 'valo ki',
-                'er jonno valo', 'er jonno ki valo',
-                'ভালো হবে নাকি', 'কোনটা ভালো', 'আপগ্রেড করা যায়',
-            ]
-            if any(s in msg_lower for s in advice_signals):
-                intent = 'technical_advice'
-
         if intent == 'hate_speech':
             return self._handoff_to_human(
                 user_id, message, start_time,
