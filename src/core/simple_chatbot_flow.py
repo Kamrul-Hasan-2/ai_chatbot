@@ -345,7 +345,7 @@ class SimpleChatbot:
                                 ic = json.loads(ic)
                             except Exception:
                                 continue
-                        if isinstance(ic, dict) and (ic.get('cat') or ic.get('brand') or ic.get('title')):
+                        if isinstance(ic, dict) and (ic.get('cat') or ic.get('brand') or ic.get('title') or ic.get('product_url')):
                             logger.info("[INTENT_DB] Restored for %s: cat=%s brand=%s title=%s",
                                         user_id, ic.get('cat'), ic.get('brand'), ic.get('title'))
                             return ic
@@ -409,15 +409,14 @@ class SimpleChatbot:
                 return self._handle_url_message(user_id, message, url_match.group(0), start_time)
 
             # Product detail follow-up — stock/color/quality/price after product_link
-            if self.user_last_intent.get(user_id) == 'product_link':
-                prev = self._load_previous_intent(user_id)
-                product_url = prev.get('product_url', '')
-                if product_url:
-                    detail_response = self._handle_product_detail_followup(
-                        user_id, message, product_url, start_time
-                    )
-                    if detail_response:
-                        return detail_response
+            prev = self._load_previous_intent(user_id)
+            product_url = prev.get('product_url', '')
+            if product_url:
+                detail_response = self._handle_product_detail_followup(
+                    user_id, message, product_url, start_time
+                )
+                if detail_response:
+                    return detail_response
 
             # ALL intents — classified by Groq
             return self._handle_main_flow(user_id, message, start_time)
