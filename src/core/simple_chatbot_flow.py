@@ -320,7 +320,7 @@ class SimpleChatbot:
             urls = self._build_chat_history_urls(user_id, 10)
             for url in urls:
                 try:
-                    resp = requests.get(url, timeout=5)
+                    resp = requests.get(url, timeout=2)
                     if not (200 <= resp.status_code < 300):
                         continue
                     data = resp.json() if resp.text else {}
@@ -356,7 +356,11 @@ class SimpleChatbot:
 
     def _load_previous_intent(self, user_id: str) -> Dict:
         """Always fetch from DB — never from local memory (Rule 14)."""
-        prev = dict(self._fetch_intent_content_from_db(user_id) or {})
+        try:
+            prev = dict(self._fetch_intent_content_from_db(user_id) or {})
+        except Exception as e:
+            logger.warning("_load_previous_intent failed: %s", e)
+            return {}
 
         updated_at = prev.get('updated_at')
         if updated_at:
