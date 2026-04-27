@@ -777,10 +777,10 @@ INTENT VALUES (pick exactly one):
 product_search | price_query | comparison | buy | exit | delivery | greeting | goodbye | thanks | complaint | faq | human_request | technical_advice | hate_speech | unknown
 
 INTENT DEFINITIONS:
-- product_search    : user wants to see, find, or browse products
+- product_search    : user wants to see, find, or browse products. User is ready to buy or look at options.
 - price_query       : user is asking about price or cost of a product/category
-- comparison        : user wants to compare products or know which is better
-- buy               : user wants to know HOW to buy or place an order (process question)
+- comparison        : user wants to compare two specific products side by side
+- buy               : user wants to know HOW to buy or place an order (process question). Includes "kivabe kinbo", "kivabe order korbo", "kinte chai kivabe"
 - exit              : user is leaving, says later / not now / will come back
 - delivery          : user asks about delivery time, charge, or process
 - greeting          : hello / hi / salam with no product intent
@@ -789,9 +789,17 @@ INTENT DEFINITIONS:
 - complaint         : refund, scam, broken product, bad experience
 - faq               : general questions about the site or policies
 - human_request     : user wants to speak to a human agent
-- technical_advice  : user asks if a product is suitable, compatible, or good for a specific use case
-- hate_speech       : abusive language, insults, threats, racial slurs, sexual harassment, or any offensive content directed at people or the platform
+- technical_advice  : user asks WHICH product is better for a use case, or whether a product is suitable/compatible. Key signal: "valo hobe", "valo ki", "suitable", "compatible", "konta nibo", "recommend koro", "upgrade kora jay", "fit hobe ki"
+- hate_speech       : abusive language, insults, threats, racial slurs, sexual harassment, or any offensive content
 - unknown           : truly cannot determine
+
+CRITICAL DISTINCTION:
+- "laptop valo hobe naki desktop gaming er jonno?" → technical_advice (asking WHICH is better for a use case)
+- "laptop dekhao" → product_search (ready to browse)
+- "laptop valo naki desktop valo" → technical_advice (opinion/recommendation question)
+- "kivabe kinbo" → buy (asking HOW to purchase)
+- "kinbo" alone → product_search (intent to buy a product)
+- "konta kinbo" → technical_advice (asking for recommendation)
 
 CATEGORY EXTRACTION — most important rule:
 A "category" is a generic product type. Known examples (not exhaustive): {sample_str}
@@ -828,15 +836,19 @@ BUDGET PARSING: "50k"=50000, "30 hazar"=30000, "under 20k"→price_max=20000,
 BANGLISH / BANGLA QUICK REFERENCE:
 - "pore kinbo", "pore janabo", "ekhon na", "পরে জানাবো", "এখন লাগবে না"              → exit
 - "order korbo kivabe", "kivabe order korbo", "how to buy", "how can i buy",
-  "how can i buy it", "how do i buy", "how to order", "order process"              → buy (no category needed)
-- "konti valo", "konta valo", "konta bhalo", "which is better", "কোনটা ভালো"         → comparison (no category needed)
-- "delivery koto din", "delivery charge", "koto din lagbe", "কত দিন লাগবে"           → delivery
-- "refund chai", "baje", "faltu", "kharap"                                            → complaint
-- "human chai", "agent er sathe kotha"                                                → human_request
-- "X ache", "X ki ache" where X is a product type                                    → product_search
-- "50k er vitor ache", "20k te ache", "30 hazar er moddhe ache"                      → product_search, price_max=X, is_followup=true
+  "how can i buy it", "how do i buy", "how to order", "order process",
+  "kivabe kinbo", "kinte chai kivabe", "kinbo kivabe"                              → buy (no category needed)
+- "konti valo", "konta valo", "konta bhalo", "which is better", "কোনটা ভালো",
+  "laptop valo naki desktop", "pc valo naki laptop", "konta nibo", "recommend koro",
+  "konta kinbo", "ei product ki valo"                                              → technical_advice
+- "delivery koto din", "delivery charge", "koto din lagbe", "কত দিন লাগবে"       → delivery
+- "refund chai", "baje", "faltu", "kharap"                                         → complaint
+- "human chai", "agent er sathe kotha"                                             → human_request
+- "X ache", "X ki ache" where X is a product type                                 → product_search
+- "50k er vitor ache", "20k te ache", "30 hazar er moddhe ache"                   → product_search, price_max=X, is_followup=true
 - "will this work for gaming", "gaming er jonno valo ki", "ei laptop ki editing er jonno valo",
-  "is this RAM enough", "4GB RAM ki sufficient", "compatible hobe ki"                → technical_advice
+  "is this RAM enough", "4GB RAM ki sufficient", "compatible hobe ki",
+  "laptop valo hobe naki desktop gaming er jonno"                                  → technical_advice
 
 PREVIOUS CONTEXT (is_followup detection only — do NOT copy into entities):
 {json.dumps(previous_intent or {}, ensure_ascii=False)}
