@@ -500,15 +500,7 @@ def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Op
         return _send_facebook_text_message(recipient_id, plain_text)
 
     plain_text = str(message_text or '').strip()
-    intro_text = ''
-    closing_text = ''
-    if plain_text:
-        lines = [line.strip() for line in plain_text.splitlines() if line.strip()]
-        if lines:
-            intro_text = lines[0]
-            if 'আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।' in plain_text:
-                closing_text = 'আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।'
-
+    intro_text = _strip_link_lines(plain_text)
     if intro_text:
         if not _send_facebook_text_message(recipient_id, intro_text):
             return False
@@ -550,10 +542,6 @@ def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Op
         }
 
         if not _send_facebook_payload(recipient_id, template_payload):
-            return False
-
-    if closing_text:
-        if not _send_facebook_text_message(recipient_id, closing_text):
             return False
 
     return True
