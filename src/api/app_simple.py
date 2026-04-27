@@ -58,12 +58,28 @@ CORS(app)
 # Initialize chatbot
 chatbot = None
 
+
+def _normalize_bdstall_chatbot_url(url: Optional[str], default_url: str) -> str:
+    """Force BDStall chatbot URLs onto the /api/chatbot path, never /api/item."""
+    clean_url = (url or '').strip() or default_url
+    clean_url = clean_url.replace('/api/item/', '/api/chatbot/')
+    return clean_url
+
 # BDStall chat message save API configuration
 SAVE_MESSAGE_API_URL = os.getenv(
     'SAVE_MESSAGE_API_URL',
-    'https://www.bdstall.com/api/chatbot/chatbot_save_message/'
+    'https://www.bdstall.com/api/chatbot/'
+)
+SAVE_MESSAGE_API_URL = _normalize_bdstall_chatbot_url(
+    SAVE_MESSAGE_API_URL,
+    'https://www.bdstall.com/api/chatbot/'
 )
 SAVE_MESSAGE_API_KEY = os.getenv('SAVE_MESSAGE_API_KEY', 'mkh677ddd2sxxkkdjff')
+
+RESPONDER_API_URL = _normalize_bdstall_chatbot_url(
+    os.getenv('RESPONDER_API_URL'),
+    'https://www.bdstall.com/api/chatbot/chatbot_responder/'
+)
 
 # Facebook Messenger configuration
 PAGE_ACCESS_TOKEN = os.getenv('PAGE_ACCESS_TOKEN', '')
@@ -220,10 +236,19 @@ def save_chat_message(
     if isinstance(form_payload.get("intent_content"), dict):
         form_payload["intent_content"] = json.dumps(form_payload["intent_content"], ensure_ascii=False)
 
-    attempts = [
-        ("json", lambda: requests.post(SAVE_MESSAGE_API_URL, json=payload, timeout=10)),
-        ("form", lambda: requests.post(SAVE_MESSAGE_API_URL, data=form_payload, timeout=10))
-    ]
+    save_urls = []
+    for candidate in [
+        SAVE_MESSAGE_API_URL,
+        'https://www.bdstall.com/api/chatbot/',
+        'https://www.bdstall.com/api/chatbot/chatbot_save_message/',
+    ]:
+        if candidate and candidate not in save_urls:
+            save_urls.append(candidate)
+
+    attempts = []
+    for save_url in save_urls:
+        attempts.append((f"json@{save_url}", lambda u=save_url: requests.post(u, json=payload, timeout=10)))
+        attempts.append((f"form@{save_url}", lambda u=save_url: requests.post(u, data=form_payload, timeout=10)))
     last_error = None
 
     for request_mode, request_fn in attempts:
@@ -574,7 +599,7 @@ def get_responder_user_name(user_id: str) -> Optional[str]:
         return None
 
     try:
-        url = "https://www.bdstall.com/api/chatbot/chatbot_responder/"
+        url = RESPONDER_API_URL
         params = {
             "key": SAVE_MESSAGE_API_KEY,
             "user_id": str(user_id)
@@ -1443,7 +1468,7 @@ def ai_template_category_search():
     AI Template Category Search Endpoint
     
     URL Format:
-    /api/item/ai_template/?intent=category&category=laptop&key=mkh677ddd2sxxk
+    /api/chatbot/ai_template/?intent=category&category=laptop&key=mkh677ddd2sxxk
     
     Query Parameters:
     - intent: Operation type (currently "category")
