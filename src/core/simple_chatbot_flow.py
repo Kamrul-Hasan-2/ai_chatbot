@@ -437,22 +437,18 @@ class SimpleChatbot:
 
         merged = self._merge_intent_context(user_id, groq_result, previous_intent, intent)
 
-        # Override intent to technical_advice if message contains advice/recommendation signals
-        # regardless of what Groq classified — Groq often picks product_search for these
+        # Minimal safety net: catch obvious advice patterns Groq still misses
+        # Keep this list small — Groq should handle most cases via the prompt
         if intent not in ('hate_speech', 'human_request', 'complaint', 'greeting',
-                          'goodbye', 'thanks', 'exit', 'buy', 'delivery', 'faq'):
+                          'goodbye', 'thanks', 'exit', 'buy', 'delivery', 'faq',
+                          'technical_advice'):
             msg_lower = message.lower()
             advice_signals = [
-                'valo hobe naki', 'valo naki', 'valo hobe ki', 'ki valo hobe',
-                'konta valo', 'konta bhalo', 'konti valo', 'konta nibo', 'konta kinbo',
-                'er jonno ki valo', 'er jonno valo', 'ki valo', 'valo ki',
-                'recommend', 'suggest', 'better for', 'suitable for', 'good for',
                 'upgrade kora jay', 'upgrade possible', 'upgrade hobe ki',
-                'compatible hobe', 'compatible ki', 'fit hobe', 'lagbe ki',
-                'kora jay ki', 'kora jabe ki', 'possible ki', 'hobe ki',
-                'ki way ache', 'kivabe upgrade', 'change kora jay',
-                'ভালো হবে নাকি', 'কোনটা ভালো', 'কোনটা নেবো', 'রেকমেন্ড',
-                'আপগ্রেড করা যায়', 'কম্প্যাটিবল',
+                'compatible hobe', 'fit hobe', 'kora jay ki', 'hobe ki',
+                'valo hobe naki', 'valo naki', 'ki valo', 'valo ki',
+                'er jonno valo', 'er jonno ki valo',
+                'ভালো হবে নাকি', 'কোনটা ভালো', 'আপগ্রেড করা যায়',
             ]
             if any(s in msg_lower for s in advice_signals):
                 intent = 'technical_advice'
@@ -822,13 +818,27 @@ INTENT DEFINITIONS:
 - hate_speech       : abusive language, insults, threats, racial slurs, sexual harassment, or any offensive content
 - unknown           : truly cannot determine
 
-CRITICAL DISTINCTION:
-- "laptop valo hobe naki desktop gaming er jonno?" → technical_advice (asking WHICH is better for a use case)
-- "laptop dekhao" → product_search (ready to browse)
-- "laptop valo naki desktop valo" → technical_advice (opinion/recommendation question)
-- "kivabe kinbo" → buy (asking HOW to purchase)
-- "kinbo" alone → product_search (intent to buy a product)
-- "konta kinbo" → technical_advice (asking for recommendation)
+TECHNICAL_ADVICE DETECTION RULE — read carefully:
+Ask yourself two questions about the message:
+Q1: "Is the user asking what a product CAN DO, whether it is GOOD for something,
+     whether it is COMPATIBLE, or whether it can be UPGRADED/CHANGED?" → technical_advice
+Q2: "Is the user asking to SEE, FIND, or BUY a product?" → product_search
+
+Examples of technical_advice (capability/suitability questions):
+- "laptop er ram ki upgrade kora jay?" → asking CAN IT be upgraded → technical_advice
+- "laptop valo hobe naki desktop?" → asking WHICH IS BETTER → technical_advice
+- "4GB RAM ki enough gaming er jonno?" → asking IS IT SUFFICIENT → technical_advice
+- "ei graphics card ki VR support kore?" → asking CAN IT do something → technical_advice
+- "ssd lagano jabe ki?" → asking CAN IT be done → technical_advice
+- "laptop valo ki?" → asking IS IT GOOD → technical_advice
+
+Examples of product_search (browsing/buying intent):
+- "laptop dekhao" → wants to SEE products → product_search
+- "gaming laptop ache?" → asking if products exist → product_search
+- "HP laptop khujchi" → wants to FIND a product → product_search
+
+The difference: technical_advice = question about product CAPABILITY or QUALITY.
+               product_search  = request to SEE or FIND products.
 
 CATEGORY EXTRACTION — most important rule:
 A "category" is a generic product type. Known examples (not exhaustive): {sample_str}
