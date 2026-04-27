@@ -345,8 +345,9 @@ class SimpleChatbot:
                                 ic = json.loads(ic)
                             except Exception:
                                 continue
-                        if isinstance(ic, dict) and ic.get('cat'):
-                            logger.info("[INTENT_DB] Restored for %s: cat=%s", user_id, ic.get('cat'))
+                        if isinstance(ic, dict) and (ic.get('cat') or ic.get('brand') or ic.get('title')):
+                            logger.info("[INTENT_DB] Restored for %s: cat=%s brand=%s title=%s",
+                                        user_id, ic.get('cat'), ic.get('brand'), ic.get('title'))
                             return ic
                 except Exception:
                     continue
@@ -767,10 +768,13 @@ Do NOT recommend specific models or prices."""
     # ─────────────────────────────────────────────────────────────
     def _ask_for_category(self, user_id: str, message: str, merged: Dict,
                           start_time: datetime) -> Dict[str, Any]:
+        # Preserve any brand/title already extracted — don't wipe them
+        # e.g. "hp 840 g3" → ask category but keep brand=hp, title=840 g3
+        intent_content = self._intent_to_normalized(merged, message)
         return self._create_response(
             user_id=user_id, message=message, response=CATEGORY_PROMPT,
             mode=ChatMode.AI, intent='need_category', products=None,
-            intent_content=self._intent_to_normalized(merged, message),
+            intent_content=intent_content,
             processing_time=(datetime.now() - start_time).total_seconds(),
             conversation_status=AI_ACTIVE_STATUS
         )
@@ -861,8 +865,9 @@ RULES:
 - A single word that is a product type (e.g. "laptop", "mobile", "AC", "fridge") → category = that word, intent = product_search.
 - "laptop price" / "laptop dam koto" / "laptop er dam" → category="laptop", intent=price_query.
 - "hp laptop" → brand="hp", category="laptop".
-- "hp 840 g3" → brand="hp", title="840 g3", category="" (no product type word — add "category" to missing[]).
-- NEVER leave category="" if a product type word exists anywhere in the message.
+- "hp 840 g3" → brand="hp", title="840 g3", category="Laptop" (HP 840 G3 is a known laptop model — infer category from model knowledge).
+- If the model/title is a well-known product (e.g. iPhone=mobile, Galaxy=mobile, HP 840=laptop, RTX 4060=graphics card), infer the category even if not explicitly stated.
+- Only leave category="" if truly cannot determine from model name or context.
 - "X ache", "X ki ache", "X paoa jabe" → category=X, intent=product_search ("ache" means "available/do you have").
 
 BRAND vs CATEGORY:
