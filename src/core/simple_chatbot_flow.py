@@ -81,7 +81,7 @@ HUMAN_SUPPORT_REQUIRED_STATUS = "Human Support Required"
 VALID_INTENTS = {
     'product_search', 'price_query', 'comparison', 'ordering', 'delivery',
     'greeting', 'goodbye', 'thanks', 'complaint', 'faq', 'human_request',
-    'buy', 'exit', 'unknown'
+    'buy', 'exit', 'technical_advice', 'hate_speech', 'unknown'
 }
 
 PRODUCT_RELATED_INTENTS = {'product_search', 'price_query', 'comparison', 'ordering'}
@@ -96,53 +96,7 @@ CATEGORY_PROMPT = (
 
 class SimpleChatbot:
 
-    FAST_PATH_PATTERNS = {
-        'greeting': re.compile(
-            r'^\s*(hi|hello|hey|hlw|hai|salam|assalamu\s*alaikum|assalamualaikum|'
-            r'হাই|হ্যালো|হেলো|সালাম|আসসালামু\s*আলাইকুম|আসসালামুয়ালাইকুম)\s*[!.?]*\s*$',
-            re.IGNORECASE,
-        ),
-        'goodbye': re.compile(
-            r'^\s*(bye|goodbye|see\s*you|take\s*care|allah\s*hafez|ok\s*bye|'
-            r'বিদায়|আল্লাহ\s*হাফেজ|বাই|আবার\s*দেখা\s*হবে)\s*[!.?]*\s*$',
-            re.IGNORECASE,
-        ),
-        'thanks': re.compile(
-            r'^\s*(thanks?|thank\s*you|thx|thanku|thankyou|thanks\s*a\s*lot|'
-            r'ধন্যবাদ|অনেক\s*ধন্যবাদ)\s*[!.?]*\s*$',
-            re.IGNORECASE,
-        ),
-        'ok_ack': re.compile(
-            r'^\s*(ok|okay|okk|okey|acha|accha|ঠিক\s*আছে|আচ্ছা|ওকে)\s*[!.?]*\s*$',
-            re.IGNORECASE,
-        ),
-        'human_request': re.compile(
-            r'\b(human|agent|representative|talk\s*to\s*(?:a\s*)?(?:human|person)|'
-            r'manus|manush|customer\s*support|live\s*chat|'
-            r'মানুষ|প্রতিনিধি|কাস্টমার|এজেন্ট)\b',
-            re.IGNORECASE,
-        ),
-        'buy': re.compile(
-            r'\b(how\s*to\s*buy|how\s*can\s*i\s*buy|how\s*to\s*order|how\s*to\s*purchase|'
-            r'order\s*korbo\s*kivabe|kivabe\s*(buy|order|kini|purchase)|'
-            r'কিভাবে\s*(কিনবো|কিনব|অর্ডার|বাই)|'
-            r'order\s*process|buy\s*process|buying\s*guide)\b',
-            re.IGNORECASE,
-        ),
-        'exit': re.compile(
-            r'\b(pore\s*kinbo|pore\s*janabo|pore\s*nebo|pore\s*dekhbo|ekhon\s*na|'
-            r'later|পরে\s*কিনবো|পরে\s*জানাবো|পরে\s*নেবো|পরে\s*দেখবো|'
-            r'এখন\s*লাগবে\s*না|পরে\s*হবে|notun\s*kichu\s*lagbe\s*na)\b',
-            re.IGNORECASE,
-        ),
-    }
 
-    COMPLAINT_PATTERNS = re.compile(
-        r'\b(refund|complain|complaint|scam|fraud|cheat|fake|defect|broken|'
-        r'baje|faltu|kharap|useless|worst|stupid|boka|gali|abuse|'
-        r'বাজে|ফালতু|খারাপ|প্রতারণা|স্ক্যাম|রিফান্ড|অভিযোগ|গালি)\b',
-        re.IGNORECASE,
-    )
 
     def __init__(self):
         self.project_root = os.path.join(os.path.dirname(__file__), '..', '..')
@@ -444,45 +398,7 @@ class SimpleChatbot:
                     conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
                 )
 
-            # FAST PATH: explicit human request
-            if self.FAST_PATH_PATTERNS['human_request'].search(message):
-                return self._handoff_to_human(
-                    user_id, message, start_time,
-                    intent='explicit_human_request',
-                    response_text="স্যার, আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।"
-                )
-
-            # FAST PATH: complaint
-            if self.COMPLAINT_PATTERNS.search(message):
-                return self._handoff_to_human(
-                    user_id, message, start_time, intent='complaint_handoff',
-                    response_text="স্যার, এই বিষয়ে আমাদের একজন প্রতিনিধি এখনই আপনার সাথে যোগাযোগ করবেন।"
-                )
-
-            # FAST PATH: product selection (1-5)
-            selected_index = self._extract_product_selection(message)
-            user_products = self.user_product_context.get(user_id, [])
-            if selected_index and user_products and len(user_products) >= selected_index:
-                selected = user_products[selected_index - 1]
-                self.user_selected_product[user_id] = selected
-                return self._create_response(
-                    user_id=user_id, message=message,
-                    response=self._format_selected_product_response(selected, selected_index),
-                    mode=ChatMode.AI, intent='product_selection', products=user_products,
-                    processing_time=(datetime.now() - start_time).total_seconds()
-                )
-
-            # FAST PATH: order form
-            order_response = self._maybe_handle_order_flow(user_id, message, start_time)
-            if order_response is not None:
-                return order_response
-
-            # FAST PATH: regex-matched simple intents
-            fast_intent = self._fast_path_intent(message)
-            if fast_intent:
-                return self._handle_fast_path(user_id, message, fast_intent, start_time)
-
-            # MAIN PATH: Groq → resolve → merge → route
+            # ALL intents — classified by Groq
             return self._handle_main_flow(user_id, message, start_time)
 
         except Exception as e:
@@ -498,68 +414,8 @@ class SimpleChatbot:
                 'error': str(e)
             }
 
-    # ─────────────────────────────────────────────────────────────
-    # Fast path
-    # ─────────────────────────────────────────────────────────────
-    def _fast_path_intent(self, message: str) -> Optional[str]:
-        msg = message.strip()
-        if not msg:
-            return None
-        for name in ('greeting', 'goodbye', 'thanks', 'ok_ack', 'buy', 'exit'):
-            pat = self.FAST_PATH_PATTERNS[name]
-            if name in ('buy', 'exit'):
-                if pat.search(msg):
-                    return name
-            else:
-                if pat.match(msg):
-                    return name
-        return None
-
-    def _handle_fast_path(self, user_id: str, message: str, intent: str,
-                          start_time: datetime) -> Dict[str, Any]:
-        self._reset_clarification_counter(user_id)
-
-        if intent == 'greeting':
-            return self._create_response(
-                user_id=user_id, message=message,
-                response="আসসালামু-আলাইকুম স্যার, কোন বিষয়ে জানতে চাচ্ছেন?",
-                mode=ChatMode.AI, intent='greeting', products=None,
-                processing_time=(datetime.now() - start_time).total_seconds(),
-                conversation_status=AI_ACTIVE_STATUS
-            )
-        if intent == 'goodbye':
-            prev = self._normalize_intent_content_payload(
-                self._load_previous_intent(user_id)
-            )
-            prev['exit'] = 1
-            return self._create_response(
-                user_id=user_id, message=message,
-                response="ধন্যবাদ স্যার, ভালো থাকবেন।",
-                mode=ChatMode.AI, intent='goodbye', products=None, intent_content=prev,
-                processing_time=(datetime.now() - start_time).total_seconds(),
-                conversation_status=AI_ACTIVE_STATUS
-            )
-        if intent == 'thanks':
-            return self._create_response(
-                user_id=user_id, message=message, response="Most welcome",
-                mode=ChatMode.AI, intent='thanks', products=None,
-                processing_time=(datetime.now() - start_time).total_seconds(),
-                conversation_status=AI_ACTIVE_STATUS
-            )
-        if intent == 'buy':
-            return self.handle_buy(user_id, message, start_time)
-        if intent == 'exit':
-            return self.handle_exit(user_id, message, start_time)
-        return self._create_response(
-            user_id=user_id, message=message,
-            response="ধন্যবাদ স্যার, আর কিভাবে আমি আপনাকে সাহায্য করতে পারি?",
-            mode=ChatMode.AI, intent='conversation_finished_ack', products=None,
-            processing_time=(datetime.now() - start_time).total_seconds(),
-            conversation_status=AI_ACTIVE_STATUS
-        )
-
     # ═════════════════════════════════════════════════════════════
-    # MAIN flow
+    # MAIN flow — all intents classified by Groq
     # ═════════════════════════════════════════════════════════════
     def _handle_main_flow(self, user_id: str, message: str,
                           start_time: datetime) -> Dict[str, Any]:
@@ -581,34 +437,65 @@ class SimpleChatbot:
 
         merged = self._merge_intent_context(user_id, groq_result, previous_intent, intent)
 
+        if intent == 'hate_speech':
+            return self._handoff_to_human(
+                user_id, message, start_time,
+                intent='hate_speech',
+                response_text="স্যার, অনুগ্রহ করে ভদ্র ভাষায় কথা বলুন। আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।"
+            )
+        if intent == 'human_request':
+            return self._handoff_to_human(
+                user_id, message, start_time,
+                intent='explicit_human_request',
+                response_text="স্যার, আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।"
+            )
+        if intent == 'complaint':
+            return self._handoff_to_human(
+                user_id, message, start_time,
+                intent='complaint_handoff',
+                response_text="স্যার, এই বিষয়ে আমাদের একজন প্রতিনিধি এখনই আপনার সাথে যোগাযোগ করবেন।"
+            )
+        if intent == 'greeting':
+            return self._create_response(
+                user_id=user_id, message=message,
+                response="আসসালামু-আলাইকুম স্যার, কোন বিষয়ে জানতে চাচ্ছেন?",
+                mode=ChatMode.AI, intent='greeting', products=None,
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+        if intent == 'goodbye':
+            prev = self._normalize_intent_content_payload(self._load_previous_intent(user_id))
+            prev['exit'] = 1
+            return self._create_response(
+                user_id=user_id, message=message,
+                response="ধন্যবাদ স্যার, ভালো থাকবেন।",
+                mode=ChatMode.AI, intent='goodbye', products=None, intent_content=prev,
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+        if intent == 'thanks':
+            return self._create_response(
+                user_id=user_id, message=message, response="Most welcome",
+                mode=ChatMode.AI, intent='thanks', products=None,
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
         if intent == 'comparison':
             return self.handle_comparison(user_id, message, merged, start_time)
         if intent in ('ordering', 'buy'):
             return self.handle_buy(user_id, message, start_time)
         if intent == 'exit':
             return self.handle_exit(user_id, message, start_time)
-        if intent in ('greeting', 'goodbye', 'thanks'):
-            self._reset_clarification_counter(user_id)
-            return self._handle_fast_path(user_id, message, intent, start_time)
         if intent == 'delivery':
             return self.handle_delivery(user_id, message, merged, start_time)
         if intent == 'faq':
             return self.handle_faq(user_id, message, merged, start_time)
+        if intent == 'technical_advice':
+            return self.handle_technical_advice(user_id, message, merged, start_time)
         if intent == 'price_query':
             return self.handle_price_query(user_id, message, merged, start_time)
         if intent == 'product_search':
             return self.handle_product_search(user_id, message, merged, start_time)
-
-        # Safety net: Groq returned unknown but message matches known no-category intents
-        if self.FAST_PATH_PATTERNS['buy'].search(message):
-            return self.handle_buy(user_id, message, start_time)
-        if self.FAST_PATH_PATTERNS['exit'].search(message):
-            return self.handle_exit(user_id, message, start_time)
-        msg_lower = message.lower()
-        if any(w in msg_lower for w in ['konta valo', 'konta bhalo', 'konti valo',
-                                         'which is better', 'কোনটা ভালো',
-                                         'কোনটা ভাল', 'কোনটি ভালো', 'তুলনা']):
-            return self.handle_comparison(user_id, message, merged, start_time)
 
         return self.handle_fallback(user_id, message, merged, start_time)
 
@@ -767,35 +654,76 @@ class SimpleChatbot:
             )
         return self.handle_fallback(user_id, message, merged, start_time)
 
+    def handle_technical_advice(self, user_id: str, message: str, merged: Dict,
+                                start_time: datetime) -> Dict[str, Any]:
+        """
+        Purpose: Answer technical suitability/compatibility questions using Groq 70b.
+        Trigger: intent=technical_advice
+        Boundary: only answers if question relates to a known category in cat_list.
+        Disclaimer always appended. Follow-up invitation always appended.
+        """
+        DISCLAIMER = "\n\nতবে স্যার, কেনার আগে অবশ্যই আরেকবার যাচাই করে নিন।"
+        FOLLOWUP = "\n\nকোন প্রোডাক্ট দেখতে চান বললে আমি এখনই দেখিয়ে দিতে পারি।"
+
+        # Only answer if question relates to a known category
+        resolved = self.category_validator.resolve_from_message(message)
+        if not resolved:
+            return self._create_response(
+                user_id=user_id, message=message,
+                response="স্যার, এই বিষয়ে আমি সাহায্য করতে পারব না। আপনি কি কোনো প্রোডাক্ট খুঁজছেন?",
+                mode=ChatMode.AI, intent='technical_advice_out_of_scope', products=None,
+                intent_content=self._intent_to_normalized(merged, message),
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
+        answer = None
+        if self.groq_client:
+            try:
+                system_prompt = """You are a helpful technical assistant for BDStall.com, a Bangladeshi e-commerce platform.
+Answer the user's technical question about product suitability or compatibility in 2-3 sentences maximum.
+The user may write in English, Bangla, or Banglish. Always reply in the SAME language the user used.
+Be direct and honest. If you are not sure, say so briefly.
+Do NOT add any disclaimer or suggestion to visit other websites.
+Do NOT recommend specific models or prices."""
+
+                response = self.groq_client.chat.completions.create(
+                    model=self.groq_answer_model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": message}
+                    ],
+                    temperature=0.2,
+                    max_tokens=200,
+                )
+                answer = response.choices[0].message.content.strip()
+            except Exception as e:
+                logger.warning("technical_advice Groq call failed: %s", e)
+
+        if not answer:
+            answer = "স্যার, এই বিষয়ে আমি নিশ্চিত নই।"
+
+        return self._create_response(
+            user_id=user_id, message=message,
+            response=answer + DISCLAIMER + FOLLOWUP,
+            mode=ChatMode.AI, intent='technical_advice', products=None,
+            intent_content=self._intent_to_normalized(merged, message),
+            processing_time=(datetime.now() - start_time).total_seconds(),
+            conversation_status=AI_ACTIVE_STATUS
+        )
+
     def handle_fallback(self, user_id: str, message: str, merged: Dict,
                         start_time: datetime) -> Dict[str, Any]:
+        # If category already known, search products
         if merged.get('category'):
             return self.handle_product_search(user_id, message, merged, start_time)
 
+        # Try to resolve the message itself as a category reply
         resolved = self.category_validator.resolve(message.strip())
         if resolved:
             merged['category'] = resolved['category_name']
             self._reset_clarification_counter(user_id)
             return self.handle_product_search(user_id, message, merged, start_time)
-
-        # Safety net: delivery-related messages never need a category
-        msg_lower = message.lower()
-        delivery_hints = [
-            'delivery', 'ডেলিভারি', 'koto din', 'কত দিন', 'deliver',
-            'shipping', 'পাঠাবে', 'পাবো কবে', 'dibo kobe', 'lagbe koto din',
-            'charge koto', 'চার্জ কত',
-        ]
-        if any(h in msg_lower for h in delivery_hints):
-            return self.handle_delivery(user_id, message, merged, start_time)
-
-        # Safety net: buy/comparison/exit never need a category
-        if self.FAST_PATH_PATTERNS['buy'].search(message):
-            return self.handle_buy(user_id, message, start_time)
-        if self.FAST_PATH_PATTERNS['exit'].search(message):
-            return self.handle_exit(user_id, message, start_time)
-        if any(w in msg_lower for w in ['konta valo', 'konti valo', 'konta bhalo',
-                                         'which is better', 'কোনটা ভালো', 'কোনটি ভালো']):
-            return self.handle_comparison(user_id, message, merged, start_time)
 
         return self._ask_for_category(user_id, message, merged, start_time)
 
@@ -846,22 +774,24 @@ SCHEMA:
 }}
 
 INTENT VALUES (pick exactly one):
-product_search | price_query | comparison | buy | exit | delivery | greeting | goodbye | thanks | complaint | faq | human_request | unknown
+product_search | price_query | comparison | buy | exit | delivery | greeting | goodbye | thanks | complaint | faq | human_request | technical_advice | hate_speech | unknown
 
 INTENT DEFINITIONS:
-- product_search : user wants to see, find, or browse products
-- price_query    : user is asking about price or cost of a product/category
-- comparison     : user wants to compare products or know which is better
-- buy            : user wants to know HOW to buy or place an order (process question)
-- exit           : user is leaving, says later / not now / will come back
-- delivery       : user asks about delivery time, charge, or process
-- greeting       : hello / hi / salam with no product intent
-- goodbye        : farewell with no product intent
-- thanks         : thank you messages
-- complaint      : refund, scam, broken product, bad experience
-- faq            : general questions about the site or policies
-- human_request  : user wants to speak to a human agent
-- unknown        : truly cannot determine
+- product_search    : user wants to see, find, or browse products
+- price_query       : user is asking about price or cost of a product/category
+- comparison        : user wants to compare products or know which is better
+- buy               : user wants to know HOW to buy or place an order (process question)
+- exit              : user is leaving, says later / not now / will come back
+- delivery          : user asks about delivery time, charge, or process
+- greeting          : hello / hi / salam with no product intent
+- goodbye           : farewell with no product intent
+- thanks            : thank you messages
+- complaint         : refund, scam, broken product, bad experience
+- faq               : general questions about the site or policies
+- human_request     : user wants to speak to a human agent
+- technical_advice  : user asks if a product is suitable, compatible, or good for a specific use case
+- hate_speech       : abusive language, insults, threats, racial slurs, sexual harassment, or any offensive content directed at people or the platform
+- unknown           : truly cannot determine
 
 CATEGORY EXTRACTION — most important rule:
 A "category" is a generic product type. Known examples (not exhaustive): {sample_str}
@@ -897,13 +827,16 @@ BUDGET PARSING: "50k"=50000, "30 hazar"=30000, "under 20k"→price_max=20000,
 
 BANGLISH / BANGLA QUICK REFERENCE:
 - "pore kinbo", "pore janabo", "ekhon na", "পরে জানাবো", "এখন লাগবে না"              → exit
-- "order korbo kivabe", "kivabe order korbo", "how to buy", "how can i buy", "order process" → buy (no category needed)
+- "order korbo kivabe", "kivabe order korbo", "how to buy", "how can i buy",
+  "how can i buy it", "how do i buy", "how to order", "order process"              → buy (no category needed)
 - "konti valo", "konta valo", "konta bhalo", "which is better", "কোনটা ভালো"         → comparison (no category needed)
 - "delivery koto din", "delivery charge", "koto din lagbe", "কত দিন লাগবে"           → delivery
 - "refund chai", "baje", "faltu", "kharap"                                            → complaint
 - "human chai", "agent er sathe kotha"                                                → human_request
 - "X ache", "X ki ache" where X is a product type                                    → product_search
 - "50k er vitor ache", "20k te ache", "30 hazar er moddhe ache"                      → product_search, price_max=X, is_followup=true
+- "will this work for gaming", "gaming er jonno valo ki", "ei laptop ki editing er jonno valo",
+  "is this RAM enough", "4GB RAM ki sufficient", "compatible hobe ki"                → technical_advice
 
 PREVIOUS CONTEXT (is_followup detection only — do NOT copy into entities):
 {json.dumps(previous_intent or {}, ensure_ascii=False)}
@@ -973,28 +906,10 @@ Return ONLY the JSON object."""
         }
 
     def _minimal_fallback(self, message: str) -> Dict[str, Any]:
-        """Emergency fallback — only when Groq is unavailable."""
+        """Emergency fallback — only when Groq is unavailable. Returns unknown for everything."""
         budget = self._extract_budget_range(message)
-
-        if self.FAST_PATH_PATTERNS['greeting'].match(message):
-            intent = 'greeting'
-        elif self.FAST_PATH_PATTERNS['goodbye'].match(message):
-            intent = 'goodbye'
-        elif self.FAST_PATH_PATTERNS['thanks'].match(message):
-            intent = 'thanks'
-        elif self.FAST_PATH_PATTERNS['exit'].search(message):
-            intent = 'exit'
-        elif self.FAST_PATH_PATTERNS['buy'].search(message):
-            intent = 'buy'
-        elif self.FAST_PATH_PATTERNS['human_request'].search(message):
-            intent = 'human_request'
-        elif self.COMPLAINT_PATTERNS.search(message):
-            intent = 'complaint'
-        else:
-            intent = 'unknown'
-
         return {
-            'intent': intent,
+            'intent': 'unknown',
             'entities': {
                 'category': '', 'brand': '', 'title': '',
                 'price_max': budget.get('max_price'),
@@ -1002,7 +917,7 @@ Return ONLY the JSON object."""
             },
             'missing': [],
             'is_followup': False,
-            'confidence': 0.3,
+            'confidence': 0.0,
         }
 
     # ─────────────────────────────────────────────────────────────
@@ -1012,17 +927,25 @@ Return ONLY the JSON object."""
                               previous: Dict, intent: str = '') -> Dict:
         new_entities = groq_result['entities']
         new_category = new_entities.get('category', '')
-        prev_category = previous.get('category', '')
         is_followup = groq_result.get('is_followup', False)
 
-        # Rule 6: explicit category switch → full reset
+        # Always use DB as source of truth for previous category (Rule 14)
+        # previous dict already comes from _load_previous_intent which reads from DB
+        prev_category = previous.get('category', '') or previous.get('cat', '')
+        prev_brand = previous.get('brand', '')
+        prev_title = previous.get('title', '')
+        prev_price_max = previous.get('price_max')
+        prev_price_min = previous.get('price_min')
+
+        # Rule 6: category switch → FULL reset of all entities
+        # Compare new category against DB-sourced previous category
         if new_category and prev_category and new_category.lower() != prev_category.lower():
             logger.info("🔄 Category switch %s → %s. Full reset.", prev_category, new_category)
             self._clear_product_search_cache(user_id, clear_pending=True)
             return {
                 'category': new_category,
-                'brand': new_entities.get('brand', ''),
-                'title': new_entities.get('title', ''),
+                'brand': '',
+                'title': '',
                 'price_max': new_entities.get('price_max'),
                 'price_min': new_entities.get('price_min'),
                 'updated_at': datetime.now().isoformat(),
@@ -1054,14 +977,14 @@ Return ONLY the JSON object."""
 
         return {
             'category': effective_category,
-            'brand': new_entities.get('brand') or previous.get('brand', ''),
-            'title': new_entities.get('title') or previous.get('title', ''),
+            'brand': new_entities.get('brand') or prev_brand,
+            'title': new_entities.get('title') or prev_title,
             'price_max': (new_entities.get('price_max')
                           if new_entities.get('price_max') is not None
-                          else previous.get('price_max')),
+                          else prev_price_max),
             'price_min': (new_entities.get('price_min')
                           if new_entities.get('price_min') is not None
-                          else previous.get('price_min')),
+                          else prev_price_min),
             'updated_at': datetime.now().isoformat(),
         }
 
