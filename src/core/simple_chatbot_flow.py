@@ -626,14 +626,15 @@ class SimpleChatbot:
         brand = merged.get('brand', '')
         title = merged.get('title', '')
         price_max = merged.get('price_max')
+        price_min = merged.get('price_min')
 
         keywords = self._build_search_keywords_from_merged(merged)
-        result = self._cached_search(keywords, price_max)
+        result = self._cached_search(keywords, price_max, price_min)
 
         if result['products_found'] == 0:
             broader = self._build_broader_search_keywords(merged)
             if broader and broader != keywords:
-                retry = self._cached_search(broader, price_max)
+                retry = self._cached_search(broader, price_max, price_min)
                 if retry['products_found'] > 0:
                     keywords = broader
                     result = retry
@@ -1116,8 +1117,6 @@ Return ONLY the JSON object."""
             parts.append(merged['title'])
         elif merged.get('category'):
             parts.append(merged['category'])
-        if merged.get('price_max'):
-            parts.append(str(merged['price_max']))
         return ' '.join(parts).strip()
 
     def _build_broader_search_keywords(self, merged: Dict) -> Optional[str]:
@@ -1172,22 +1171,29 @@ Return ONLY the JSON object."""
 
         return {'min_price': None, 'max_price': None, 'price_text': ''}
 
-    def _cached_search(self, keywords: str, max_price: Optional[int] = None) -> Dict[str, Any]:
-        cache_key = f"{keywords}|{max_price or ''}"
+    def _cached_search(self, keywords: str, max_price: Optional[int] = None,
+                       min_price: Optional[int] = None) -> Dict[str, Any]:
+        cache_key = f"{keywords}|{min_price or ''}|{max_price or ''}"
         now = time.time()
         cached = self._search_cache.get(cache_key)
         if cached and (now - cached[0]) < self._search_cache_ttl:
             return cached[1]
-        result = self._do_search(keywords, max_price)
+        result = self._do_search(keywords, max_price, min_price)
         self._search_cache[cache_key] = (now, result)
         if len(self._search_cache) > self._search_cache_max:
             oldest = min(self._search_cache.keys(), key=lambda k: self._search_cache[k][0])
             self._search_cache.pop(oldest, None)
         return result
 
-    def _do_search(self, keywords: str, explicit_max_price: Optional[int] = None) -> Dict[str, Any]:
+    def _do_search(self, keywords: str, explicit_max_price: Optional[int] = None,
+                   explicit_min_price: Optional[int] = None) -> Dict[str, Any]:
         try:
-            params = {'term': keywords.strip(), 'key': self.api_key}
+            params = {
+                'term': keywords.strip(),
+                'key': self.api_key,
+                'minPrice': explicit_min_price or '',
+                'maxPrice': explicit_max_price or '',
+            }
             started = datetime.now()
             response = requests.get(self.api_url, params=params, timeout=10)
             duration_ms = int((datetime.now() - started).total_seconds() * 1000)
@@ -1207,21 +1213,8 @@ Return ONLY the JSON object."""
             if not products_array:
                 return {'products_found': 0, 'products': []}
 
-            max_price = explicit_max_price
-            filtered = []
-            for p in products_array[:20]:
-                try:
-                    pp = int(p.get('app_ListingPrice', 999999))
-                    if max_price and pp > max_price:
-                        continue
-                    filtered.append(p)
-                except Exception:
-                    continue
-
-            top = filtered[:5]
-            if not top:
-                return {'products_found': 0, 'products': []}
-
+            # API handles price filtering — just take top 5
+            top = products_array[:5]
             products_list = [{
                 'title': p.get('ListingTitle', 'N/A'),
                 'price': p.get('ListingPrice', 'N/A'),
