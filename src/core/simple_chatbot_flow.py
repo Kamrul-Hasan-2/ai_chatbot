@@ -408,6 +408,17 @@ class SimpleChatbot:
             if url_match:
                 return self._handle_url_message(user_id, message, url_match.group(0), start_time)
 
+            # Product detail follow-up — stock/color/quality/price after product_link
+            if self.user_last_intent.get(user_id) == 'product_link':
+                prev = self._load_previous_intent(user_id)
+                product_url = prev.get('product_url', '')
+                if product_url:
+                    detail_response = self._handle_product_detail_followup(
+                        user_id, message, product_url, start_time
+                    )
+                    if detail_response:
+                        return detail_response
+
             # ALL intents — classified by Groq
             return self._handle_main_flow(user_id, message, start_time)
 
@@ -642,6 +653,40 @@ class SimpleChatbot:
             conversation_status=AI_ACTIVE_STATUS
         )
 
+    def _handle_product_detail_followup(self, user_id: str, message: str,
+                                        product_url: str,
+                                        start_time: datetime) -> Optional[Dict[str, Any]]:
+        """
+        Handle follow-up questions about a specific product after product_link intent.
+        Detects: stock, color, quality, price questions.
+        Returns fixed response with View button, or None if not a detail question.
+        """
+        msg_lower = message.lower()
+        detail_signals = [
+            'stock', 'ache', 'available', 'color', 'colour', 'rong',
+            'quality', 'maan', 'durable', 'valo', 'price', 'dam', 'koto',
+            'warranty', 'guarantee', 'original', 'kena jabe', 'pabo',
+            'স্টক', 'রং', 'মান', 'দাম', 'ওয়ারেন্টি',
+        ]
+        if not any(s in msg_lower for s in detail_signals):
+            return None
+
+        prev = self._load_previous_intent(user_id)
+        intent_content = self._normalize_intent_content_payload(prev)
+
+        return self._create_response(
+            user_id=user_id, message=message,
+            response="স্যার, এই প্রোডাক্টের সকল তথ্য আমাদের পেজে দেওয়া আছে।",
+            mode=ChatMode.AI, intent='product_detail_followup', products=None,
+            link_buttons=[{
+                'text': 'View Product',
+                'url': product_url,
+            }],
+            intent_content=intent_content,
+            processing_time=(datetime.now() - start_time).total_seconds(),
+            conversation_status=AI_ACTIVE_STATUS
+        )
+
     def _handle_url_message(self, user_id: str, message: str, url: str,
                             start_time: datetime) -> Dict[str, Any]:
         """
@@ -711,6 +756,13 @@ class SimpleChatbot:
         price = top.get('price', 'N/A')
         response_text = f"স্যার, এই প্রোডাক্টটি পেয়েছি:\n\n{title}\nমূল্য: {price}"
 
+        intent_content = self._normalize_intent_content_payload(
+            self._load_previous_intent(user_id)
+        )
+        intent_content['product_url'] = url
+        intent_content['title'] = title
+        intent_content['cat'] = top.get('category', intent_content.get('cat', ''))
+
         return self._create_response(
             user_id=user_id, message=message,
             response=response_text,
@@ -721,9 +773,7 @@ class SimpleChatbot:
                 'title': title,
                 'price': price,
             }],
-            intent_content=self._normalize_intent_content_payload(
-                self._load_previous_intent(user_id)
-            ),
+            intent_content=intent_content,
             processing_time=(datetime.now() - start_time).total_seconds(),
             conversation_status=AI_ACTIVE_STATUS
         )
@@ -1234,6 +1284,8 @@ Return ONLY the JSON object."""
                 out['exit'] = 1 if int(payload['exit']) else 0
             except Exception:
                 out['exit'] = 0
+        if 'product_url' in payload and payload['product_url']:
+            out['product_url'] = str(payload['product_url'])
         return out
 
     # ─────────────────────────────────────────────────────────────
