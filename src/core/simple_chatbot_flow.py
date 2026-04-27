@@ -480,18 +480,18 @@ class SimpleChatbot:
                 processing_time=(datetime.now() - start_time).total_seconds(),
                 conversation_status=AI_ACTIVE_STATUS
             )
-        if intent == 'comparison':
-            return self.handle_comparison(user_id, message, merged, start_time)
-        if intent in ('ordering', 'buy'):
-            return self.handle_buy(user_id, message, start_time)
         if intent == 'exit':
             return self.handle_exit(user_id, message, start_time)
+        if intent == 'buy':
+            return self.handle_buy(user_id, message, start_time)
+        if intent == 'technical_advice':
+            return self.handle_technical_advice(user_id, message, merged, start_time)
+        if intent == 'comparison':
+            return self.handle_comparison(user_id, message, merged, start_time)
         if intent == 'delivery':
             return self.handle_delivery(user_id, message, merged, start_time)
         if intent == 'faq':
             return self.handle_faq(user_id, message, merged, start_time)
-        if intent == 'technical_advice':
-            return self.handle_technical_advice(user_id, message, merged, start_time)
         if intent == 'price_query':
             return self.handle_price_query(user_id, message, merged, start_time)
         if intent == 'product_search':
@@ -505,6 +505,7 @@ class SimpleChatbot:
 
     def handle_product_search(self, user_id: str, message: str, merged: Dict,
                               start_time: datetime) -> Dict[str, Any]:
+
         if not merged.get('category'):
             return self._ask_for_category(user_id, message, merged, start_time)
 
