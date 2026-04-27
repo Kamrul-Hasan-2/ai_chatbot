@@ -107,7 +107,7 @@ class SimpleChatbot:
         if groq_api_key and Groq:
             self.groq_client = Groq(api_key=groq_api_key)
             self.groq_model = os.getenv('GROQ_MODEL', 'llama-3.1-8b-instant')
-            self.groq_answer_model = os.getenv('GROQ_ANSWER_MODEL', 'llama-3.3-70b-versatile')
+            self.groq_answer_model = os.getenv('GROQ_ANSWER_MODEL', 'llama-3.1-8b-instant')
         else:
             self.groq_client = None
             self.groq_model = None
@@ -685,7 +685,7 @@ class SimpleChatbot:
             )
 
         answer = None
-        if self.groq_client:
+        if self.groq_client and self.groq_answer_model:
             try:
                 system_prompt = """You are a helpful technical assistant for BDStall.com, a Bangladeshi e-commerce platform.
 Answer the user's technical question about product suitability or compatibility in 2-3 sentences maximum.
