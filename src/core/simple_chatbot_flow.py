@@ -176,22 +176,22 @@ class SimpleChatbot:
         self._history_cache_ttl = 60
 
         # BDStall config
-        self.api_url = "https://www.bdstall.com/api/item/ai_search"
+        self.api_url = "https://www.bdstall.com/api/chatbot/ai_search/"
         self.api_key = os.getenv('BDSTALL_API_KEY', 'mkh677ddd2sxxkkdjff')
-        self.delivery_intent_api_url = "https://www.bdstall.com/api/item/ai_template/"
+        self.delivery_intent_api_url = "https://www.bdstall.com/api/chatbot/ai_template/"
         self.assign_agent_api_url = os.getenv(
-            'ASSIGN_AGENT_API_URL', 'https://www.bdstall.com/api/item/chatbot_assign_agent/'
+            'ASSIGN_AGENT_API_URL', 'https://www.bdstall.com/api/chatbot/assign_agent/'
         )
         self.assign_agent_api_key = os.getenv('ASSIGN_AGENT_API_KEY', self.api_key)
         self.assign_bot_api_url = os.getenv(
-            'ASSIGN_BOT_API_URL', 'https://www.bdstall.com/api/item/chatbot_assign_bot/'
+            'ASSIGN_BOT_API_URL', 'https://www.bdstall.com/api/chatbot/assign_bot/'
         )
         self.responder_api_url = os.getenv(
-            'RESPONDER_API_URL', 'https://www.bdstall.com/api/item/chatbot_responder/'
+            'RESPONDER_API_URL', 'https://www.bdstall.com/api/chatbot/responder/'
         )
         self.responder_api_key = os.getenv('RESPONDER_API_KEY', self.api_key)
         self.chatbot_history_api_url = os.getenv(
-            'CHATBOT_HISTORY_API_URL', 'https://www.bdstall.com/api/item/chatbot_history/'
+            'CHATBOT_HISTORY_API_URL', 'https://www.bdstall.com/api/chatbot/chatbot_history/'
         )
         try:
             self.chatbot_history_limit = int(os.getenv('CHATBOT_HISTORY_LIMIT', '5'))
