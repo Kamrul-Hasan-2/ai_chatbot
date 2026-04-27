@@ -437,6 +437,21 @@ class SimpleChatbot:
 
         merged = self._merge_intent_context(user_id, groq_result, previous_intent, intent)
 
+        # Override intent to technical_advice if message contains advice/recommendation signals
+        # regardless of what Groq classified — Groq often picks product_search for these
+        if intent not in ('hate_speech', 'human_request', 'complaint', 'greeting',
+                          'goodbye', 'thanks', 'exit', 'buy', 'delivery', 'faq'):
+            msg_lower = message.lower()
+            advice_signals = [
+                'valo hobe naki', 'valo naki', 'valo hobe ki', 'ki valo hobe',
+                'konta valo', 'konta bhalo', 'konti valo', 'konta nibo', 'konta kinbo',
+                'er jonno ki valo', 'er jonno valo', 'ki valo', 'valo ki',
+                'recommend', 'suggest', 'better for', 'suitable for', 'good for',
+                'ভালো হবে নাকি', 'কোনটা ভালো', 'কোনটা নেবো', 'রেকমেন্ড',
+            ]
+            if any(s in msg_lower for s in advice_signals):
+                intent = 'technical_advice'
+
         if intent == 'hate_speech':
             return self._handoff_to_human(
                 user_id, message, start_time,
@@ -835,6 +850,9 @@ BUDGET PARSING: "50k"=50000, "30 hazar"=30000, "under 20k"→price_max=20000,
 "X er vitor ache", "X budget ache", "X te ache" → price_max=X, intent=product_search, is_followup=true.
 
 BANGLISH / BANGLA QUICK REFERENCE:
+- "hi", "hello", "hey", "salam", "assalamu alaikum", "হাই", "হ্যালো", "সালাম"      → greeting
+- "bye", "goodbye", "allah hafez", "আল্লাহ হাফেজ", "বিদায়"                         → goodbye
+- "thanks", "thank you", "ধন্যবাদ", "অনেক ধন্যবাদ"                                 → thanks
 - "pore kinbo", "pore janabo", "ekhon na", "পরে জানাবো", "এখন লাগবে না"              → exit
 - "order korbo kivabe", "kivabe order korbo", "how to buy", "how can i buy",
   "how can i buy it", "how do i buy", "how to order", "order process",
