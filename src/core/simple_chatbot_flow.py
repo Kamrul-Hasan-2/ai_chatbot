@@ -123,7 +123,7 @@ class SimpleChatbot:
             re.IGNORECASE,
         ),
         'buy': re.compile(
-            r'\b(how\s*to\s*buy|how\s*to\s*order|how\s*to\s*purchase|'
+            r'\b(how\s*to\s*buy|how\s*can\s*i\s*buy|how\s*to\s*order|how\s*to\s*purchase|'
             r'order\s*korbo\s*kivabe|kivabe\s*(buy|order|kini|purchase)|'
             r'কিভাবে\s*(কিনবো|কিনব|অর্ডার|বাই)|'
             r'order\s*process|buy\s*process|buying\s*guide)\b',
@@ -180,14 +180,14 @@ class SimpleChatbot:
         self.api_key = os.getenv('BDSTALL_API_KEY', 'mkh677ddd2sxxkkdjff')
         self.delivery_intent_api_url = "https://www.bdstall.com/api/chatbot/ai_template/"
         self.assign_agent_api_url = os.getenv(
-            'ASSIGN_AGENT_API_URL', 'https://www.bdstall.com/api/chatbot/assign_agent/'
+            'ASSIGN_AGENT_API_URL', 'https://www.bdstall.com/api/chatbot/chatbot_assign_agent/'
         )
         self.assign_agent_api_key = os.getenv('ASSIGN_AGENT_API_KEY', self.api_key)
         self.assign_bot_api_url = os.getenv(
-            'ASSIGN_BOT_API_URL', 'https://www.bdstall.com/api/chatbot/assign_bot/'
+            'ASSIGN_BOT_API_URL', 'https://www.bdstall.com/api/chatbot/chatbot_assign_bot/'
         )
         self.responder_api_url = os.getenv(
-            'RESPONDER_API_URL', 'https://www.bdstall.com/api/chatbot/responder/'
+            'RESPONDER_API_URL', 'https://www.bdstall.com/api/chatbot/chatbot_responder/'
         )
         self.responder_api_key = os.getenv('RESPONDER_API_KEY', self.api_key)
         self.chatbot_history_api_url = os.getenv(
@@ -891,16 +891,19 @@ MISSING ARRAY:
 - Add "category" to missing[] when intent is product_search, price_query, or comparison AND category="".
 - All other intents: missing=[].
 
-BUDGET PARSING: "50k"=50000, "30 hazar"=30000, "under 20k"→price_max=20000. null if absent.
+BUDGET PARSING: "50k"=50000, "30 hazar"=30000, "under 20k"→price_max=20000,
+"50k er vitor"→price_max=50000, "50 hazar er moddhe"→price_max=50000. null if absent.
+"X er vitor ache", "X budget ache", "X te ache" → price_max=X, intent=product_search, is_followup=true.
 
 BANGLISH / BANGLA QUICK REFERENCE:
 - "pore kinbo", "pore janabo", "ekhon na", "পরে জানাবো", "এখন লাগবে না"              → exit
-- "order korbo kivabe", "kivabe order korbo", "how to buy", "order process"           → buy (no category needed)
+- "order korbo kivabe", "kivabe order korbo", "how to buy", "how can i buy", "order process" → buy (no category needed)
 - "konti valo", "konta valo", "konta bhalo", "which is better", "কোনটা ভালো"         → comparison (no category needed)
 - "delivery koto din", "delivery charge", "koto din lagbe", "কত দিন লাগবে"           → delivery
 - "refund chai", "baje", "faltu", "kharap"                                            → complaint
 - "human chai", "agent er sathe kotha"                                                → human_request
 - "X ache", "X ki ache" where X is a product type                                    → product_search
+- "50k er vitor ache", "20k te ache", "30 hazar er moddhe ache"                      → product_search, price_max=X, is_followup=true
 
 PREVIOUS CONTEXT (is_followup detection only — do NOT copy into entities):
 {json.dumps(previous_intent or {}, ensure_ascii=False)}
@@ -1194,12 +1197,6 @@ Return ONLY the JSON object."""
                 'minPrice': explicit_min_price or '',
                 'maxPrice': explicit_max_price or '',
             }
-            logger.info(
-                "🔍 API CALL: term=%r minPrice=%r maxPrice=%r",
-                keywords,
-                explicit_min_price,
-                explicit_max_price,
-            )
             started = datetime.now()
             response = requests.get(self.api_url, params=params, timeout=10)
             duration_ms = int((datetime.now() - started).total_seconds() * 1000)
