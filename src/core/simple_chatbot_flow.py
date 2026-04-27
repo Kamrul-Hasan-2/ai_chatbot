@@ -590,7 +590,6 @@ class SimpleChatbot:
                 user_id=user_id, message=message, response=no_result,
                 mode=ChatMode.AI, intent='no_products_found', products=None,
                 search_keywords=keywords,
-                intent_content=self._intent_to_normalized(merged, message),
                 processing_time=(datetime.now() - start_time).total_seconds(),
                 conversation_status=AI_ACTIVE_STATUS
             )
@@ -605,7 +604,6 @@ class SimpleChatbot:
             mode=ChatMode.AI, intent='product_search', products=products,
             search_keywords=keywords,
             link_buttons=listing_buttons,
-            intent_content=self._intent_to_normalized(merged, message),
             processing_time=(datetime.now() - start_time).total_seconds()
         )
 
@@ -620,7 +618,6 @@ class SimpleChatbot:
             return self._create_response(
                 user_id=user_id, message=message, response=ctx_reply,
                 mode=ChatMode.AI, intent='price_from_context', products=None,
-                intent_content=self._intent_to_normalized(merged, message),
                 processing_time=(datetime.now() - start_time).total_seconds(),
                 conversation_status=AI_ACTIVE_STATUS
             )
@@ -636,7 +633,6 @@ class SimpleChatbot:
             response=self._build_comparison_redirect_response(),
             mode=ChatMode.AI, intent='comparison', products=None,
             link_buttons=self._build_comparison_link_buttons(merged),
-            intent_content=self._intent_to_normalized(merged, message),
             processing_time=(datetime.now() - start_time).total_seconds(),
             conversation_status=AI_ACTIVE_STATUS
         )
@@ -652,9 +648,6 @@ class SimpleChatbot:
                 'text': 'Shopping Guide',
                 'url': 'https://www.bdstall.com/blog/safe-shopping-guide/'
             }],
-            intent_content=self._normalize_intent_content_payload(
-                self.user_intent_content.get(user_id) or {}
-            ),
             processing_time=(datetime.now() - start_time).total_seconds(),
             conversation_status=AI_ACTIVE_STATUS
         )
@@ -670,7 +663,6 @@ class SimpleChatbot:
             user_id=user_id, message=message,
             response="সাথে থাকার জন্য ধন্যবাদ।",
             mode=ChatMode.AI, intent='exit', products=None,
-            intent_content=prev,
             processing_time=(datetime.now() - start_time).total_seconds(),
             conversation_status=AI_ACTIVE_STATUS
         )
@@ -683,7 +675,6 @@ class SimpleChatbot:
             return self._create_response(
                 user_id=user_id, message=message, response=tmpl,
                 mode=ChatMode.AI, intent='delivery', products=None,
-                intent_content=self._intent_to_normalized(merged, message),
                 processing_time=(datetime.now() - start_time).total_seconds()
             )
         faq = self._search_database_faq(message)
@@ -691,7 +682,6 @@ class SimpleChatbot:
             return self._create_response(
                 user_id=user_id, message=message, response=faq,
                 mode=ChatMode.AI, intent='delivery', products=None,
-                intent_content=self._intent_to_normalized(merged, message),
                 processing_time=(datetime.now() - start_time).total_seconds()
             )
         return self.handle_fallback(user_id, message, merged, start_time)
@@ -704,7 +694,6 @@ class SimpleChatbot:
             return self._create_response(
                 user_id=user_id, message=message, response=faq,
                 mode=ChatMode.AI, intent='faq', products=None,
-                intent_content=self._intent_to_normalized(merged, message),
                 processing_time=(datetime.now() - start_time).total_seconds()
             )
         return self.handle_fallback(user_id, message, merged, start_time)
@@ -756,7 +745,6 @@ class SimpleChatbot:
         return self._create_response(
             user_id=user_id, message=message, response=CATEGORY_PROMPT,
             mode=ChatMode.AI, intent='need_category', products=None,
-            intent_content=self._intent_to_normalized(merged, message),
             processing_time=(datetime.now() - start_time).total_seconds(),
             conversation_status=AI_ACTIVE_STATUS
         )
