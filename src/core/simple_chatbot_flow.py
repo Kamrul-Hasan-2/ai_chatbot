@@ -176,7 +176,7 @@ class SimpleChatbot:
         self._history_cache_ttl = 60
 
         # BDStall config
-        self.api_url = "https://www.bdstall.com/api/item/ai_search/"
+        self.api_url = "https://www.bdstall.com/api/item/ai_search"
         self.api_key = os.getenv('BDSTALL_API_KEY', 'mkh677ddd2sxxkkdjff')
         self.delivery_intent_api_url = "https://www.bdstall.com/api/item/ai_template/"
         self.assign_agent_api_url = os.getenv(
@@ -1194,6 +1194,12 @@ Return ONLY the JSON object."""
                 'minPrice': explicit_min_price or '',
                 'maxPrice': explicit_max_price or '',
             }
+            logger.info(
+                "🔍 API CALL: term=%r minPrice=%r maxPrice=%r",
+                keywords,
+                explicit_min_price,
+                explicit_max_price,
+            )
             started = datetime.now()
             response = requests.get(self.api_url, params=params, timeout=10)
             duration_ms = int((datetime.now() - started).total_seconds() * 1000)
