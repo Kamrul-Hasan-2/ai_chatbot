@@ -765,6 +765,8 @@ class SimpleChatbot:
             return ' '.join(filtered[:4])
         except Exception:
             return ''
+
+    def handle_delivery(self, user_id: str, message: str, merged: Dict,
                         start_time: datetime) -> Dict[str, Any]:
         self._reset_clarification_counter(user_id)
         tmpl = self._fetch_delivery_intent_response()
