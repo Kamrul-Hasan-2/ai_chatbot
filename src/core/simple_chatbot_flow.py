@@ -447,7 +447,12 @@ class SimpleChatbot:
                 'konta valo', 'konta bhalo', 'konti valo', 'konta nibo', 'konta kinbo',
                 'er jonno ki valo', 'er jonno valo', 'ki valo', 'valo ki',
                 'recommend', 'suggest', 'better for', 'suitable for', 'good for',
+                'upgrade kora jay', 'upgrade possible', 'upgrade hobe ki',
+                'compatible hobe', 'compatible ki', 'fit hobe', 'lagbe ki',
+                'kora jay ki', 'kora jabe ki', 'possible ki', 'hobe ki',
+                'ki way ache', 'kivabe upgrade', 'change kora jay',
                 'ভালো হবে নাকি', 'কোনটা ভালো', 'কোনটা নেবো', 'রেকমেন্ড',
+                'আপগ্রেড করা যায়', 'কম্প্যাটিবল',
             ]
             if any(s in msg_lower for s in advice_signals):
                 intent = 'technical_advice'
@@ -875,7 +880,9 @@ BANGLISH / BANGLA QUICK REFERENCE:
 - "50k er vitor ache", "20k te ache", "30 hazar er moddhe ache"                   → product_search, price_max=X, is_followup=true
 - "will this work for gaming", "gaming er jonno valo ki", "ei laptop ki editing er jonno valo",
   "is this RAM enough", "4GB RAM ki sufficient", "compatible hobe ki",
-  "laptop valo hobe naki desktop gaming er jonno"                                  → technical_advice
+  "laptop valo hobe naki desktop gaming er jonno",
+  "laptop er ram ki upgrade kora jay", "ram upgrade possible ki",
+  "ei processor ki change kora jay", "ssd lagano jabe ki"                          → technical_advice
 
 PREVIOUS CONTEXT (is_followup detection only — do NOT copy into entities):
 {json.dumps(previous_intent or {}, ensure_ascii=False)}
