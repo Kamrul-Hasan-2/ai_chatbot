@@ -117,6 +117,7 @@ class SimpleChatbot:
         # Per-user product/order state only — NO mode, NO intent_content (Rules 13, 14)
         self.user_product_context: Dict[str, list] = {}
         self.user_selected_product: Dict[str, Dict[str, Any]] = {}
+        self.user_product_url: Dict[str, str] = {}  # last product link URL per user
         self.user_order_context: Dict[str, bool] = {}
         self.user_order_draft: Dict[str, Dict[str, str]] = {}
         self.user_pending_product_query: Dict[str, Dict[str, Any]] = {}
@@ -409,8 +410,10 @@ class SimpleChatbot:
                 return self._handle_url_message(user_id, message, url_match.group(0), start_time)
 
             # Product detail follow-up — stock/color/quality/price after product_link
-            prev = self._load_previous_intent(user_id)
-            product_url = prev.get('product_url', '')
+            product_url = self.user_product_url.get(user_id, '')
+            if not product_url:
+                prev = self._load_previous_intent(user_id)
+                product_url = prev.get('product_url', '')
             if product_url:
                 detail_response = self._handle_product_detail_followup(
                     user_id, message, product_url, start_time
@@ -748,8 +751,7 @@ class SimpleChatbot:
 
         products = result['products']
         self.user_product_context[user_id] = products[:5]
-
-        # Show top match with title and price
+        self.user_product_url[user_id] = url  # store for follow-up questions
         top = products[0]
         title = top.get('title', 'N/A')
         price = top.get('price', 'N/A')
@@ -1756,6 +1758,7 @@ Return ONLY the JSON object."""
     def _clear_product_search_cache(self, user_id: str, clear_pending: bool = False) -> None:
         self.user_product_context.pop(user_id, None)
         self.user_selected_product.pop(user_id, None)
+        self.user_product_url.pop(user_id, None)
         if clear_pending:
             self.user_pending_product_query.pop(user_id, None)
             self.user_order_context.pop(user_id, None)
