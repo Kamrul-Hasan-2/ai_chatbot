@@ -727,16 +727,27 @@ Do NOT recommend specific models or prices."""
 
     def handle_fallback(self, user_id: str, message: str, merged: Dict,
                         start_time: datetime) -> Dict[str, Any]:
-        # If category already known, search products
-        if merged.get('category'):
+        # Category presence alone does NOT mean product_search
+        # Only go to product_search if last intent was search-related
+        last_intent = self.user_last_intent.get(user_id, '')
+        search_intents = {'product_search', 'price_query', 'no_products_found', 'need_category'}
+
+        if merged.get('category') and last_intent in search_intents:
             return self.handle_product_search(user_id, message, merged, start_time)
 
-        # Try to resolve the message itself as a category reply
-        resolved = self.category_validator.resolve(message.strip())
-        if resolved:
-            merged['category'] = resolved['category_name']
-            self._reset_clarification_counter(user_id)
-            return self.handle_product_search(user_id, message, merged, start_time)
+        # Try to resolve single-word category reply
+        # (e.g. user replied "laptop" to the category question)
+        if not merged.get('category'):
+            resolved = self.category_validator.resolve(message.strip())
+            if resolved:
+                merged['category'] = resolved['category_name']
+                self._reset_clarification_counter(user_id)
+                return self.handle_product_search(user_id, message, merged, start_time)
+
+        # If category is known but last intent was not search-related,
+        # treat as technical question about that category
+        if merged.get('category') or self.category_validator.resolve_from_message(message):
+            return self.handle_technical_advice(user_id, message, merged, start_time)
 
         return self._ask_for_category(user_id, message, merged, start_time)
 
@@ -811,6 +822,10 @@ Ask yourself two questions about the message:
 Q1: "Is the user asking what a product CAN DO, whether it is GOOD for something,
      whether it is COMPATIBLE, or whether it can be UPGRADED/CHANGED?" → technical_advice
 Q2: "Is the user asking to SEE, FIND, or BUY a product?" → product_search
+
+IMPORTANT: Even if a category word (laptop, RAM, SSD) is present in the message,
+DO NOT classify as product_search if the user is asking about capability, upgrade,
+compatibility, or quality. Category presence alone does NOT mean product_search.
 
 Examples of technical_advice (capability/suitability questions):
 - "laptop er ram ki upgrade kora jay?" → asking CAN IT be upgraded → technical_advice
