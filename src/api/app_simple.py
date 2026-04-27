@@ -22,8 +22,11 @@ except Exception:
     pass
 
 # Add paths
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(MODULE_DIR, '..', '..'))
+SRC_ROOT = os.path.abspath(os.path.join(MODULE_DIR, '..'))
+sys.path.insert(0, PROJECT_ROOT)
+sys.path.insert(0, SRC_ROOT)
 
 # Import simple chatbot
 from core.simple_chatbot_flow import SimpleChatbot
@@ -40,15 +43,15 @@ try:
 except ImportError:
     from src.utils.product_link_handler import get_link_handler
 
-# Load environment
-load_dotenv()
+# Load environment from the project root explicitly (works under systemd/gunicorn too).
+ENV_FILE_PATH = os.path.join(PROJECT_ROOT, '.env')
+load_dotenv(ENV_FILE_PATH)
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Get project root
-PROJECT_ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 STATIC_FOLDER = os.path.join(PROJECT_ROOT, 'static')
 
 # Initialize Flask
@@ -356,6 +359,27 @@ def _extract_urls(message_text: str) -> list[str]:
     return urls
 
 
+def _sanitize_incoming_message(message_text: str) -> str:
+    """Normalize incoming user text and drop noisy standalone domain lines."""
+    text = str(message_text or '').replace('\r\n', '\n').strip()
+    if not text:
+        return ''
+
+    keep_lines = []
+    for raw_line in text.split('\n'):
+        line = raw_line.strip()
+        if not line:
+            continue
+        lowered = line.lower().strip(' .,!?:;"\'')
+        if lowered in {'bdstall.com', 'www.bdstall.com', 'https://www.bdstall.com'}:
+            continue
+        keep_lines.append(line)
+
+    if not keep_lines:
+        return text
+    return ' '.join(keep_lines).strip()
+
+
 def _send_facebook_payload(recipient_id: str, payload: dict) -> bool:
     """Send a prepared payload to Facebook Messenger Send API."""
     if not PAGE_ACCESS_TOKEN:
@@ -625,7 +649,7 @@ def _process_user_message(
     user_name: Optional[str] = None
 ) -> dict:
     """Run the same chatbot pipeline for web and Messenger inputs."""
-    clean_message = (message or '').strip()
+    clean_message = _sanitize_incoming_message(message)
     resolved_user_name = (
         (user_name or '').strip()
         or get_known_user_name(str(user_id))
