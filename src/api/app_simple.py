@@ -61,7 +61,7 @@ chatbot = None
 # BDStall chat message save API configuration
 SAVE_MESSAGE_API_URL = os.getenv(
     'SAVE_MESSAGE_API_URL',
-    'https://www.bdstall.com/api/item/chatbot_save_message/'
+    'https://www.bdstall.com/api/chatbot/chatbot_save_message/'
 )
 SAVE_MESSAGE_API_KEY = os.getenv('SAVE_MESSAGE_API_KEY', 'mkh677ddd2sxxkkdjff')
 
@@ -574,7 +574,7 @@ def get_responder_user_name(user_id: str) -> Optional[str]:
         return None
 
     try:
-        url = "https://www.bdstall.com/api/item/chatbot_responder/"
+        url = "https://www.bdstall.com/api/chatbot/chatbot_responder/"
         params = {
             "key": SAVE_MESSAGE_API_KEY,
             "user_id": str(user_id)
