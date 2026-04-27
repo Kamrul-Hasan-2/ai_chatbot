@@ -81,7 +81,7 @@ HUMAN_SUPPORT_REQUIRED_STATUS = "Human Support Required"
 VALID_INTENTS = {
     'product_search', 'price_query', 'comparison', 'ordering', 'delivery',
     'greeting', 'goodbye', 'thanks', 'complaint', 'faq', 'human_request',
-    'buy', 'exit', 'technical_advice', 'hate_speech', 'unknown'
+    'buy', 'exit', 'technical_advice', 'hate_speech', 'product_link', 'unknown'
 }
 
 PRODUCT_RELATED_INTENTS = {'product_search', 'price_query', 'comparison', 'ordering'}
@@ -102,54 +102,6 @@ class SimpleChatbot:
         self.project_root = os.path.join(os.path.dirname(__file__), '..', '..')
         self.state_file = os.path.join(self.project_root, 'data', 'chatbot_state.json')
         self._state_lock = threading.Lock()
-
-        # Runtime intent patterns (kept on instance to avoid class-attr drift).
-        self.FAST_PATH_PATTERNS = {
-            'greeting': re.compile(
-                r'^\s*(hi|hello|hey|hlw|hai|salam|assalamu\s*alaikum|assalamualaikum|'
-                r'হাই|হ্যালো|হেলো|সালাম|আসসালামু\s*আলাইকুম|আসসালামুয়ালাইকুম)\s*[!.?]*\s*$',
-                re.IGNORECASE,
-            ),
-            'goodbye': re.compile(
-                r'^\s*(bye|goodbye|see\s*you|take\s*care|allah\s*hafez|ok\s*bye|'
-                r'বিদায়|আল্লাহ\s*হাফেজ|বাই|আবার\s*দেখা\s*হবে)\s*[!.?]*\s*$',
-                re.IGNORECASE,
-            ),
-            'thanks': re.compile(
-                r'^\s*(thanks?|thank\s*you|thx|thanku|thankyou|thanks\s*a\s*lot|'
-                r'ধন্যবাদ|অনেক\s*ধন্যবাদ)\s*[!.?]*\s*$',
-                re.IGNORECASE,
-            ),
-            'ok_ack': re.compile(
-                r'^\s*(ok|okay|okk|okey|acha|accha|ঠিক\s*আছে|আচ্ছা|ওকে)\s*[!.?]*\s*$',
-                re.IGNORECASE,
-            ),
-            'human_request': re.compile(
-                r'\b(human|agent|representative|talk\s*to\s*(?:a\s*)?(?:human|person)|'
-                r'manus|manush|customer\s*support|live\s*chat|'
-                r'মানুষ|প্রতিনিধি|কাস্টমার|এজেন্ট)\b',
-                re.IGNORECASE,
-            ),
-            'buy': re.compile(
-                r'\b(how\s*to\s*buy|how\s*to\s*order|how\s*to\s*purchase|'
-                r'order\s*korbo\s*kivabe|kivabe\s*(buy|order|kini|purchase)|'
-                r'কিভাবে\s*(কিনবো|কিনব|অর্ডার|বাই)|'
-                r'order\s*process|buy\s*process|buying\s*guide)\b',
-                re.IGNORECASE,
-            ),
-            'exit': re.compile(
-                r'\b(pore\s*kinbo|pore\s*janabo|pore\s*nebo|pore\s*dekhbo|ekhon\s*na|'
-                r'later|পরে\s*কিনবো|পরে\s*জানাবো|পরে\s*নেবো|পরে\s*দেখবো|'
-                r'এখন\s*লাগবে\s*না|পরে\s*হবে|notun\s*kichu\s*lagbe\s*na)\b',
-                re.IGNORECASE,
-            ),
-        }
-        self.COMPLAINT_PATTERNS = re.compile(
-            r'\b(refund|complain|complaint|scam|fraud|cheat|fake|defect|broken|'
-            r'baje|faltu|kharap|useless|worst|stupid|boka|gali|abuse|'
-            r'বাজে|ফালতু|খারাপ|প্রতারণা|স্ক্যাম|রিফান্ড|অভিযোগ|গালি)\b',
-            re.IGNORECASE,
-        )
 
         groq_api_key = os.getenv('GROQ_API_KEY')
         if groq_api_key and Groq:
@@ -451,6 +403,11 @@ class SimpleChatbot:
                     conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
                 )
 
+            # URL detection — check before Groq (faster and more reliable)
+            url_match = re.search(r'https?://[^\s]+', message)
+            if url_match:
+                return self._handle_url_message(user_id, message, url_match.group(0), start_time)
+
             # ALL intents — classified by Groq
             return self._handle_main_flow(user_id, message, start_time)
 
@@ -685,7 +642,129 @@ class SimpleChatbot:
             conversation_status=AI_ACTIVE_STATUS
         )
 
-    def handle_delivery(self, user_id: str, message: str, merged: Dict,
+    def _handle_url_message(self, user_id: str, message: str, url: str,
+                            start_time: datetime) -> Dict[str, Any]:
+        """
+        Route URL messages — BDStall product links to handle_product_link,
+        all other URLs denied with a soft message.
+        """
+        bdstall_pattern = re.compile(
+            r'https?://(www\.)?bdstall\.com/details/[^\s]+',
+            re.IGNORECASE
+        )
+        if bdstall_pattern.match(url):
+            return self.handle_product_link(user_id, message, url, start_time)
+
+        # Non-BDStall URL — soft deny
+        return self._create_response(
+            user_id=user_id, message=message,
+            response="স্যার, আমি শুধুমাত্র BDStall.com এর প্রোডাক্ট লিংক সাপোর্ট করি। অনুগ্রহ করে bdstall.com এর লিংক দিন।",
+            mode=ChatMode.AI, intent='unsupported_url', products=None,
+            intent_content=self._normalize_intent_content_payload(
+                self._load_previous_intent(user_id)
+            ),
+            processing_time=(datetime.now() - start_time).total_seconds(),
+            conversation_status=AI_ACTIVE_STATUS
+        )
+
+    def handle_product_link(self, user_id: str, message: str, url: str,
+                            start_time: datetime) -> Dict[str, Any]:
+        """
+        Purpose: Handle BDStall product URL — extract slug, search, show product.
+        Trigger: message contains bdstall.com/details/ URL.
+        Flow: extract slug → clean to keywords → ai_search → show title + price + button.
+        """
+        keywords = self._extract_keywords_from_bdstall_url(url)
+        if not keywords:
+            return self._create_response(
+                user_id=user_id, message=message,
+                response="স্যার, লিংকটি সঠিকভাবে পড়তে পারছি না। অনুগ্রহ করে আবার চেষ্টা করুন।",
+                mode=ChatMode.AI, intent='product_link_error', products=None,
+                intent_content=self._normalize_intent_content_payload(
+                    self._load_previous_intent(user_id)
+                ),
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
+        result = self._cached_search(keywords)
+
+        if result['products_found'] == 0:
+            return self._create_response(
+                user_id=user_id, message=message,
+                response=f"দুঃখিত স্যার, এই প্রোডাক্টটি এই মুহূর্তে পাওয়া যাচ্ছে না।",
+                mode=ChatMode.AI, intent='product_link_not_found', products=None,
+                link_buttons=[{'text': 'View on BDStall', 'url': url}],
+                intent_content=self._normalize_intent_content_payload(
+                    self._load_previous_intent(user_id)
+                ),
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
+        products = result['products']
+        self.user_product_context[user_id] = products[:5]
+
+        # Show top match with title and price
+        top = products[0]
+        title = top.get('title', 'N/A')
+        price = top.get('price', 'N/A')
+        response_text = f"স্যার, এই প্রোডাক্টটি পেয়েছি:\n\n{title}\nমূল্য: {price}"
+
+        return self._create_response(
+            user_id=user_id, message=message,
+            response=response_text,
+            mode=ChatMode.AI, intent='product_link', products=products,
+            link_buttons=[{
+                'text': 'View Product',
+                'url': url,
+                'title': title,
+                'price': price,
+            }],
+            intent_content=self._normalize_intent_content_payload(
+                self._load_previous_intent(user_id)
+            ),
+            processing_time=(datetime.now() - start_time).total_seconds(),
+            conversation_status=AI_ACTIVE_STATUS
+        )
+
+    @staticmethod
+    def _extract_keywords_from_bdstall_url(url: str) -> str:
+        """
+        Extract search keywords from a BDStall product URL.
+        e.g. https://www.bdstall.com/details/hp-elitebook-840-g3-core-i5-24495/
+             → "hp elitebook 840 g3"
+        Keeps brand + model number only — avoids over-broad results.
+        """
+        try:
+            match = re.search(r'/details/([^/?#]+)', url)
+            if not match:
+                return ''
+            slug = match.group(1).strip('/')
+
+            # Remove trailing numeric ID (e.g. -24495)
+            slug = re.sub(r'-\d+$', '', slug)
+
+            # Replace hyphens with spaces
+            words = slug.replace('-', ' ').split()
+
+            # Stop at generic spec words — keep only brand + model identifier
+            stop_words = {
+                'core', 'intel', 'amd', 'gen', 'th', 'gb', 'tb', 'ssd',
+                'hdd', 'ram', 'display', 'inch', 'fhd', 'hd', 'uhd',
+                'touch', 'screen', 'series', 'laptop', 'desktop', 'pc',
+                'windows', 'wifi', 'bluetooth', 'usb', 'with', 'and', 'the'
+            }
+            filtered = []
+            for w in words:
+                if w.lower() in stop_words:
+                    break
+                filtered.append(w)
+
+            # Take max 4 words (brand + model is usually enough)
+            return ' '.join(filtered[:4])
+        except Exception:
+            return ''
                         start_time: datetime) -> Dict[str, Any]:
         self._reset_clarification_counter(user_id)
         tmpl = self._fetch_delivery_intent_response()
@@ -1029,65 +1108,18 @@ Return ONLY the JSON object."""
         }
 
     def _minimal_fallback(self, message: str) -> Dict[str, Any]:
-        """Emergency fallback when Groq is unavailable/invalid."""
-        text = str(message or '').strip().lower()
+        """Emergency fallback — only when Groq is unavailable. Returns unknown for everything."""
         budget = self._extract_budget_range(message)
-
-        intent = 'unknown'
-        category = ''
-        brand = ''
-        title = ''
-
-        if self.FAST_PATH_PATTERNS['greeting'].match(message):
-            intent = 'greeting'
-        elif self.FAST_PATH_PATTERNS['goodbye'].match(message):
-            intent = 'goodbye'
-        elif self.FAST_PATH_PATTERNS['thanks'].match(message):
-            intent = 'thanks'
-        elif self.FAST_PATH_PATTERNS['exit'].search(message):
-            intent = 'exit'
-        elif self.FAST_PATH_PATTERNS['buy'].search(message):
-            intent = 'buy'
-        elif self.FAST_PATH_PATTERNS['human_request'].search(message):
-            intent = 'human_request'
-        elif self.COMPLAINT_PATTERNS.search(message):
-            intent = 'complaint'
-        else:
-            resolved = self.category_validator.resolve_from_message(message)
-            if resolved:
-                category = str(resolved.get('category_name') or '').strip()
-
-            if category:
-                price_hints = ['price', 'dam', 'koto', 'দাম', 'কত', 'tk', 'taka']
-                intent = 'price_query' if any(h in text for h in price_hints) else 'product_search'
-            else:
-                # Heuristic fallback for common model-style laptop queries (e.g. "hp 840 g3").
-                m_brand = re.search(r'\b(hp|dell|lenovo|asus|acer|msi|macbook|apple)\b', text)
-                model_like = re.search(r'\b\d{3,4}\s*[a-z]?\d?\b', text)
-                laptop_hints = ['ram', 'ssd', 'core i', 'i3', 'i5', 'i7', 'i9', 'elitebook', 'probook', 'thinkpad']
-                if m_brand and (model_like or any(h in text for h in laptop_hints)):
-                    category = 'Laptop'
-                    brand = m_brand.group(1).strip().lower()
-                    intent = 'product_search'
-                    if brand in text:
-                        tail = text.split(brand, 1)[1].strip()
-                        tail = re.sub(r'\b(sobcheye|kom|dame|din|dao|please|plz|price|dam|koto)\b.*$', '', tail).strip()
-                        title = tail[:80]
-
-        missing = []
-        if intent in {'product_search', 'price_query', 'comparison'} and not category:
-            missing.append('category')
-
         return {
-            'intent': intent,
+            'intent': 'unknown',
             'entities': {
-                'category': category, 'brand': brand, 'title': title,
+                'category': '', 'brand': '', 'title': '',
                 'price_max': budget.get('max_price'),
                 'price_min': budget.get('min_price'),
             },
-            'missing': missing,
+            'missing': [],
             'is_followup': False,
-            'confidence': 0.35 if intent != 'unknown' else 0.0,
+            'confidence': 0.0,
         }
 
     # ─────────────────────────────────────────────────────────────
@@ -1542,13 +1574,12 @@ Return ONLY the JSON object."""
         return text
 
     def _format_product_listing(self, products: list) -> Tuple[str, List[Dict]]:
-        text = "স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
+        text = "স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:\n\nআরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।"
         link_buttons = []
         for i, p in enumerate(products[:3], 1):
             title = p.get('title', 'N/A')
             price = p.get('price', 'N/A')
             url = p.get('url', '')
-            text += f"{i}. {title}\nমূল্য: {price}\n\n"
             if url:
                 link_buttons.append({
                     'text': f"{i}. View",
@@ -1556,7 +1587,6 @@ Return ONLY the JSON object."""
                     'title': title,
                     'price': price,
                 })
-        text += "আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।"
         return text, link_buttons
 
     def _reply_price_from_context(self, user_id: str) -> Optional[Tuple[str, List[Dict]]]:
