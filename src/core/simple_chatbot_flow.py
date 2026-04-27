@@ -682,7 +682,13 @@ class SimpleChatbot:
         FOLLOWUP = "\n\nকোন প্রোডাক্ট দেখতে চান বললে আমি এখনই দেখিয়ে দিতে পারি।"
 
         # Only answer if question relates to a known category
+        # Check full message first, then individual words as fallback
         resolved = self.category_validator.resolve_from_message(message)
+        if not resolved:
+            for word in message.split():
+                resolved = self.category_validator.resolve(word.strip())
+                if resolved:
+                    break
         if not resolved:
             return self._create_response(
                 user_id=user_id, message=message,
@@ -699,7 +705,9 @@ class SimpleChatbot:
                 system_prompt = """You are a helpful technical assistant for BDStall.com, a Bangladeshi e-commerce platform.
 Answer the user's technical question about product suitability or compatibility in 2-3 sentences maximum.
 The user may write in English, Bangla, or Banglish. Always reply in the SAME language the user used.
-Be direct and honest. If you are not sure, say so briefly.
+If the question seems incomplete (e.g. "laptop valo hobe naki" = "is laptop good or not?"), 
+interpret it as asking whether that product is generally good and answer accordingly.
+Be direct and helpful. Do NOT say you are unsure unless truly necessary.
 Do NOT add any disclaimer or suggestion to visit other websites.
 Do NOT recommend specific models or prices."""
 
