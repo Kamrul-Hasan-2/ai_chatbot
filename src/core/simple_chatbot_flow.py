@@ -1666,9 +1666,7 @@ Return ONLY the JSON object."""
             intent_content = self._normalize_intent_content_payload(intent_content)
 
         # Update local state only — no mode/status stored (Rule 13)
-        self.user_intent_content[user_id] = intent_content
         self.user_last_intent[user_id] = intent
-        self._save_state()
 
         result: Dict[str, Any] = {
             'response': response,
