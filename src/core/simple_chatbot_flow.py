@@ -1172,19 +1172,20 @@ Return ONLY the JSON object."""
         return {'min_price': None, 'max_price': None, 'price_text': ''}
 
     def _cached_search(self, keywords: str, max_price: Optional[int] = None,
-                       min_price: Optional[int] = None) -> Dict[str, Any]:
+                    min_price: Optional[int] = None) -> Dict[str, Any]:
         cache_key = f"{keywords}|{min_price or ''}|{max_price or ''}"
         now = time.time()
         cached = self._search_cache.get(cache_key)
         if cached and (now - cached[0]) < self._search_cache_ttl:
+            logger.info("🔍 Cache HIT: %s", cache_key)
             return cached[1]
+        logger.info("🔍 Cache MISS — calling API: %s", cache_key)
         result = self._do_search(keywords, max_price, min_price)
         self._search_cache[cache_key] = (now, result)
         if len(self._search_cache) > self._search_cache_max:
             oldest = min(self._search_cache.keys(), key=lambda k: self._search_cache[k][0])
             self._search_cache.pop(oldest, None)
         return result
-
     def _do_search(self, keywords: str, explicit_max_price: Optional[int] = None,
                    explicit_min_price: Optional[int] = None) -> Dict[str, Any]:
         try:
