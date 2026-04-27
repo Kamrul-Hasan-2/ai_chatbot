@@ -65,15 +65,25 @@ def _normalize_bdstall_chatbot_url(url: Optional[str], default_url: str) -> str:
     clean_url = clean_url.replace('/api/item/', '/api/chatbot/')
     return clean_url
 
+
+def _resolve_save_message_url(url: Optional[str]) -> str:
+    """Resolve save endpoint to the concrete working path."""
+    clean_url = _normalize_bdstall_chatbot_url(
+        url,
+        'https://www.bdstall.com/api/chatbot/chatbot_save_message/'
+    ).rstrip('/')
+    if clean_url.endswith('/api/chatbot'):
+        return f"{clean_url}/chatbot_save_message/"
+    if clean_url.endswith('/api/chatbot/chatbot_save_message'):
+        return f"{clean_url}/"
+    return f"{clean_url}/"
+
 # BDStall chat message save API configuration
 SAVE_MESSAGE_API_URL = os.getenv(
     'SAVE_MESSAGE_API_URL',
-    'https://www.bdstall.com/api/chatbot/'
+    'https://www.bdstall.com/api/chatbot/chatbot_save_message/'
 )
-SAVE_MESSAGE_API_URL = _normalize_bdstall_chatbot_url(
-    SAVE_MESSAGE_API_URL,
-    'https://www.bdstall.com/api/chatbot/'
-)
+SAVE_MESSAGE_API_URL = _resolve_save_message_url(SAVE_MESSAGE_API_URL)
 SAVE_MESSAGE_API_KEY = os.getenv('SAVE_MESSAGE_API_KEY', 'mkh677ddd2sxxkkdjff')
 
 RESPONDER_API_URL = _normalize_bdstall_chatbot_url(
@@ -239,19 +249,19 @@ def save_chat_message(
     save_urls = []
     for candidate in [
         SAVE_MESSAGE_API_URL,
-        'https://www.bdstall.com/api/chatbot/',
         'https://www.bdstall.com/api/chatbot/chatbot_save_message/',
     ]:
+        candidate = _resolve_save_message_url(candidate)
         if candidate and candidate not in save_urls:
             save_urls.append(candidate)
 
     attempts = []
     for save_url in save_urls:
-        attempts.append((f"json@{save_url}", lambda u=save_url: requests.post(u, json=payload, timeout=10)))
-        attempts.append((f"form@{save_url}", lambda u=save_url: requests.post(u, data=form_payload, timeout=10)))
+        attempts.append(("json", save_url, lambda u=save_url: requests.post(u, json=payload, timeout=10)))
+        attempts.append(("form", save_url, lambda u=save_url: requests.post(u, data=form_payload, timeout=10)))
     last_error = None
 
-    for request_mode, request_fn in attempts:
+    for request_mode, target_url, request_fn in attempts:
         started = datetime.now()
         try:
             response = request_fn()
@@ -261,7 +271,7 @@ def save_chat_message(
             _log_api_call(
                 api_name="chatbot_save_message",
                 method=f"POST[{request_mode}]",
-                url=SAVE_MESSAGE_API_URL,
+                url=target_url,
                 request_payload=payload,
                 status_code=response.status_code,
                 duration_ms=duration_ms,
@@ -285,7 +295,7 @@ def save_chat_message(
             _log_api_call(
                 api_name="chatbot_save_message",
                 method=f"POST[{request_mode}]",
-                url=SAVE_MESSAGE_API_URL,
+                url=target_url,
                 request_payload=payload,
                 status_code=0,
                 duration_ms=duration_ms,

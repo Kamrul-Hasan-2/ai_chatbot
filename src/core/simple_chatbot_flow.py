@@ -106,8 +106,11 @@ class SimpleChatbot:
         groq_api_key = os.getenv('GROQ_API_KEY')
         if groq_api_key and Groq:
             self.groq_client = Groq(api_key=groq_api_key)
-            self.groq_model = os.getenv('GROQ_MODEL', 'llama-3.3-70b-versatile')
-            self.groq_answer_model = os.getenv('GROQ_ANSWER_MODEL', 'llama-3.3-70b-versatile')
+            preferred_answer_model = os.getenv('GROQ_ANSWER_MODEL', '').strip()
+            configured_model = os.getenv('GROQ_MODEL', '').strip()
+            active_model = preferred_answer_model or configured_model or 'llama-3.3-70b-versatile'
+            self.groq_model = active_model
+            self.groq_answer_model = preferred_answer_model or active_model
         else:
             self.groq_client = None
             self.groq_model = None
