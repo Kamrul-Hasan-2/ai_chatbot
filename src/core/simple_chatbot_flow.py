@@ -106,11 +106,8 @@ class SimpleChatbot:
         groq_api_key = os.getenv('GROQ_API_KEY')
         if groq_api_key and Groq:
             self.groq_client = Groq(api_key=groq_api_key)
-            preferred_answer_model = os.getenv('GROQ_ANSWER_MODEL', '').strip()
-            configured_model = os.getenv('GROQ_MODEL', '').strip()
-            active_model = preferred_answer_model or configured_model or 'llama-3.3-70b-versatile'
-            self.groq_model = active_model
-            self.groq_answer_model = preferred_answer_model or active_model
+            self.groq_model = os.getenv('GROQ_MODEL', 'llama-3.3-70b-versatile')
+            self.groq_answer_model = os.getenv('GROQ_ANSWER_MODEL', 'llama-3.3-70b-versatile')
         else:
             self.groq_client = None
             self.groq_model = None
@@ -568,12 +565,23 @@ class SimpleChatbot:
         if not merged.get('category'):
             return self._ask_for_category(user_id, message, merged, start_time)
 
-        ctx_reply = self._reply_price_from_context(user_id)
+        # Only use context prices if they match the current category
+        # e.g. "ram price koto" after laptop search → search RAM, not show laptop prices
+        ctx_reply = None
+        prev_products = self.user_product_context.get(user_id, [])
+        if prev_products:
+            first_title = (prev_products[0].get('title') or '').lower()
+            current_cat = merged.get('category', '').lower()
+            if current_cat and current_cat in first_title:
+                ctx_reply = self._reply_price_from_context(user_id)
+
         if ctx_reply:
+            ctx_text, ctx_buttons = ctx_reply
             self._reset_clarification_counter(user_id)
             return self._create_response(
-                user_id=user_id, message=message, response=ctx_reply,
+                user_id=user_id, message=message, response=ctx_text,
                 mode=ChatMode.AI, intent='price_from_context', products=None,
+                link_buttons=ctx_buttons if ctx_buttons else None,
                 intent_content=self._intent_to_normalized(merged, message),
                 processing_time=(datetime.now() - start_time).total_seconds(),
                 conversation_status=AI_ACTIVE_STATUS
@@ -1451,32 +1459,46 @@ Return ONLY the JSON object."""
         text += "আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।"
         return text, link_buttons
 
-    def _reply_price_from_context(self, user_id: str) -> Optional[str]:
+    def _reply_price_from_context(self, user_id: str) -> Optional[Tuple[str, List[Dict]]]:
+        """Returns (text, link_buttons) or None."""
         selected = self.user_selected_product.get(user_id) or {}
         if selected:
             title = selected.get('title') or 'এই প্রোডাক্টটির'
             price = selected.get('price') or ''
+            url = selected.get('url', '')
             if price and str(price).strip().upper() != 'N/A':
-                return f"জি স্যার, {title} এর দাম {price}।"
-            return "স্যার, এই প্রোডাক্টটির দাম এখন দেখাতে পারছি না।"
+                text = f"জি স্যার, {title} এর দাম {price}।"
+                buttons = [{'text': 'View', 'url': url, 'title': title, 'price': price}] if url else []
+                return text, buttons
+            return "স্যার, এই প্রোডাক্টটির দাম এখন দেখাতে পারছি না।", []
+
         products = self.user_product_context.get(user_id) or []
         if not products:
             return None
+
         if len(products) == 1:
             p = products[0]
             title = p.get('title') or 'এই প্রোডাক্টটির'
             price = p.get('price') or ''
+            url = p.get('url', '')
             if price and str(price).strip().upper() != 'N/A':
-                return f"জি স্যার, {title} এর দাম {price}।"
+                text = f"জি স্যার, {title} এর দাম {price}।"
+                buttons = [{'text': 'View', 'url': url, 'title': title, 'price': price}] if url else []
+                return text, buttons
+
         lines = ["স্যার, আপনার দেখা প্রোডাক্টগুলোর দাম:"]
+        buttons = []
         for i, p in enumerate(products[:5], 1):
             t = str(p.get('title') or f'প্রোডাক্ট {i}').strip()
             pr = str(p.get('price') or 'N/A').strip()
+            url = p.get('url', '')
             if not pr or pr.upper() == 'N/A':
                 pr = 'দাম পাওয়া যায়নি'
             lines.append(f"{i}. {t} - {pr}")
+            if url:
+                buttons.append({'text': f"{i}. View", 'url': url, 'title': t, 'price': pr})
         lines.append("যেটা নিতে চান, নম্বর বলুন স্যার।")
-        return "\n".join(lines)
+        return "\n".join(lines), buttons
 
     # ─────────────────────────────────────────────────────────────
     # Fixed messages
