@@ -164,6 +164,7 @@ class SimpleChatbot:
         self.user_order_draft: Dict[str, Dict[str, str]] = {}
         self.user_pending_product_query: Dict[str, Dict[str, Any]] = {}
         self.user_last_intent: Dict[str, str] = {}
+        self.user_intent_content: Dict[str, Dict[str, Any]] = {}
         
 
         # Caches (no responder cache — must always be live)
@@ -228,6 +229,7 @@ class SimpleChatbot:
             self.user_order_draft = dict(state.get('user_order_draft') or {})
             self.user_pending_product_query = dict(state.get('user_pending_product_query') or {})
             self.user_last_intent = dict(state.get('user_last_intent') or {})
+            self.user_intent_content = dict(state.get('user_intent_content') or {})
             
         except Exception as e:
             logger.error("❌ State restore failed: %s", e)
@@ -243,6 +245,7 @@ class SimpleChatbot:
                     'user_order_draft': self.user_order_draft,
                     'user_pending_product_query': self.user_pending_product_query,
                     'user_last_intent': self.user_last_intent,
+                    'user_intent_content': self.user_intent_content,
                 }
                 dir_name = os.path.dirname(self.state_file)
                 tmp_fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
