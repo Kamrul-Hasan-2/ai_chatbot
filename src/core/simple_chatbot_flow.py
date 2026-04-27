@@ -81,7 +81,8 @@ HUMAN_SUPPORT_REQUIRED_STATUS = "Human Support Required"
 VALID_INTENTS = {
     'product_search', 'price_query', 'comparison', 'ordering', 'delivery',
     'greeting', 'goodbye', 'thanks', 'complaint', 'faq', 'human_request',
-    'buy', 'exit', 'technical_advice', 'hate_speech', 'product_link', 'unknown'
+    'buy', 'exit', 'technical_advice', 'hate_speech', 'product_link',
+    'seller_query', 'unknown'
 }
 
 PRODUCT_RELATED_INTENTS = {'product_search', 'price_query', 'comparison', 'ordering'}
@@ -460,6 +461,12 @@ class SimpleChatbot:
 
         merged = self._merge_intent_context(user_id, groq_result, previous_intent, intent)
 
+        if intent == 'seller_query':
+            return self._handoff_to_human(
+                user_id, message, start_time,
+                intent='seller_query',
+                response_text="স্যার, বিক্রয় সংক্রান্ত বিষয়ে আমাদের একজন প্রতিনিধি আপনাকে সাহায্য করবেন।"
+            )
         if intent == 'hate_speech':
             return self._handoff_to_human(
                 user_id, message, start_time,
@@ -692,15 +699,43 @@ class SimpleChatbot:
     def _handle_url_message(self, user_id: str, message: str, url: str,
                             start_time: datetime) -> Dict[str, Any]:
         """
-        Route URL messages — BDStall product links to handle_product_link,
-        all other URLs denied with a soft message.
+        Route URL messages:
+        - BDStall product page (details/listing) → show product
+        - BDStall CDN image URL → ask category and model
+        - BDStall non-product page (category, blog etc) → ask what they want
+        - Non-BDStall URL → soft deny
         """
-        bdstall_pattern = re.compile(
-            r'https?://(www\.)?bdstall\.com/details/[^\s]+',
-            re.IGNORECASE
-        )
-        if bdstall_pattern.match(url):
+        url_lower = url.lower()
+
+        # BDStall product detail/listing page
+        if re.search(r'bdstall\.com/(details|listing)/', url_lower):
             return self.handle_product_link(user_id, message, url, start_time)
+
+        # BDStall CDN image URL
+        if re.search(r'(cdn\.bdstall\.com|bdstall\.com/.*\.(jpg|jpeg|png|webp|gif))', url_lower):
+            return self._create_response(
+                user_id=user_id, message=message,
+                response="স্যার, কোন ক্যাটাগরি এবং মডেল সম্পর্কে জানতে চাচ্ছেন? একটু বলুন।",
+                mode=ChatMode.AI, intent='image_url', products=None,
+                intent_content=self._normalize_intent_content_payload(
+                    self._load_previous_intent(user_id)
+                ),
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
+        # BDStall but not a product page (category, blog, search etc)
+        if re.search(r'(www\.)?bdstall\.com', url_lower):
+            return self._create_response(
+                user_id=user_id, message=message,
+                response="স্যার, কী জানতে চাচ্ছেন? একটু বলুন।",
+                mode=ChatMode.AI, intent='bdstall_url', products=None,
+                intent_content=self._normalize_intent_content_payload(
+                    self._load_previous_intent(user_id)
+                ),
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
 
         # Non-BDStall URL — soft deny
         return self._create_response(
@@ -993,7 +1028,7 @@ SCHEMA:
 }}
 
 INTENT VALUES (pick exactly one):
-product_search | price_query | comparison | buy | exit | delivery | greeting | goodbye | thanks | complaint | faq | human_request | technical_advice | hate_speech | unknown
+product_search | price_query | comparison | buy | exit | delivery | greeting | goodbye | thanks | complaint | faq | human_request | technical_advice | hate_speech | seller_query | unknown
 
 INTENT DEFINITIONS:
 - product_search    : user wants to see, find, or browse products. User is ready to buy or look at options.
@@ -1009,6 +1044,7 @@ INTENT DEFINITIONS:
 - faq               : general questions about the site or policies
 - human_request     : user wants to speak to a human agent
 - technical_advice  : user asks WHICH product is better for a use case, or whether a product is suitable/compatible. Key signal: "valo hobe", "valo ki", "suitable", "compatible", "konta nibo", "recommend koro", "upgrade kora jay", "fit hobe ki"
+- seller_query      : user wants to SELL products, list items, open a shop, register as vendor, ask about commission, or anything related to being a seller. Key signals: "bechte chai", "sell korbo", "listing dibo", "shop open", "vendor", "commission koto", "product add korbo", "বিক্রি করতে চাই", "দোকান খুলব", "কমিশন কত"
 - hate_speech       : abusive language, insults, threats, racial slurs, sexual harassment, or any offensive content
 - unknown           : truly cannot determine
 
@@ -1085,6 +1121,9 @@ BANGLISH / BANGLA QUICK REFERENCE:
 - "delivery koto din", "delivery charge", "koto din lagbe", "কত দিন লাগবে"       → delivery
 - "refund chai", "baje", "faltu", "kharap"                                         → complaint
 - "human chai", "agent er sathe kotha"                                             → human_request
+- "bechte chai", "sell korbo kivabe", "product list dibo", "shop open korbo",
+  "vendor hote chai", "commission koto", "listing charge koto",
+  "বিক্রি করতে চাই", "দোকান খুলব", "পণ্য বিক্রি করব"                             → seller_query
 - "X ache", "X ki ache" where X is a product type                                 → product_search
 - "50k er vitor ache", "20k te ache", "30 hazar er moddhe ache"                   → product_search, price_max=X, is_followup=true
 - "will this work for gaming", "gaming er jonno valo ki", "ei laptop ki editing er jonno valo",
