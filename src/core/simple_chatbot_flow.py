@@ -1,20 +1,21 @@
 """
 Simple Chatbot Flow — refactored with separated intent handlers.
 =================================================================
-Rules:
-- Rule 1:  NO HARDCODING — categories/brands/products come only from APIs/runtime
+Rules enforced:
+- Rule 1:  NO HARDCODING — all data from APIs/runtime
 - Rule 2:  API-only — no static fallback data
-- Rule 3:  every bot reply returns intent_content; saving is done by the API layer
+- Rule 3:  intent_content returned on every response; saving done by API layer
 - Rule 4:  category mandatory for product/price/compare/order intents
 - Rule 5:  category validated via CategoryValidator (cat_list API)
 - Rule 6:  category switch → FULL reset
 - Rule 7:  post-merge category guard — empty category → ask user
 - Rule 8:  separated handlers per intent
 - Rule 9:  comparison/buy intents return fixed messages
-- Rule 10: short message + previous context = follow-up (category must still exist)
+- Rule 10: short message + previous context = follow-up
 - Rule 11: human handoff only on explicit request or complaint
 - Rule 12: intent_content schema = {title, cat, brand, price, compare, buy}
 - Rule 13: mode NEVER stored in memory — responder API is sole source of truth
+- Rule 14: intent_content NEVER stored in local memory — always read from DB via API
 """
 import os
 import sys
@@ -94,7 +95,6 @@ CATEGORY_PROMPT = (
 
 
 class SimpleChatbot:
-    """Refactored chatbot — fully dynamic, API-driven, separated intent handlers."""
 
     FAST_PATH_PATTERNS = {
         'greeting': re.compile(
@@ -124,7 +124,7 @@ class SimpleChatbot:
         ),
         'buy': re.compile(
             r'\b(how\s*to\s*buy|how\s*to\s*order|how\s*to\s*purchase|'
-            r'kivabe\s*(buy|order|kini|purchase)|'
+            r'order\s*korbo\s*kivabe|kivabe\s*(buy|order|kini|purchase)|'
             r'কিভাবে\s*(কিনবো|কিনব|অর্ডার|বাই)|'
             r'order\s*process|buy\s*process|buying\s*guide)\b',
             re.IGNORECASE,
@@ -153,21 +153,22 @@ class SimpleChatbot:
         if groq_api_key and Groq:
             self.groq_client = Groq(api_key=groq_api_key)
             self.groq_model = os.getenv('GROQ_MODEL', 'llama-3.1-8b-instant')
+            self.groq_answer_model = os.getenv('GROQ_ANSWER_MODEL', 'llama-3.3-70b-versatile')
         else:
             self.groq_client = None
+            self.groq_model = None
+            self.groq_answer_model = None
             logger.warning("⚠️ Groq API not available")
 
-        # Per-user state — NO mode/status here (Rule 13)
+        # Per-user product/order state only — NO mode, NO intent_content (Rules 13, 14)
         self.user_product_context: Dict[str, list] = {}
         self.user_selected_product: Dict[str, Dict[str, Any]] = {}
         self.user_order_context: Dict[str, bool] = {}
         self.user_order_draft: Dict[str, Dict[str, str]] = {}
         self.user_pending_product_query: Dict[str, Dict[str, Any]] = {}
         self.user_last_intent: Dict[str, str] = {}
-        self.user_intent_content: Dict[str, Dict[str, Any]] = {}
-        
 
-        # Caches (no responder cache — must always be live)
+        # Caches — no responder cache (must always be live), no intent_content cache
         self._search_cache: Dict[str, Tuple[float, Dict]] = {}
         self._search_cache_ttl = 300
         self._search_cache_max = 200
@@ -199,8 +200,7 @@ class SimpleChatbot:
 
         self.category_validator = CategoryValidator(
             cat_list_url=os.getenv(
-                'CATLIST_API_URL',
-                'https://www.bdstall.com/api/chatbot/cat_list/'
+                'CATLIST_API_URL', 'https://www.bdstall.com/api/chatbot/cat_list/'
             ),
             api_key=self.api_key,
         )
@@ -213,7 +213,7 @@ class SimpleChatbot:
         logger.info("📂 Loaded %d categories", len(self.category_validator.names_english()))
 
     # ─────────────────────────────────────────────────────────────
-    # State persistence — mode/status excluded (Rule 13)
+    # State persistence — mode and intent_content excluded (Rules 13, 14)
     # ─────────────────────────────────────────────────────────────
     def _load_state(self) -> None:
         try:
@@ -229,8 +229,6 @@ class SimpleChatbot:
             self.user_order_draft = dict(state.get('user_order_draft') or {})
             self.user_pending_product_query = dict(state.get('user_pending_product_query') or {})
             self.user_last_intent = dict(state.get('user_last_intent') or {})
-            self.user_intent_content = dict(state.get('user_intent_content') or {})
-            
         except Exception as e:
             logger.error("❌ State restore failed: %s", e)
 
@@ -245,7 +243,6 @@ class SimpleChatbot:
                     'user_order_draft': self.user_order_draft,
                     'user_pending_product_query': self.user_pending_product_query,
                     'user_last_intent': self.user_last_intent,
-                    'user_intent_content': self.user_intent_content,
                 }
                 dir_name = os.path.dirname(self.state_file)
                 tmp_fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
@@ -357,6 +354,70 @@ class SimpleChatbot:
         except Exception as e:
             logger.warning("switch_to_ai failed: %s", e)
 
+    # ─────────────────────────────────────────────────────────────
+    # Intent content — always read from DB (Rule 14)
+    # ─────────────────────────────────────────────────────────────
+    def _fetch_intent_content_from_db(self, user_id: str) -> Dict:
+        """
+        Pull the last saved intent_content from the chat history API.
+        This is the sole source of truth for previous category/brand/price context.
+        """
+        try:
+            urls = self._build_chat_history_urls(user_id, 10)
+            for url in urls:
+                try:
+                    resp = requests.get(url, timeout=5)
+                    if not (200 <= resp.status_code < 300):
+                        continue
+                    data = resp.json() if resp.text else {}
+                    candidates = []
+                    if isinstance(data, list):
+                        candidates = data
+                    elif isinstance(data, dict):
+                        for k in ['data', 'messages', 'history', 'chat_history', 'conversation', 'result']:
+                            v = data.get(k)
+                            if isinstance(v, list):
+                                candidates = v
+                                break
+                    for item in reversed(candidates):
+                        if not isinstance(item, dict):
+                            continue
+                        sender = str(item.get('sender_type') or '').strip()
+                        if sender != '2':
+                            continue
+                        ic = item.get('intent_content')
+                        if isinstance(ic, str):
+                            try:
+                                ic = json.loads(ic)
+                            except Exception:
+                                continue
+                        if isinstance(ic, dict) and ic.get('cat'):
+                            logger.info("[INTENT_DB] Restored for %s: cat=%s", user_id, ic.get('cat'))
+                            return ic
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.warning("_fetch_intent_content_from_db failed: %s", e)
+        return {}
+
+    def _load_previous_intent(self, user_id: str) -> Dict:
+        """Always fetch from DB — never from local memory (Rule 14)."""
+        prev = dict(self._fetch_intent_content_from_db(user_id) or {})
+
+        updated_at = prev.get('updated_at')
+        if updated_at:
+            try:
+                age = (datetime.now() - datetime.fromisoformat(updated_at)).total_seconds()
+                if age > CONTEXT_TTL_SECONDS:
+                    logger.info("Context expired for %s (age=%.0fs)", user_id, age)
+                    return {}
+            except Exception:
+                pass
+
+        if prev.get('cat') and not prev.get('category'):
+            prev['category'] = prev['cat']
+        return prev
+
     # ═════════════════════════════════════════════════════════════
     # MAIN ENTRY
     # ═════════════════════════════════════════════════════════════
@@ -393,10 +454,6 @@ class SimpleChatbot:
 
             # FAST PATH: complaint
             if self.COMPLAINT_PATTERNS.search(message):
-                prev = self._normalize_intent_content_payload(
-                    self._load_previous_intent(user_id)
-                )
-                prev['complain'] = True
                 return self._handoff_to_human(
                     user_id, message, start_time, intent='complaint_handoff',
                     response_text="স্যার, এই বিষয়ে আমাদের একজন প্রতিনিধি এখনই আপনার সাথে যোগাযোগ করবেন।"
@@ -408,7 +465,6 @@ class SimpleChatbot:
             if selected_index and user_products and len(user_products) >= selected_index:
                 selected = user_products[selected_index - 1]
                 self.user_selected_product[user_id] = selected
-                self._reset_clarification_counter(user_id)
                 return self._create_response(
                     user_id=user_id, message=message,
                     response=self._format_selected_product_response(selected, selected_index),
@@ -443,7 +499,7 @@ class SimpleChatbot:
             }
 
     # ─────────────────────────────────────────────────────────────
-    # Fast path (regex, no Groq)
+    # Fast path
     # ─────────────────────────────────────────────────────────────
     def _fast_path_intent(self, message: str) -> Optional[str]:
         msg = message.strip()
@@ -473,10 +529,9 @@ class SimpleChatbot:
             )
         if intent == 'goodbye':
             prev = self._normalize_intent_content_payload(
-                self.user_intent_content.get(user_id) or {}
+                self._load_previous_intent(user_id)
             )
             prev['exit'] = 1
-        
             return self._create_response(
                 user_id=user_id, message=message,
                 response="ধন্যবাদ স্যার, ভালো থাকবেন।",
@@ -495,7 +550,6 @@ class SimpleChatbot:
             return self.handle_buy(user_id, message, start_time)
         if intent == 'exit':
             return self.handle_exit(user_id, message, start_time)
-        # ok_ack / catch-all
         return self._create_response(
             user_id=user_id, message=message,
             response="ধন্যবাদ স্যার, আর কিভাবে আমি আপনাকে সাহায্য করতে পারি?",
@@ -508,14 +562,14 @@ class SimpleChatbot:
     # MAIN flow
     # ═════════════════════════════════════════════════════════════
     def _handle_main_flow(self, user_id: str, message: str,
-                        start_time: datetime) -> Dict[str, Any]:
+                          start_time: datetime) -> Dict[str, Any]:
         conversation_context = self._get_history_cached(user_id)
         previous_intent = self._load_previous_intent(user_id)
         groq_result = self._step1_groq_extract(message, conversation_context, previous_intent)
         intent = groq_result['intent']
         entities = groq_result['entities']
 
-        # Validate category — only if Groq explicitly returned one
+        # Validate category — only if Groq explicitly returned one (Rule 5)
         resolved_cat = None
         if entities.get('category'):
             resolved_cat = self.category_validator.resolve(entities['category'])
@@ -545,14 +599,15 @@ class SimpleChatbot:
         if intent == 'product_search':
             return self.handle_product_search(user_id, message, merged, start_time)
 
-        # Safety net: Groq returned unknown but message matches buy/exit/comparison patterns
+        # Safety net: Groq returned unknown but message matches known no-category intents
         if self.FAST_PATH_PATTERNS['buy'].search(message):
             return self.handle_buy(user_id, message, start_time)
         if self.FAST_PATH_PATTERNS['exit'].search(message):
             return self.handle_exit(user_id, message, start_time)
         msg_lower = message.lower()
-        if any(w in msg_lower for w in ['konta valo', 'konta bhalo', 'konti valo', 'which is better',
-                                        'কোনটা ভালো', 'কোনটা ভাল', 'তুলনা']):
+        if any(w in msg_lower for w in ['konta valo', 'konta bhalo', 'konti valo',
+                                         'which is better', 'কোনটা ভালো',
+                                         'কোনটা ভাল', 'কোনটি ভালো', 'তুলনা']):
             return self.handle_comparison(user_id, message, merged, start_time)
 
         return self.handle_fallback(user_id, message, merged, start_time)
@@ -593,6 +648,7 @@ class SimpleChatbot:
                 user_id=user_id, message=message, response=no_result,
                 mode=ChatMode.AI, intent='no_products_found', products=None,
                 search_keywords=keywords,
+                intent_content=self._intent_to_normalized(merged, message),
                 processing_time=(datetime.now() - start_time).total_seconds(),
                 conversation_status=AI_ACTIVE_STATUS
             )
@@ -607,6 +663,7 @@ class SimpleChatbot:
             mode=ChatMode.AI, intent='product_search', products=products,
             search_keywords=keywords,
             link_buttons=listing_buttons,
+            intent_content=self._intent_to_normalized(merged, message),
             processing_time=(datetime.now() - start_time).total_seconds()
         )
 
@@ -621,21 +678,22 @@ class SimpleChatbot:
             return self._create_response(
                 user_id=user_id, message=message, response=ctx_reply,
                 mode=ChatMode.AI, intent='price_from_context', products=None,
+                intent_content=self._intent_to_normalized(merged, message),
                 processing_time=(datetime.now() - start_time).total_seconds(),
                 conversation_status=AI_ACTIVE_STATUS
             )
 
         return self.handle_product_search(user_id, message, merged, start_time)
 
-
     def handle_comparison(self, user_id: str, message: str, merged: Dict,
-                        start_time: datetime) -> Dict[str, Any]:
+                          start_time: datetime) -> Dict[str, Any]:
         self._reset_clarification_counter(user_id)
         return self._create_response(
             user_id=user_id, message=message,
             response=self._build_comparison_redirect_response(),
             mode=ChatMode.AI, intent='comparison', products=None,
             link_buttons=self._build_comparison_link_buttons(merged),
+            intent_content=self._intent_to_normalized(merged, message),
             processing_time=(datetime.now() - start_time).total_seconds(),
             conversation_status=AI_ACTIVE_STATUS
         )
@@ -651,6 +709,9 @@ class SimpleChatbot:
                 'text': 'Shopping Guide',
                 'url': 'https://www.bdstall.com/blog/safe-shopping-guide/'
             }],
+            intent_content=self._normalize_intent_content_payload(
+                self._load_previous_intent(user_id)
+            ),
             processing_time=(datetime.now() - start_time).total_seconds(),
             conversation_status=AI_ACTIVE_STATUS
         )
@@ -659,13 +720,14 @@ class SimpleChatbot:
                     start_time: datetime) -> Dict[str, Any]:
         self._reset_clarification_counter(user_id)
         prev = self._normalize_intent_content_payload(
-            self.user_intent_content.get(user_id) or {}
+            self._load_previous_intent(user_id)
         )
         prev['exit'] = 1
         return self._create_response(
             user_id=user_id, message=message,
             response="সাথে থাকার জন্য ধন্যবাদ।",
             mode=ChatMode.AI, intent='exit', products=None,
+            intent_content=prev,
             processing_time=(datetime.now() - start_time).total_seconds(),
             conversation_status=AI_ACTIVE_STATUS
         )
@@ -678,6 +740,7 @@ class SimpleChatbot:
             return self._create_response(
                 user_id=user_id, message=message, response=tmpl,
                 mode=ChatMode.AI, intent='delivery', products=None,
+                intent_content=self._intent_to_normalized(merged, message),
                 processing_time=(datetime.now() - start_time).total_seconds()
             )
         faq = self._search_database_faq(message)
@@ -685,6 +748,7 @@ class SimpleChatbot:
             return self._create_response(
                 user_id=user_id, message=message, response=faq,
                 mode=ChatMode.AI, intent='delivery', products=None,
+                intent_content=self._intent_to_normalized(merged, message),
                 processing_time=(datetime.now() - start_time).total_seconds()
             )
         return self.handle_fallback(user_id, message, merged, start_time)
@@ -697,17 +761,16 @@ class SimpleChatbot:
             return self._create_response(
                 user_id=user_id, message=message, response=faq,
                 mode=ChatMode.AI, intent='faq', products=None,
+                intent_content=self._intent_to_normalized(merged, message),
                 processing_time=(datetime.now() - start_time).total_seconds()
             )
         return self.handle_fallback(user_id, message, merged, start_time)
 
     def handle_fallback(self, user_id: str, message: str, merged: Dict,
                         start_time: datetime) -> Dict[str, Any]:
-        # If category already known, search products
         if merged.get('category'):
             return self.handle_product_search(user_id, message, merged, start_time)
 
-        # Try to resolve the message itself as a category reply
         resolved = self.category_validator.resolve(message.strip())
         if resolved:
             merged['category'] = resolved['category_name']
@@ -730,24 +793,20 @@ class SimpleChatbot:
         if self.FAST_PATH_PATTERNS['exit'].search(message):
             return self.handle_exit(user_id, message, start_time)
         if any(w in msg_lower for w in ['konta valo', 'konti valo', 'konta bhalo',
-                                        'which is better', 'কোনটা ভালো', 'কোনটি ভালো']):
+                                         'which is better', 'কোনটা ভালো', 'কোনটি ভালো']):
             return self.handle_comparison(user_id, message, merged, start_time)
 
         return self._ask_for_category(user_id, message, merged, start_time)
 
-
-
-
-
-
     # ─────────────────────────────────────────────────────────────
-    # Ask for category
+    # Ask for category / clarification counter (no-op)
     # ─────────────────────────────────────────────────────────────
     def _ask_for_category(self, user_id: str, message: str, merged: Dict,
                           start_time: datetime) -> Dict[str, Any]:
         return self._create_response(
             user_id=user_id, message=message, response=CATEGORY_PROMPT,
             mode=ChatMode.AI, intent='need_category', products=None,
+            intent_content=self._intent_to_normalized(merged, message),
             processing_time=(datetime.now() - start_time).total_seconds(),
             conversation_status=AI_ACTIVE_STATUS
         )
@@ -812,8 +871,7 @@ RULES:
 - "hp laptop" → brand="hp", category="laptop".
 - "hp 840 g3" → brand="hp", title="840 g3", category="" (no product type word — add "category" to missing[]).
 - NEVER leave category="" if a product type word exists anywhere in the message.
-- "smart watch ache", "laptop ache", "mobile ache" → category=the product word, intent=product_search. "ache" means "available/do you have" — it is NOT a category word.
-
+- "X ache", "X ki ache", "X paoa jabe" → category=X, intent=product_search ("ache" means "available/do you have").
 
 BRAND vs CATEGORY:
 - brand = manufacturer name (samsung, hp, dell, apple, walton, asus, acer, lenovo).
@@ -826,6 +884,7 @@ is_followup RULE:
 - If any product type word is present → is_followup = false.
 - "hp 840 g3" → is_followup=true (no product type, relies on context for category).
 - "laptop price" → is_followup=false (product type "laptop" is present).
+- "under 20k", "50k er vitor", "hp er ta" → is_followup=true (price/brand only, no category).
 
 MISSING ARRAY:
 - Add "category" to missing[] when intent is product_search, price_query, or comparison AND category="".
@@ -834,17 +893,13 @@ MISSING ARRAY:
 BUDGET PARSING: "50k"=50000, "30 hazar"=30000, "under 20k"→price_max=20000. null if absent.
 
 BANGLISH / BANGLA QUICK REFERENCE:
-- "pore kinbo", "pore janabo", "ekhon na", "পরে জানাবো", "এখন লাগবে না" → exit
-- "kivabe order korbo", "how to buy"                                       → buy
-- "konta valo", "which is better", "কোনটা ভালো"                           → comparison
-- "delivery koto din", "delivery charge"                                   → delivery
-- "refund chai", "baje", "faltu", "kharap"                                 → complaint
-- "human chai", "agent er sathe kotha"                                     → human_request
-- "X ache", "X ki ache", "X paoa jabe" → product_search with category=X (ache = is available/do you have)       → human_request
-- "order korbo kivabe", "kivabe order korbo", "how to buy", "order process" → buy (no category needed)
-- "konti valo", "konta valo", "konta bhalo", "which is better", "কোনটা ভালো", "কোনটি ভালো" → comparison (no category needed)
-- "delivery koto din", "delivery charge", "koto din lagbe", "delivery kobe dibe" → delivery
-- "কত দিন লাগবে", "ডেলিভারি কত দিন", "কত দিনে পাবো", "ডেলিভারি চার্জ"        → delivery
+- "pore kinbo", "pore janabo", "ekhon na", "পরে জানাবো", "এখন লাগবে না"              → exit
+- "order korbo kivabe", "kivabe order korbo", "how to buy", "order process"           → buy (no category needed)
+- "konti valo", "konta valo", "konta bhalo", "which is better", "কোনটা ভালো"         → comparison (no category needed)
+- "delivery koto din", "delivery charge", "koto din lagbe", "কত দিন লাগবে"           → delivery
+- "refund chai", "baje", "faltu", "kharap"                                            → complaint
+- "human chai", "agent er sathe kotha"                                                → human_request
+- "X ache", "X ki ache" where X is a product type                                    → product_search
 
 PREVIOUS CONTEXT (is_followup detection only — do NOT copy into entities):
 {json.dumps(previous_intent or {}, ensure_ascii=False)}
@@ -949,80 +1004,8 @@ Return ONLY the JSON object."""
     # ─────────────────────────────────────────────────────────────
     # Context merge (Rules 6, 7, 10)
     # ─────────────────────────────────────────────────────────────
-    def _load_previous_intent(self, user_id: str) -> Dict:
-        prev = dict(self.user_intent_content.get(user_id) or {})
-
-        # If nothing in memory, pull from DB (covers server restart / first message)
-        if not prev or not prev.get('cat'):
-            db_prev = self._fetch_intent_content_from_db(user_id)
-            if db_prev:
-                prev = db_prev
-
-        updated_at = prev.get('updated_at')
-        if updated_at:
-            try:
-                age = (datetime.now() - datetime.fromisoformat(updated_at)).total_seconds()
-                if age > CONTEXT_TTL_SECONDS:
-                    logger.info("Context expired for %s (age=%.0fs)", user_id, age)
-                    return {}
-            except Exception:
-                pass
-
-        # Translate stored 'cat' back to 'category' for merge logic
-        if prev.get('cat') and not prev.get('category'):
-            prev['category'] = prev['cat']
-        return prev
-
-    def _fetch_intent_content_from_db(self, user_id: str) -> Dict:
-        """
-        Pull the last saved intent_content from the chat history API.
-        Used to restore category context after server restart or on first message.
-        """
-        try:
-            urls = self._build_chat_history_urls(user_id, 10)
-            for url in urls:
-                try:
-                    resp = requests.get(url, timeout=5)
-                    if not (200 <= resp.status_code < 300):
-                        continue
-                    data = resp.json() if resp.text else {}
-
-                    # Normalise to a list of message dicts
-                    candidates = []
-                    if isinstance(data, list):
-                        candidates = data
-                    elif isinstance(data, dict):
-                        for k in ['data', 'messages', 'history', 'chat_history', 'conversation', 'result']:
-                            v = data.get(k)
-                            if isinstance(v, list):
-                                candidates = v
-                                break
-
-                    # Walk newest-first looking for a bot message with intent_content
-                    for item in reversed(candidates):
-                        if not isinstance(item, dict):
-                            continue
-                        # Only look at bot messages (sender_type=2)
-                        sender = str(item.get('sender_type') or '').strip()
-                        if sender != '2':
-                            continue
-                        ic = item.get('intent_content')
-                        if isinstance(ic, str):
-                            try:
-                                ic = json.loads(ic)
-                            except Exception:
-                                continue
-                        if isinstance(ic, dict) and ic.get('cat'):
-                            logger.info("[INTENT_DB] Restored intent_content for %s: %s", user_id, ic)
-                            return ic
-                except Exception:
-                    continue
-        except Exception as e:
-            logger.warning("_fetch_intent_content_from_db failed: %s", e)
-        return {}
-
     def _merge_intent_context(self, user_id: str, groq_result: Dict,
-                            previous: Dict, intent: str = '') -> Dict:
+                              previous: Dict, intent: str = '') -> Dict:
         new_entities = groq_result['entities']
         new_category = new_entities.get('category', '')
         prev_category = previous.get('category', '')
@@ -1041,8 +1024,7 @@ Return ONLY the JSON object."""
                 'updated_at': datetime.now().isoformat(),
             }
 
-        # Treat as follow-up if message has no category word but has price/brand/title only
-        # This covers "under 20k", "50k er vitor", "hp er ta" etc.
+        # Treat as follow-up if message has price/brand/title but no category
         has_only_refinement = (
             not new_category
             and (
@@ -1071,11 +1053,11 @@ Return ONLY the JSON object."""
             'brand': new_entities.get('brand') or previous.get('brand', ''),
             'title': new_entities.get('title') or previous.get('title', ''),
             'price_max': (new_entities.get('price_max')
-                        if new_entities.get('price_max') is not None
-                        else previous.get('price_max')),
+                          if new_entities.get('price_max') is not None
+                          else previous.get('price_max')),
             'price_min': (new_entities.get('price_min')
-                        if new_entities.get('price_min') is not None
-                        else previous.get('price_min')),
+                          if new_entities.get('price_min') is not None
+                          else previous.get('price_min')),
             'updated_at': datetime.now().isoformat(),
         }
 
@@ -1177,7 +1159,7 @@ Return ONLY the JSON object."""
             return {'min_price': mn, 'max_price': mx, 'price_text': f"{mn}-{mx}"}
 
         um = re.search(
-            r'(?:under|within|modde|modhhe|budget|er modde|এর মধ্যে|মধ্যে|below|less than)\s*(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা|hazar)?',
+            r'(?:under|within|modde|modhhe|budget|er modde|er vitor|vitor|এর মধ্যে|মধ্যে|below|less than)\s*(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা|hazar)?',
             text)
         if um:
             mx = _to_taka(um.group(1), um.group(2) or '')
@@ -1212,7 +1194,7 @@ Return ONLY the JSON object."""
             _log_api_call('ai_search', 'GET', self.api_url, params,
                           response.status_code, duration_ms,
                           "PASS" if response.status_code == 200 else "FAIL",
-                          response.text)
+                          response.text[:400])
             if response.status_code != 200:
                 return {'products_found': 0, 'products': []}
 
@@ -1487,6 +1469,7 @@ Return ONLY the JSON object."""
                 })
         text += "আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।"
         return text, link_buttons
+
     def _reply_price_from_context(self, user_id: str) -> Optional[str]:
         selected = self.user_selected_product.get(user_id) or {}
         if selected:
@@ -1623,7 +1606,7 @@ Return ONLY the JSON object."""
             logger.warning("assign_agent call failed: %s", e)
 
         intent_content = self._normalize_intent_content_payload(
-            self.user_intent_content.get(user_id) or {}
+            self._load_previous_intent(user_id)
         )
         if error:
             intent_content['error'] = str(error)[:200]
@@ -1643,6 +1626,7 @@ Return ONLY the JSON object."""
     # ─────────────────────────────────────────────────────────────
     # _create_response — single exit point
     # Saving is done by the API layer (ai_simple_chat.py)
+    # intent_content is returned in result dict for the API layer to save
     # ─────────────────────────────────────────────────────────────
     def _create_response(
         self,
@@ -1663,13 +1647,14 @@ Return ONLY the JSON object."""
 
         if intent_content is None:
             intent_content = self._normalize_intent_content_payload(
-                self.user_intent_content.get(user_id) or {}
+                self._load_previous_intent(user_id)
             )
         else:
             intent_content = self._normalize_intent_content_payload(intent_content)
 
-        # Update local state only — no mode/status stored (Rule 13)
+        # Only last intent stored locally — no mode, no intent_content (Rules 13, 14)
         self.user_last_intent[user_id] = intent
+        self._save_state()
 
         result: Dict[str, Any] = {
             'response': response,
