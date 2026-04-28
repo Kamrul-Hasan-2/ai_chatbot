@@ -406,12 +406,18 @@ class SimpleChatbot:
             # Mode derived live from responder API — never from memory (Rule 13)
             responder_type = self._check_responder_type(user_id)
             if responder_type == 'agent':
-                return self._create_response(
-                    user_id=user_id, message=message, response="",
-                    mode=ChatMode.HUMAN, intent='human_mode_active', products=None,
-                    processing_time=(datetime.now() - start_time).total_seconds(),
-                    conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
-                )
+                if self._should_auto_resume_ai(message):
+                    logger.info("🔄 Auto-resuming AI for %s on product-like message", user_id)
+                    self.switch_to_ai(user_id)
+                    responder_type = 'bot'
+                else:
+                    return self._create_response(
+                        user_id=user_id, message=message,
+                        response="স্যার, আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।",
+                        mode=ChatMode.HUMAN, intent='human_mode_active', products=None,
+                        processing_time=(datetime.now() - start_time).total_seconds(),
+                        conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
+                    )
 
             # URL detection — check before Groq (faster and more reliable)
             url_match = re.search(r'https?://[^\s]+', message)
@@ -1869,6 +1875,23 @@ Return ONLY the JSON object."""
             'খুব শীঘ্রই bdstall.com এর একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবে',
         ]
         return sum(1 for p in blocked if p in text) >= 2
+
+    def _should_auto_resume_ai(self, message: str) -> bool:
+        text = str(message or '').strip()
+        if not text:
+            return False
+
+        if self.category_validator.resolve_from_message(text):
+            return True
+
+        lowered = text.lower()
+        product_signals = [
+            'price', 'dam', 'দাম', 'koto', 'দেখান', 'dekhan', 'dekhao',
+            'laptop', 'mobile', 'phone', 'tv', 'ac', 'fridge', 'watch',
+            'camera', 'printer', 'monitor', 'router', 'speaker', 'headphone',
+            'buy', 'kinte', 'order', 'compare', 'better', 'available', 'stock',
+        ]
+        return any(signal in lowered for signal in product_signals)
 
     # ─────────────────────────────────────────────────────────────
     # Cache helpers
