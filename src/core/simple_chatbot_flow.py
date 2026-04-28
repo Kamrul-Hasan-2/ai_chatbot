@@ -406,18 +406,12 @@ class SimpleChatbot:
             # Mode derived live from responder API — never from memory (Rule 13)
             responder_type = self._check_responder_type(user_id)
             if responder_type == 'agent':
-                if self._should_auto_resume_ai(message):
-                    logger.info("🔄 Auto-resuming AI for %s on product-like message", user_id)
-                    self.switch_to_ai(user_id)
-                    responder_type = 'bot'
-                else:
-                    return self._create_response(
-                        user_id=user_id, message=message,
-                        response="স্যার, আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।",
-                        mode=ChatMode.HUMAN, intent='human_mode_active', products=None,
-                        processing_time=(datetime.now() - start_time).total_seconds(),
-                        conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
-                    )
+                return self._create_response(
+                    user_id=user_id, message=message, response="",
+                    mode=ChatMode.HUMAN, intent='human_mode_active', products=None,
+                    processing_time=(datetime.now() - start_time).total_seconds(),
+                    conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
+                )
 
             # URL detection — check before Groq (faster and more reliable)
             url_match = re.search(r'https?://[^\s]+', message)
@@ -984,60 +978,21 @@ Do NOT recommend specific models or prices."""
 
     def handle_fallback(self, user_id: str, message: str, merged: Dict,
                         start_time: datetime) -> Dict[str, Any]:
-        # Safety: greeting/thanks must never ask for category
+        # buy intent must never ask for category
         last_intent = self.user_last_intent.get(user_id, '')
         if last_intent == 'buy':
             return self.handle_buy(user_id, message, start_time)
-        if last_intent in ('exit', 'greeting', 'thanks', 'goodbye',
-                           'technical_advice', 'seller_query', 'faq',
-                           'delivery', 'comparison'):
-            return self._create_response(
-                user_id=user_id, message=message,
-                response="ধন্যবাদ স্যার, আর কিভাবে সাহায্য করতে পারি?",
-                mode=ChatMode.AI, intent='acknowledged', products=None,
-                intent_content=self._normalize_intent_content_payload(
-                    self._load_previous_intent(user_id)
-                ),
-                processing_time=(datetime.now() - start_time).total_seconds(),
-                conversation_status=AI_ACTIVE_STATUS
-            )
 
-        # Also check current message for greeting signals before asking category
-        msg_lower = message.lower().strip()
-        greeting_signals = {'hi', 'hello', 'hey', 'salam', 'হাই', 'হ্যালো', 'সালাম'}
-        if msg_lower in greeting_signals:
-            return self._create_response(
-                user_id=user_id, message=message,
-                response="আসসালামু-আলাইকুম স্যার, কোন বিষয়ে জানতে চাচ্ছেন?",
-                mode=ChatMode.AI, intent='greeting', products=None,
-                intent_content=self._normalize_intent_content_payload(
-                    self._load_previous_intent(user_id)
-                ),
-                processing_time=(datetime.now() - start_time).total_seconds(),
-                conversation_status=AI_ACTIVE_STATUS
-            )
-
-        # Category presence alone does NOT mean product_search
-        # Only go to product_search if last intent was search-related
-        last_intent = self.user_last_intent.get(user_id, '')
-        search_intents = {'product_search', 'price_query', 'no_products_found', 'need_category'}
-
-        if merged.get('category') and last_intent in search_intents:
+        # If category exists in merged — always try product search
+        if merged.get('category'):
             return self.handle_product_search(user_id, message, merged, start_time)
 
-        # Try to resolve single-word category reply
-        # (e.g. user replied "laptop" to the category question)
-        if not merged.get('category'):
-            resolved = self.category_validator.resolve(message.strip())
-            if resolved:
-                merged['category'] = resolved['category_name']
-                self._reset_clarification_counter(user_id)
-                return self.handle_product_search(user_id, message, merged, start_time)
-
-        # If category is known but last intent was not search-related,
-        # treat as technical question about that category
-        if merged.get('category') or self.category_validator.resolve_from_message(message):
-            return self.handle_technical_advice(user_id, message, merged, start_time)
+        # Try to resolve the message as a category name
+        resolved = self.category_validator.resolve(message.strip())
+        if resolved:
+            merged['category'] = resolved['category_name']
+            self._reset_clarification_counter(user_id)
+            return self.handle_product_search(user_id, message, merged, start_time)
 
         return self._ask_for_category(user_id, message, merged, start_time)
 
@@ -1152,6 +1107,7 @@ A "category" is a generic product type. Known examples (not exhaustive): {sample
 RULES:
 - If the message contains a recognisable product type word → ALWAYS set category to that word.
 - A single word that is a product type (e.g. "laptop", "mobile", "AC", "fridge") → category = that word, intent = product_search.
+- "i want laptop", "laptop chai", "laptop lagbe", "laptop dekhao" → category="laptop", intent=product_search.
 - "laptop price" / "laptop dam koto" / "laptop er dam" → category="laptop", intent=price_query.
 - "hp laptop" → brand="hp", category="laptop".
 - "hp 840 g3" → brand="hp", title="840 g3", category="Laptop" (HP 840 G3 is a known laptop model — infer category from model knowledge).
@@ -1197,6 +1153,7 @@ BANGLISH / BANGLA QUICK REFERENCE:
 - "bechte chai", "sell korbo kivabe", "product list dibo", "shop open korbo",
   "vendor hote chai", "commission koto", "listing charge koto",
   "বিক্রি করতে চাই", "দোকান খুলব", "পণ্য বিক্রি করব"                             → seller_query
+- "i want laptop", "i need mobile", "show me AC", "laptop chai", "mobile dekhao" → product_search with that category
 - "X ache", "X ki ache" where X is a product type                                 → product_search
 - "50k er vitor ache", "20k te ache", "30 hazar er moddhe ache"                   → product_search, price_max=X, is_followup=true
 - "will this work for gaming", "gaming er jonno valo ki", "ei laptop ki editing er jonno valo",
@@ -1360,6 +1317,7 @@ Return ONLY the JSON object."""
 
         return {
             'category': effective_category,
+            'prev_cat': prev_category,  # carry for _intent_to_normalized
             'brand': new_entities.get('brand') or prev_brand,
             'title': new_entities.get('title') or prev_title,
             'price_max': (new_entities.get('price_max')
@@ -1383,9 +1341,14 @@ Return ONLY the JSON object."""
         else:
             price_text = ''
 
+        # Never overwrite cat with empty — only update when new category is non-empty
+        new_cat = str(merged.get('category') or '').strip()
+        prev_cat = str(merged.get('prev_cat') or '').strip()
+        effective_cat = new_cat or prev_cat
+
         return {
             'title': str(merged.get('title') or '').strip(),
-            'cat': str(merged.get('category') or '').strip(),
+            'cat': effective_cat,
             'brand': str(merged.get('brand') or '').strip().lower(),
             'price': price_text,
             'compare': '',
@@ -1875,23 +1838,6 @@ Return ONLY the JSON object."""
             'খুব শীঘ্রই bdstall.com এর একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবে',
         ]
         return sum(1 for p in blocked if p in text) >= 2
-
-    def _should_auto_resume_ai(self, message: str) -> bool:
-        text = str(message or '').strip()
-        if not text:
-            return False
-
-        if self.category_validator.resolve_from_message(text):
-            return True
-
-        lowered = text.lower()
-        product_signals = [
-            'price', 'dam', 'দাম', 'koto', 'দেখান', 'dekhan', 'dekhao',
-            'laptop', 'mobile', 'phone', 'tv', 'ac', 'fridge', 'watch',
-            'camera', 'printer', 'monitor', 'router', 'speaker', 'headphone',
-            'buy', 'kinte', 'order', 'compare', 'better', 'available', 'stock',
-        ]
-        return any(signal in lowered for signal in product_signals)
 
     # ─────────────────────────────────────────────────────────────
     # Cache helpers
