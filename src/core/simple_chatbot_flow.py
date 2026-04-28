@@ -954,6 +954,24 @@ Do NOT recommend specific models or prices."""
 
     def handle_fallback(self, user_id: str, message: str, merged: Dict,
                         start_time: datetime) -> Dict[str, Any]:
+        # Safety: these intents must never ask for category
+        last_intent = self.user_last_intent.get(user_id, '')
+        if last_intent == 'buy':
+            return self.handle_buy(user_id, message, start_time)
+        if last_intent in ('exit', 'greeting', 'thanks', 'goodbye',
+                           'technical_advice', 'seller_query', 'faq',
+                           'delivery', 'comparison'):
+            return self._create_response(
+                user_id=user_id, message=message,
+                response="ধন্যবাদ স্যার, আর কিভাবে সাহায্য করতে পারি?",
+                mode=ChatMode.AI, intent='acknowledged', products=None,
+                intent_content=self._normalize_intent_content_payload(
+                    self._load_previous_intent(user_id)
+                ),
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
         # Category presence alone does NOT mean product_search
         # Only go to product_search if last intent was search-related
         last_intent = self.user_last_intent.get(user_id, '')
@@ -1258,19 +1276,27 @@ Return ONLY the JSON object."""
         if has_only_refinement:
             is_followup = True
 
-        # Intents that never need a new category — always carry previous
+        # Intents that preserve category even without Groq follow-up signal
         category_preserving_intents = {
             'technical_advice', 'faq', 'seller_query',
             'comparison', 'price_query', 'unknown'
         }
 
+        # Treat as follow-up if Groq says so OR if message has refinement entities
+        is_contextual = (
+            is_followup
+            or has_only_refinement
+            or (new_entities.get('price_max') is not None)
+            or (new_entities.get('price_min') is not None)
+            or bool(new_entities.get('brand'))
+            or bool(new_entities.get('title'))
+        )
+
         if new_category:
             effective_category = new_category
-        elif is_followup:
+        elif is_contextual and prev_category:
             effective_category = prev_category
         elif intent in category_preserving_intents and prev_category:
-            effective_category = prev_category
-        elif has_only_refinement and prev_category:
             effective_category = prev_category
         else:
             effective_category = ''
