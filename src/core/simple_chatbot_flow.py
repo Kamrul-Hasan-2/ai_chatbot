@@ -461,6 +461,10 @@ class SimpleChatbot:
 
         merged = self._merge_intent_context(user_id, groq_result, previous_intent, intent)
 
+        # If products exist in context and user asks comparison/advice — use context category
+        if not merged.get('category') and self.user_product_context.get(user_id):
+            merged['category'] = previous_intent.get('category') or previous_intent.get('cat', '')
+
         if intent == 'seller_query':
             return self._handoff_to_human(
                 user_id, message, start_time,
@@ -617,6 +621,11 @@ class SimpleChatbot:
 
     def handle_comparison(self, user_id: str, message: str, merged: Dict,
                           start_time: datetime) -> Dict[str, Any]:
+        # If no category in merged but products exist in context — use context
+        if not merged.get('category') and self.user_product_context.get(user_id):
+            prev = self._load_previous_intent(user_id)
+            merged['category'] = prev.get('category') or prev.get('cat', '')
+
         self._reset_clarification_counter(user_id)
         return self._create_response(
             user_id=user_id, message=message,
@@ -954,7 +963,7 @@ Do NOT recommend specific models or prices."""
 
     def handle_fallback(self, user_id: str, message: str, merged: Dict,
                         start_time: datetime) -> Dict[str, Any]:
-        # Safety: these intents must never ask for category
+        # Safety: greeting/thanks must never ask for category
         last_intent = self.user_last_intent.get(user_id, '')
         if last_intent == 'buy':
             return self.handle_buy(user_id, message, start_time)
@@ -965,6 +974,21 @@ Do NOT recommend specific models or prices."""
                 user_id=user_id, message=message,
                 response="ধন্যবাদ স্যার, আর কিভাবে সাহায্য করতে পারি?",
                 mode=ChatMode.AI, intent='acknowledged', products=None,
+                intent_content=self._normalize_intent_content_payload(
+                    self._load_previous_intent(user_id)
+                ),
+                processing_time=(datetime.now() - start_time).total_seconds(),
+                conversation_status=AI_ACTIVE_STATUS
+            )
+
+        # Also check current message for greeting signals before asking category
+        msg_lower = message.lower().strip()
+        greeting_signals = {'hi', 'hello', 'hey', 'salam', 'হাই', 'হ্যালো', 'সালাম'}
+        if msg_lower in greeting_signals:
+            return self._create_response(
+                user_id=user_id, message=message,
+                response="আসসালামু-আলাইকুম স্যার, কোন বিষয়ে জানতে চাচ্ছেন?",
+                mode=ChatMode.AI, intent='greeting', products=None,
                 intent_content=self._normalize_intent_content_payload(
                     self._load_previous_intent(user_id)
                 ),
