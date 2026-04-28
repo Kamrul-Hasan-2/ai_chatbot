@@ -461,9 +461,15 @@ class SimpleChatbot:
 
         merged = self._merge_intent_context(user_id, groq_result, previous_intent, intent)
 
-        # If products exist in context and user asks comparison/advice — use context category
+        # If products exist in context and category is still empty — restore from previous
         if not merged.get('category') and self.user_product_context.get(user_id):
             merged['category'] = previous_intent.get('category') or previous_intent.get('cat', '')
+
+        # If category still empty but previous intent has it — restore
+        if not merged.get('category') and (previous_intent.get('cat') or previous_intent.get('category')):
+            if intent in ('comparison', 'technical_advice', 'price_query',
+                          'faq', 'unknown', 'seller_query'):
+                merged['category'] = previous_intent.get('category') or previous_intent.get('cat', '')
 
         if intent == 'seller_query':
             return self._handoff_to_human(
@@ -621,7 +627,8 @@ class SimpleChatbot:
 
     def handle_comparison(self, user_id: str, message: str, merged: Dict,
                           start_time: datetime) -> Dict[str, Any]:
-        # If no category in merged but products exist in context — use context
+        # Comparison ALWAYS returns fixed safe message — never recommends specific product
+        # Category preserved for context but not required
         if not merged.get('category') and self.user_product_context.get(user_id):
             prev = self._load_previous_intent(user_id)
             merged['category'] = prev.get('category') or prev.get('cat', '')
@@ -629,7 +636,7 @@ class SimpleChatbot:
         self._reset_clarification_counter(user_id)
         return self._create_response(
             user_id=user_id, message=message,
-            response=self._build_comparison_redirect_response(),
+            response="স্যার, আমাদের সকল প্রোডাক্টই ভালো। আপনি প্রোডাক্ট পেইজে গিয়ে রেটিং ও রিভিউ দেখে নিতে পারেন।",
             mode=ChatMode.AI, intent='comparison', products=None,
             link_buttons=self._build_comparison_link_buttons(merged),
             intent_content=self._intent_to_normalized(merged, message),
@@ -1075,7 +1082,7 @@ product_search | price_query | comparison | buy | exit | delivery | greeting | g
 INTENT DEFINITIONS:
 - product_search    : user wants to see, find, or browse products. User is ready to buy or look at options.
 - price_query       : user is asking about price or cost of a product/category
-- comparison        : user wants to compare two specific products side by side
+- comparison        : user asks WHICH product is better, compares two or more options, or asks for a recommendation between choices. Key signals: "konti valo", "konta valo", "which is better", "hp naki dell", "valo naki", "recommend koro konta nibo"
 - buy               : user wants to know HOW to buy or place an order (process question). Includes "kivabe kinbo", "kivabe order korbo", "kinte chai kivabe"
 - exit              : user is leaving, says later / not now / will come back
 - delivery          : user asks about delivery time, charge, or process
@@ -1085,10 +1092,16 @@ INTENT DEFINITIONS:
 - complaint         : refund, scam, broken product, bad experience
 - faq               : general questions about the site or policies
 - human_request     : user wants to speak to a human agent
-- technical_advice  : user asks WHICH product is better for a use case, or whether a product is suitable/compatible. Key signal: "valo hobe", "valo ki", "suitable", "compatible", "konta nibo", "recommend koro", "upgrade kora jay", "fit hobe ki"
-- seller_query      : user wants to SELL products, list items, open a shop, register as vendor, ask about commission, or anything related to being a seller. Key signals: "bechte chai", "sell korbo", "listing dibo", "shop open", "vendor", "commission koto", "product add korbo", "বিক্রি করতে চাই", "দোকান খুলব", "কমিশন কত"
-- hate_speech       : abusive language, insults, threats, racial slurs, sexual harassment, or any offensive content
+- technical_advice  : user asks about a product's CAPABILITY, COMPATIBILITY, UPGRADE potential, or PERFORMANCE for a specific use case. Key signals: "upgrade kora jabe", "compatible hobe", "enough ki", "fit hobe", "lagano jabe", "kora jay ki"
+- seller_query      : user wants to SELL products, list items, open a shop, register as vendor, ask about commission
+- hate_speech       : abusive language, insults, threats, racial slurs, sexual harassment
 - unknown           : truly cannot determine
+
+CRITICAL SEPARATION — comparison vs technical_advice:
+- "konti valo?" / "konta better?" / "hp naki dell?" → comparison (choosing between options)
+- "ram upgrade kora jabe?" / "ssd lagano jabe?" / "4GB enough?" → technical_advice (capability question)
+- "konti valo gaming er jonno?" → comparison (choosing which is better FOR something)
+- "laptop gaming er jonno valo hobe?" → technical_advice (is THIS product good for something)
 
 TECHNICAL_ADVICE DETECTION RULE — read carefully:
 Ask yourself two questions about the message:

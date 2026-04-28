@@ -54,7 +54,7 @@ chatbot = None
 # BDStall chat message save API configuration
 SAVE_MESSAGE_API_URL = os.getenv(
     'SAVE_MESSAGE_API_URL',
-    'https://www.bdstall.com/api/item/chatbot_save_message/'
+    'https://www.bdstall.com/api/chatbot/chatbot_save_message/'
 )
 SAVE_MESSAGE_API_KEY = os.getenv('SAVE_MESSAGE_API_KEY', 'mkh677ddd2sxxkkdjff')
 
