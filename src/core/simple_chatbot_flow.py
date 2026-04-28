@@ -322,7 +322,9 @@ class SimpleChatbot:
             urls = self._build_chat_history_urls(user_id, 10)
             for url in urls:
                 try:
+                    logger.info("[INTENT_DB] Fetching: %s", url)
                     resp = requests.get(url, timeout=2)
+                    logger.info("[INTENT_DB] Response: status=%s len=%s", resp.status_code, len(resp.text))
                     if not (200 <= resp.status_code < 300):
                         continue
                     data = resp.json() if resp.text else {}
@@ -358,23 +360,29 @@ class SimpleChatbot:
         return {}
 
     def _load_previous_intent(self, user_id: str) -> Dict:
-        """Always fetch from DB — never from local memory (Rule 14)."""
+        """Always fetch from DB — API context is source of truth."""
         try:
             prev = dict(self._fetch_intent_content_from_db(user_id) or {})
         except Exception as e:
             logger.warning("_load_previous_intent failed: %s", e)
             return {}
 
-        updated_at = prev.get('updated_at')
-        if updated_at:
-            try:
-                age = (datetime.now() - datetime.fromisoformat(updated_at)).total_seconds()
-                if age > CONTEXT_TTL_SECONDS:
-                    logger.info("Context expired for %s (age=%.0fs)", user_id, age)
-                    return {}
-            except Exception:
-                pass
+        if not prev:
+            return {}
 
+        # Only expire context if cat is empty — if cat exists, NEVER expire
+        if not prev.get('cat') and not prev.get('category'):
+            updated_at = prev.get('updated_at')
+            if updated_at:
+                try:
+                    age = (datetime.now() - datetime.fromisoformat(updated_at)).total_seconds()
+                    if age > CONTEXT_TTL_SECONDS:
+                        logger.info("Context expired for %s (age=%.0fs)", user_id, age)
+                        return {}
+                except Exception:
+                    pass
+
+        # Normalise cat → category for merge logic
         if prev.get('cat') and not prev.get('category'):
             prev['category'] = prev['cat']
         return prev
@@ -1032,13 +1040,17 @@ Do NOT recommend specific models or prices."""
     # ─────────────────────────────────────────────────────────────
     def _ask_for_category(self, user_id: str, message: str, merged: Dict,
                           start_time: datetime) -> Dict[str, Any]:
-        # Preserve any brand/title already extracted — don't wipe them
-        # e.g. "hp 840 g3" → ask category but keep brand=hp, title=840 g3
-        intent_content = self._intent_to_normalized(merged, message)
+        # Never ask for category if DB context already has one
+        if not merged.get('category'):
+            prev = self._load_previous_intent(user_id)
+            if prev.get('cat') or prev.get('category'):
+                merged['category'] = prev.get('category') or prev.get('cat', '')
+                return self.handle_product_search(user_id, message, merged, start_time)
+
         return self._create_response(
             user_id=user_id, message=message, response=CATEGORY_PROMPT,
             mode=ChatMode.AI, intent='need_category', products=None,
-            intent_content=intent_content,
+            intent_content=self._intent_to_normalized(merged, message),
             processing_time=(datetime.now() - start_time).total_seconds(),
             conversation_status=AI_ACTIVE_STATUS
         )
@@ -1331,9 +1343,8 @@ Return ONLY the JSON object."""
 
         if new_category:
             effective_category = new_category
-        elif is_contextual and prev_category:
-            effective_category = prev_category
-        elif intent in category_preserving_intents and prev_category:
+        elif prev_category:
+            # API context is source of truth — NEVER drop category if it exists in DB
             effective_category = prev_category
         else:
             effective_category = ''
@@ -1562,12 +1573,8 @@ Return ONLY the JSON object."""
             return []
         tail = f"user_id={user_id}&limit={limit}&key={self.api_key}"
         bs = base.rstrip('/')
-        cands = [f"{base}{tail}", f"{base}?{tail}", f"{bs}?{tail}"]
-        seen, out = set(), []
-        for u in cands:
-            if u not in seen:
-                seen.add(u); out.append(u)
-        return out
+        # Always use proper ? separator — never concatenate without it
+        return [f"{bs}?{tail}"]
 
     def _normalize_history_messages(self, payload: Any) -> list:
         candidates = []
