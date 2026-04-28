@@ -385,6 +385,28 @@ class SimpleChatbot:
         # Normalise cat → category for merge logic
         if prev.get('cat') and not prev.get('category'):
             prev['category'] = prev['cat']
+
+        # Store prev_ versions for _intent_to_normalized no-overwrite logic
+        prev['prev_cat'] = prev.get('cat', '')
+        prev['prev_brand'] = prev.get('brand', '')
+        prev['prev_title'] = prev.get('title', '')
+
+        # Restore price_max/price_min for merge logic
+        try:
+            if 'price_max' in prev:
+                prev['price_max'] = int(prev['price_max']) if int(prev['price_max']) > 0 else None
+                prev['prev_price_max'] = prev['price_max']
+        except (ValueError, TypeError):
+            prev['price_max'] = None
+            prev['prev_price_max'] = None
+        try:
+            if 'price_min' in prev:
+                prev['price_min'] = int(prev['price_min']) if int(prev['price_min']) > 0 else None
+                prev['prev_price_min'] = prev['price_min']
+        except (ValueError, TypeError):
+            prev['price_min'] = None
+            prev['prev_price_min'] = None
+
         return prev
 
     # ═════════════════════════════════════════════════════════════
@@ -1268,10 +1290,15 @@ Return ONLY the JSON object."""
             self._clear_product_search_cache(user_id, clear_pending=True)
             return {
                 'category': new_category,
-                'brand': '',
-                'title': '',
+                'prev_cat': prev_category,
+                'brand': new_entities.get('brand', ''),
+                'prev_brand': '',
+                'title': new_entities.get('title', ''),
+                'prev_title': '',
                 'price_max': new_entities.get('price_max'),
+                'prev_price_max': None,
                 'price_min': new_entities.get('price_min'),
+                'prev_price_min': None,
                 'updated_at': datetime.now().isoformat(),
             }
 
@@ -1317,40 +1344,52 @@ Return ONLY the JSON object."""
 
         return {
             'category': effective_category,
-            'prev_cat': prev_category,  # carry for _intent_to_normalized
+            'prev_cat': prev_category,
             'brand': new_entities.get('brand') or prev_brand,
+            'prev_brand': prev_brand,
             'title': new_entities.get('title') or prev_title,
+            'prev_title': prev_title,
             'price_max': (new_entities.get('price_max')
                           if new_entities.get('price_max') is not None
                           else prev_price_max),
+            'prev_price_max': prev_price_max,
             'price_min': (new_entities.get('price_min')
                           if new_entities.get('price_min') is not None
                           else prev_price_min),
+            'prev_price_min': prev_price_min,
             'updated_at': datetime.now().isoformat(),
         }
 
     def _intent_to_normalized(self, merged: Dict, message: str) -> Dict[str, Any]:
         price_max = merged.get('price_max')
         price_min = merged.get('price_min')
-        if price_min and price_max:
-            price_text = f"{price_min}-{price_max}"
-        elif price_max:
-            price_text = f"under {price_max}"
-        elif price_min:
-            price_text = f"above {price_min}"
-        else:
-            price_text = ''
 
-        # Never overwrite cat with empty — only update when new category is non-empty
+        # Never overwrite existing values with empty — only update when new value is non-empty
         new_cat = str(merged.get('category') or '').strip()
         prev_cat = str(merged.get('prev_cat') or '').strip()
         effective_cat = new_cat or prev_cat
 
+        new_brand = str(merged.get('brand') or '').strip().lower()
+        prev_brand = str(merged.get('prev_brand') or '').strip().lower()
+        effective_brand = new_brand or prev_brand
+
+        new_title = str(merged.get('title') or '').strip()
+        prev_title_val = str(merged.get('prev_title') or '').strip()
+        effective_title = new_title or prev_title_val
+
+        effective_price_max = price_max if price_max is not None and price_max > 0 else (
+            merged.get('prev_price_max') or 0
+        )
+        effective_price_min = price_min if price_min is not None and price_min > 0 else (
+            merged.get('prev_price_min') or 0
+        )
+
         return {
-            'title': str(merged.get('title') or '').strip(),
+            'title': effective_title,
             'cat': effective_cat,
-            'brand': str(merged.get('brand') or '').strip().lower(),
-            'price': price_text,
+            'brand': effective_brand,
+            'price_max': effective_price_max,
+            'price_min': effective_price_min,
             'compare': '',
             'buy': '',
             'updated_at': merged.get('updated_at', datetime.now().isoformat()),
@@ -1358,7 +1397,9 @@ Return ONLY the JSON object."""
 
     def _normalize_intent_content_payload(self, payload: Optional[Dict] = None) -> Dict[str, Any]:
         default = {
-            'title': '', 'cat': '', 'brand': '', 'price': '', 'compare': '', 'buy': '',
+            'title': '', 'cat': '', 'brand': '',
+            'price_max': 0, 'price_min': 0,
+            'compare': '', 'buy': '',
         }
         if not isinstance(payload, dict):
             return default
@@ -1366,7 +1407,15 @@ Return ONLY the JSON object."""
         out['title'] = str(payload.get('title') or '').strip()
         out['cat'] = str(payload.get('cat') or payload.get('category') or '').strip()
         out['brand'] = str(payload.get('brand') or '').strip().lower()
-        out['price'] = str(payload.get('price') or '').strip()
+        # Support both old 'price' text field and new price_max/price_min
+        try:
+            out['price_max'] = int(payload.get('price_max') or 0)
+        except (ValueError, TypeError):
+            out['price_max'] = 0
+        try:
+            out['price_min'] = int(payload.get('price_min') or 0)
+        except (ValueError, TypeError):
+            out['price_min'] = 0
         out['compare'] = str(payload.get('compare') or '').strip()
         out['buy'] = str(payload.get('buy') or '').strip()
         if 'complain' in payload:
