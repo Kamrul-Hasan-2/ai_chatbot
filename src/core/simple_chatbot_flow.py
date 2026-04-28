@@ -1258,10 +1258,19 @@ Return ONLY the JSON object."""
         if has_only_refinement:
             is_followup = True
 
-        # Determine effective category
+        # Intents that never need a new category — always carry previous
+        category_preserving_intents = {
+            'technical_advice', 'faq', 'seller_query',
+            'comparison', 'price_query', 'unknown'
+        }
+
         if new_category:
             effective_category = new_category
         elif is_followup:
+            effective_category = prev_category
+        elif intent in category_preserving_intents and prev_category:
+            effective_category = prev_category
+        elif has_only_refinement and prev_category:
             effective_category = prev_category
         else:
             effective_category = ''
