@@ -277,3 +277,30 @@ def switch_to_human(user_id: str) -> None:
 
 def switch_to_ai(user_id: str) -> None:
     assign_bot(user_id)
+
+
+# ── Compatibility shim ────────────────────────────────────────────────────────
+
+class SimpleChatbot:
+    """Thin wrapper around module-level functions for legacy callers."""
+
+    def __init__(self):
+        from models.chatbot_config import SEARCH_URL
+        self.api_url = SEARCH_URL
+        self.groq_client = _groq_client
+
+    @property
+    def database(self):
+        return _faq_db
+
+    def process_message(self, user_id: str, message: str) -> dict:
+        return process_message(user_id, message)
+
+    def get_user_mode(self, user_id: str) -> str:
+        return get_user_mode(user_id)
+
+    def switch_to_human(self, user_id: str) -> None:
+        switch_to_human(user_id)
+
+    def switch_to_ai(self, user_id: str) -> None:
+        switch_to_ai(user_id)
