@@ -15,7 +15,7 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
-from models.chatbot_config import CATEGORY_PROMPT
+from models.chatbot_config import CATEGORY_PROMPT, LOOP_BACK
 from services.api_client_service import search_products, fetch_delivery_template
 from repositories.state_repository import (
     load_context, get_last_intent,
@@ -68,14 +68,18 @@ def _build_broader_keywords(ctx: Dict) -> str:
 
 
 def _format_listing(products: List[Dict]) -> Tuple[str, List[Dict]]:
-    text = "স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:\n\nআরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।"
+    lines = ["স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:\n"]
     buttons = []
     for i, p in enumerate(products[:3], 1):
-        url = p.get('url', '')
+        title = p.get('title', 'N/A')
+        price = p.get('price', 'N/A')
+        url   = p.get('url', '')
+        lines.append(f"{i}. {title}\n   মূল্য: {price}")
         if url:
             buttons.append({'text': f"{i}. View", 'url': url,
-                            'title': p.get('title', 'N/A'), 'price': p.get('price', 'N/A')})
-    return text, buttons
+                            'title': title, 'price': price})
+    lines.append("\nআরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।" + LOOP_BACK)
+    return '\n'.join(lines), buttons
 
 
 def _comparison_buttons(ctx: Dict) -> List[Dict]:
@@ -113,24 +117,24 @@ def _extract_keywords_from_url(url: str) -> str:
 
 def handle_greeting(ctx: Dict, user_id: str, message: str) -> Dict:
     ic = normalize_payload(load_context(user_id))
-    return _ok("আসসালামু-আলাইকুম স্যার, কোন বিষয়ে জানতে চাচ্ছেন?", 'greeting', ic)
+    return _ok("ওয়ালাইকুম আসসালাম! 😊 BDStall-এ স্বাগতম। আপনি কোন প্রোডাক্টটি খুঁজছেন?", 'greeting', ic)
 
 
 def handle_goodbye(ctx: Dict, user_id: str, message: str) -> Dict:
     ic = normalize_payload(load_context(user_id))
     ic['exit'] = 1
-    return _ok("ধন্যবাদ স্যার, ভালো থাকবেন।", 'goodbye', ic)
+    return _ok("ধন্যবাদ স্যার, ভালো থাকবেন। আবার প্রয়োজন হলে আমরা সর্বদা আছি। 😊", 'goodbye', ic)
 
 
 def handle_thanks(ctx: Dict, user_id: str, message: str) -> Dict:
     ic = normalize_payload(load_context(user_id))
-    return _ok("Most welcome", 'thanks', ic)
+    return _ok("Most welcome! 😊" + LOOP_BACK, 'thanks', ic)
 
 
 def handle_exit(ctx: Dict, user_id: str, message: str) -> Dict:
     ic = normalize_payload(load_context(user_id))
     ic['exit'] = 1
-    return _ok("সাথে থাকার জন্য ধন্যবাদ।", 'exit', ic)
+    return _ok("সাথে থাকার জন্য ধন্যবাদ। আবার প্রয়োজন হলে আমরা সর্বদা আছি। 😊", 'exit', ic)
 
 
 def handle_buy(ctx: Dict, user_id: str, message: str) -> Dict:
@@ -138,7 +142,12 @@ def handle_buy(ctx: Dict, user_id: str, message: str) -> Dict:
     buttons = [{'text': 'Shopping Guide',
                 'url': 'https://www.bdstall.com/blog/safe-shopping-guide/'}]
     return _ok(
-        "স্যার এই লিংকে গিয়ে আপনি দেখতে পারেন কিভাবে অর্ডার অথবা বাই করা যায়",
+        "স্যার, অর্ডার করার নিয়ম:\n\n"
+        "www.bdstall.com-এ গিয়ে প্রোডাক্ট সিলেক্ট করুন → 'Order Now' বাটনে ক্লিক করুন "
+        "→ আপনার নাম, ঠিকানা ও ফোন নম্বর দিন → অর্ডার কনফার্ম করুন। "
+        "আমাদের টিম আপনাকে কল করে কনফার্ম করবে।\n\n"
+        "✅ Cash on Delivery সুবিধাও পাওয়া যায়।"
+        + LOOP_BACK,
         'buy', ic, link_buttons=buttons
     )
 
@@ -146,28 +155,46 @@ def handle_buy(ctx: Dict, user_id: str, message: str) -> Dict:
 def handle_comparison(ctx: Dict, user_id: str, message: str) -> Dict:
     ic = intent_to_normalized(ctx)
     return _ok(
-        "স্যার, আমাদের সকল প্রোডাক্টই ভালো। আপনি প্রোডাক্ট পেইজে গিয়ে রেটিং ও রিভিউ দেখে নিতে পারেন।",
+        "স্যার, আমাদের সকল প্রোডাক্টই মানসম্পন্ন। "
+        "আরও বিস্তারিত জানতে আমাদের ওয়েবসাইট ভিজিট করুন: 👉 www.bdstall.com"
+        + LOOP_BACK,
         'comparison', ic, link_buttons=_comparison_buttons(ctx)
     )
+
+
+_DELIVERY_INFO = (
+    "স্যার, ডেলিভারি সংক্রান্ত তথ্য:\n\n"
+    "📦 ডেলিভারি চার্জ:\n"
+    "  • ঢাকার ভেতরে: ৬০-৮০ টাকা\n"
+    "  • ঢাকার বাইরে: ১২০-১৫০ টাকা (কুরিয়ার সার্ভিস)\n\n"
+    "⏱️ ডেলিভারি সময়:\n"
+    "  • ঢাকার ভেতরে: ১-২ কার্যদিবস\n"
+    "  • ঢাকার বাইরে: ২-৫ কার্যদিবস\n\n"
+    "(নোট: চার্জ পরিবর্তন হতে পারে, কনফার্ম করতে www.bdstall.com দেখুন)"
+)
 
 
 def handle_delivery(ctx: Dict, user_id: str, message: str, faq_db: List) -> Dict:
     ic = intent_to_normalized(ctx)
     tmpl = fetch_delivery_template()
     if tmpl:
-        return _ok(tmpl, 'delivery', ic)
+        return _ok(tmpl + LOOP_BACK, 'delivery', ic)
     faq = search_faq(message, faq_db)
     if faq:
-        return _ok(faq, 'delivery', ic)
-    return handle_fallback(ctx, user_id, message, faq_db)
+        return _ok(faq + LOOP_BACK, 'delivery', ic)
+    return _ok(_DELIVERY_INFO + LOOP_BACK, 'delivery', ic)
 
 
 def handle_faq(ctx: Dict, user_id: str, message: str, faq_db: List) -> Dict:
     ic = intent_to_normalized(ctx)
     faq = search_faq(message, faq_db)
     if faq:
-        return _ok(faq, 'faq', ic)
-    return handle_fallback(ctx, user_id, message, faq_db)
+        return _ok(faq + LOOP_BACK, 'faq', ic)
+    return _ok(
+        "এই বিষয়ে আমি নিশ্চিত নই। আরও সাহায্যের জন্য আমাদের ওয়েবসাইট দেখুন: 👉 www.bdstall.com"
+        + LOOP_BACK,
+        'faq_not_found', ic
+    )
 
 
 def handle_technical_advice(ctx: Dict, user_id: str, message: str,
@@ -182,14 +209,16 @@ def handle_technical_advice(ctx: Dict, user_id: str, message: str,
                 break
     if not resolved:
         return _ok(
-            "স্যার, এই বিষয়ে আমি সাহায্য করতে পারব না। আপনি কি কোনো প্রোডাক্ট খুঁজছেন?",
+            "এই বিষয়ে আমি নিশ্চিত নই। আরও সাহায্যের জন্য আমাদের ওয়েবসাইট দেখুন অথবা সরাসরি কল করুন।"
+            + LOOP_BACK,
             'technical_advice_out_of_scope', ic
         )
     answer = (get_technical_advice(message, groq_client, groq_model)
               or "স্যার, এই বিষয়ে আমি নিশ্চিত নই।")
     full_answer = (answer
                    + "\n\nতবে স্যার, কেনার আগে অবশ্যই আরেকবার যাচাই করে নিন।"
-                   + "\n\nকোন প্রোডাক্ট দেখতে চান বললে আমি এখনই দেখিয়ে দিতে পারি।")
+                   + "\n\nকোন প্রোডাক্ট দেখতে চান বললে আমি এখনই দেখিয়ে দিতে পারি।"
+                   + LOOP_BACK)
     return _ok(full_answer, 'technical_advice', ic)
 
 
@@ -214,7 +243,9 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
             ctx.get('brand', ''), ctx.get('title', ''), ctx.get('category', '')
         ] if v)
         return _ok(
-            f"দুঃখিত স্যার, এই মুহূর্তে {label} স্টকে নেই। অন্য কোনো ব্র্যান্ড বা মডেল দেখাবো?",
+            f"দুঃখিত স্যার, এই মুহূর্তে {label} স্টকে নেই। "
+            "স্টক আপডেটের জন্য আমাদের ওয়েবসাইট ফলো করুন: 👉 www.bdstall.com"
+            + LOOP_BACK,
             'no_products_found', ic
         )
 
@@ -248,10 +279,13 @@ def handle_url_message(ctx: Dict, user_id: str, message: str, url: str) -> Dict:
         return handle_product_link(ctx, user_id, message, url)
     ic = normalize_payload(load_context(user_id))
     if re.search(r'(cdn\.bdstall\.com|bdstall\.com/.*\.(jpg|jpeg|png|webp|gif))', url_lower):
-        return _ok("স্যার, কোন ক্যাটাগরি এবং মডেল সম্পর্কে জানতে চাচ্ছেন? একটু বলুন।", 'image_url', ic)
+        return _ok("স্যার, কোন ক্যাটাগরি এবং মডেল সম্পর্কে জানতে চাচ্ছেন? একটু বলুন।" + LOOP_BACK, 'image_url', ic)
     if re.search(r'(www\.)?bdstall\.com', url_lower):
-        return _ok("স্যার, কী জানতে চাচ্ছেন? একটু বলুন।", 'bdstall_url', ic)
-    return _ok("স্যার, আমি শুধুমাত্র BDStall.com এর প্রোডাক্ট লিংক সাপোর্ট করি।", 'unsupported_url', ic)
+        return _ok("স্যার, কী জানতে চাচ্ছেন? একটু বলুন।" + LOOP_BACK, 'bdstall_url', ic)
+    return _ok(
+        "স্যার, আমি শুধুমাত্র BDStall.com এর প্রোডাক্ট লিংক সাপোর্ট করি।" + LOOP_BACK,
+        'unsupported_url', ic
+    )
 
 
 def handle_product_link(ctx: Dict, user_id: str, message: str, url: str) -> Dict:
@@ -259,13 +293,14 @@ def handle_product_link(ctx: Dict, user_id: str, message: str, url: str) -> Dict
     ic = normalize_payload(load_context(user_id))
     if not keywords:
         return _ok(
-            "স্যার, লিংকটি সঠিকভাবে পড়তে পারছি না। অনুগ্রহ করে আবার চেষ্টা করুন।",
+            "স্যার, লিংকটি সঠিকভাবে পড়তে পারছি না। অনুগ্রহ করে আবার চেষ্টা করুন।" + LOOP_BACK,
             'product_link_error', ic
         )
     result = search_products(keywords)
     if result['products_found'] == 0:
         return _ok(
-            "দুঃখিত স্যার, এই প্রোডাক্টটি এই মুহূর্তে পাওয়া যাচ্ছে না।",
+            "দুঃখিত স্যার, এই প্রোডাক্টটি এই মুহূর্তে পাওয়া যাচ্ছে না।"
+            " স্টক আপডেটের জন্য www.bdstall.com ফলো করুন।" + LOOP_BACK,
             'product_link_not_found', ic,
             link_buttons=[{'text': 'View on BDStall', 'url': url}]
         )
@@ -297,7 +332,7 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
         return None
     ic = normalize_payload(load_context(user_id))
     return _ok(
-        "স্যার, এই প্রোডাক্টের সকল তথ্য আমাদের পেজে দেওয়া আছে।",
+        "স্যার, এই প্রোডাক্টের সকল তথ্য আমাদের পেজে দেওয়া আছে।" + LOOP_BACK,
         'product_detail_followup', ic,
         link_buttons=[{'text': 'View Product', 'url': product_url}]
     )
@@ -309,7 +344,12 @@ def handle_fallback(ctx: Dict, user_id: str, message: str,
         return handle_buy(ctx, user_id, message)
     if ctx.get('category'):
         return handle_product_search(ctx, user_id, message)
-    return _ask_category(ctx)
+    ic = normalize_payload(load_context(user_id))
+    return _ok(
+        "এই বিষয়ে আমি নিশ্চিত নই। আরও সাহায্যের জন্য আমাদের ওয়েবসাইট দেখুন অথবা সরাসরি কল করুন।"
+        + LOOP_BACK,
+        'unknown', ic
+    )
 
 
 # ── Category prompt ───────────────────────────────────────────────────────────
@@ -331,7 +371,7 @@ def _reply_price_from_context(user_id: str) -> Optional[Tuple[str, List[Dict]]]:
         price = str(p.get('price') or '')
         url   = p.get('url', '')
         if price and price.upper() != 'N/A':
-            return (f"জি স্যার, {title} এর দাম {price}।",
+            return (f"জি স্যার, {title} এর দাম {price}।" + LOOP_BACK,
                     [{'text': 'View', 'url': url, 'title': title, 'price': price}] if url else [])
     lines   = ["স্যার, আপনার দেখা প্রোডাক্টগুলোর দাম:"]
     buttons = []
@@ -344,5 +384,5 @@ def _reply_price_from_context(user_id: str) -> Optional[Tuple[str, List[Dict]]]:
         lines.append(f"{i}. {t} - {pr}")
         if url:
             buttons.append({'text': f"{i}. View", 'url': url, 'title': t, 'price': pr})
-    lines.append("যেটা নিতে চান, নম্বর বলুন স্যার।")
+    lines.append("যেটা নিতে চান, নম্বর বলুন স্যার।" + LOOP_BACK)
     return '\n'.join(lines), buttons

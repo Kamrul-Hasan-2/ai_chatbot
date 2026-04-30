@@ -23,7 +23,7 @@ except ImportError:
 
 from models.chatbot_config import (
     ChatMode, AI_ACTIVE_STATUS, HUMAN_SUPPORT_REQUIRED_STATUS,
-    GROQ_API_KEY, GROQ_MODEL, GROQ_ANSWER_MODEL,
+    GROQ_API_KEY, GROQ_MODEL, GROQ_ANSWER_MODEL, LOOP_BACK,
 )
 from services.api_client_service import (
     check_responder_type, assign_agent, assign_bot,
@@ -208,7 +208,7 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error("process_message error: %s", e, exc_info=True)
         return {
-            'response': "দুঃখিত স্যার, একটি সমস্যা হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।",
+            'response': "দুঃখিত স্যার, একটি সমস্যা হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।" + LOOP_BACK,
             'mode': 'ai', 'intent': 'system_error', 'intent_content': {},
             'conversation_status': AI_ACTIVE_STATUS, 'products': [],
             'processing_time': round((datetime.now() - start_time).total_seconds(), 3),
@@ -219,14 +219,18 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
 # ── Intent dispatch ───────────────────────────────────────────────────────────
 
 _HANDOFF_MAP = {
-    'seller_query':  ("স্যার, বিক্রয় সংক্রান্ত বিষয়ে আমাদের একজন প্রতিনিধি আপনাকে সাহায্য করবেন।",
-                      'seller_query'),
-    'hate_speech':   ("স্যার, অনুগ্রহ করে ভদ্র ভাষায় কথা বলুন। আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।",
-                      'hate_speech'),
-    'human_request': ("স্যার, আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।",
-                      'explicit_human_request'),
-    'complaint':     ("স্যার, এই বিষয়ে আমাদের একজন প্রতিনিধি এখনই আপনার সাথে যোগাযোগ করবেন।",
-                      'complaint_handoff'),
+    'seller_query':  (
+        "স্যার, বিক্রয় সংক্রান্ত বিষয়ে আমাদের একজন প্রতিনিধি আপনাকে সাহায্য করবেন।",
+        'seller_query'),
+    'hate_speech':   (
+        "স্যার, অনুগ্রহ করে ভদ্র ভাষায় কথা বলুন। আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।",
+        'hate_speech'),
+    'human_request': (
+        "স্যার, আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।" + LOOP_BACK,
+        'explicit_human_request'),
+    'complaint':     (
+        "স্যার, এই বিষয়ে আমাদের একজন প্রতিনিধি এখনই আপনার সাথে যোগাযোগ করবেন।",
+        'complaint_handoff'),
 }
 
 
