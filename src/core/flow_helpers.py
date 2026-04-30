@@ -216,6 +216,46 @@ def extract_order_detail_fields(message: str) -> Dict[str, str]:
     return out
 
 
+def reply_price_from_context(
+    selected: Optional[Dict], products: Optional[List]
+) -> Optional[Tuple[str, List[Dict]]]:
+    if selected:
+        title = selected.get('title') or 'এই প্রোডাক্টটির'
+        price = selected.get('price') or ''
+        url = selected.get('url', '')
+        if price and str(price).strip().upper() != 'N/A':
+            text = f"জি স্যার, {title} এর দাম {price}।"
+            buttons = [{'text': 'View', 'url': url, 'title': title, 'price': price}] if url else []
+            return text, buttons
+        return "স্যার, এই প্রোডাক্টটির দাম এখন দেখাতে পারছি না।", []
+
+    if not products:
+        return None
+    if len(products) == 1:
+        p = products[0]
+        title = p.get('title') or 'এই প্রোডাক্টটির'
+        price = p.get('price') or ''
+        url = p.get('url', '')
+        if price and str(price).strip().upper() != 'N/A':
+            text = f"জি স্যার, {title} এর দাম {price}।"
+            buttons = [{'text': 'View', 'url': url, 'title': title, 'price': price}] if url else []
+            return text, buttons
+
+    lines = ["স্যার, আপনার দেখা প্রোডাক্টগুলোর দাম:"]
+    buttons = []
+    for i, p in enumerate(products[:5], 1):
+        t = str(p.get('title') or f'প্রোডাক্ট {i}').strip()
+        pr = str(p.get('price') or 'N/A').strip()
+        url = p.get('url', '')
+        if not pr or pr.upper() == 'N/A':
+            pr = 'দাম পাওয়া যায়নি'
+        lines.append(f"{i}. {t} - {pr}")
+        if url:
+            buttons.append({'text': f"{i}. View", 'url': url, 'title': t, 'price': pr})
+    lines.append("যেটা নিতে চান, নম্বর বলুন স্যার।")
+    return "\n".join(lines), buttons
+
+
 def extract_product_selection(message: str) -> Optional[int]:
     n = str(message or '').strip()
     if not n:

@@ -1,5 +1,5 @@
 """
-Simple Chatbot Flow — refactored with separated intent handlers.
+Simple Chatbot Flow — slim orchestrator.
 =================================================================
 Rules enforced:
 - Rule 1:  NO HARDCODING — all data from APIs/runtime
@@ -19,31 +19,10 @@ Rules enforced:
 """
 import os
 import sys
-import logging
-import threading
-import tempfile
-import shutil
-import time
-from typing import Dict, Any, Optional, List, Tuple
-from datetime import datetime
-import json
 import re
-from enum import Enum
-import requests
-from urllib.parse import quote
-
-from .flow_helpers import (
-    extract_keywords_from_bdstall_url,
-    extract_budget_range,
-    format_product_listing,
-    format_selected_product_response,
-    build_comparison_link_buttons,
-    parse_template_response,
-    build_missing_order_fields_prompt,
-    normalize_history_messages,
-    extract_order_detail_fields,
-    extract_product_selection,
-)
+import logging
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -55,376 +34,104 @@ except ImportError:
 try:
     from .category_validator import CategoryValidator
 except ImportError:
-    from category_validator import CategoryValidator
+    from category_validator import CategoryValidator  # type: ignore
+
+from .chatbot_config import (
+    ChatMode, AI_ACTIVE_STATUS, HUMAN_SUPPORT_REQUIRED_STATUS, _log_api_call
+)
+from .state_manager import StateManager
+from .api_client import ApiClient
+from .intent_processor import IntentProcessor
+from .intent_handlers import IntentHandlers
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def _log_api_call(api_name, method, url, request_payload, status_code,
-                  duration_ms, status, response_preview=""):
-    try:
+class SimpleChatbot(IntentHandlers):
+
+    def __init__(self) -> None:
         project_root = os.path.join(os.path.dirname(__file__), '..', '..')
-        logs_dir = os.path.join(project_root, 'logs')
-        os.makedirs(logs_dir, exist_ok=True)
-        log_file = os.path.join(
-            logs_dir, f"api_calls_{datetime.now().strftime('%Y-%m-%d')}.log"
-        )
-        entry = {
-            "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            "api_name": api_name, "method": method, "url": url,
-            "request": request_payload, "status_code": status_code,
-            "duration_ms": duration_ms, "result": status,
-            "response_preview": (response_preview or "")[:400]
-        }
-        with open(log_file, 'a', encoding='utf-8') as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    except Exception as e:
-        logger.warning("API log write failed: %s", e)
-
-
-class ChatMode(Enum):
-    AI = "ai"
-    HUMAN = "human"
-
-
-AI_ACTIVE_STATUS = "AI Active"
-HUMAN_SUPPORT_REQUIRED_STATUS = "Human Support Required"
-
-VALID_INTENTS = {
-    'product_search', 'price_query', 'comparison', 'ordering', 'delivery',
-    'greeting', 'goodbye', 'thanks', 'complaint', 'faq', 'human_request',
-    'buy', 'exit', 'technical_advice', 'hate_speech', 'product_link',
-    'seller_query', 'unknown'
-}
-
-PRODUCT_RELATED_INTENTS = {'product_search', 'price_query', 'comparison', 'ordering'}
-
-CONTEXT_TTL_SECONDS = 1800
-
-CATEGORY_PROMPT = (
-    "Apni kon category khujchen sir? "
-    "(যেমন: mobile, laptop, AC, fridge ইত্যাদি)"
-)
-
-
-class SimpleChatbot:
-
-
-
-    def __init__(self):
-        self.project_root = os.path.join(os.path.dirname(__file__), '..', '..')
-        self.state_file = os.path.join(self.project_root, 'data', 'chatbot_state.json')
-        self._state_lock = threading.Lock()
 
         groq_api_key = os.getenv('GROQ_API_KEY')
         if groq_api_key and Groq:
-            self.groq_client = Groq(api_key=groq_api_key)
-            self.groq_model = os.getenv('GROQ_MODEL', 'llama-3.3-70b-versatile')
-            self.groq_answer_model = os.getenv('GROQ_ANSWER_MODEL', 'llama-3.3-70b-versatile')
+            groq_client = Groq(api_key=groq_api_key)
+            groq_model = os.getenv('GROQ_MODEL', 'llama-3.3-70b-versatile')
+            groq_answer_model = os.getenv('GROQ_ANSWER_MODEL', 'llama-3.3-70b-versatile')
         else:
-            self.groq_client = None
-            self.groq_model = None
-            self.groq_answer_model = None
+            groq_client = None
+            groq_model = None
+            groq_answer_model = None
             logger.warning("⚠️ Groq API not available")
 
-        # Per-user product/order state only — NO mode, NO intent_content (Rules 13, 14)
-        self.user_product_context: Dict[str, list] = {}
-        self.user_selected_product: Dict[str, Dict[str, Any]] = {}
-        self.user_product_url: Dict[str, str] = {}  # last product link URL per user
-        self.user_order_context: Dict[str, bool] = {}
-        self.user_order_draft: Dict[str, Dict[str, str]] = {}
-        self.user_pending_product_query: Dict[str, Dict[str, Any]] = {}
-        self.user_last_intent: Dict[str, str] = {}
-
-        # Caches — no responder cache (must always be live), no intent_content cache
-        self._search_cache: Dict[str, Tuple[float, Dict]] = {}
-        self._search_cache_ttl = 300
-        self._search_cache_max = 200
-        self._history_cache: Dict[str, Tuple[float, str]] = {}
-        self._history_cache_ttl = 60
-
-        # BDStall config
-        self.api_url = "https://www.bdstall.com/api/chatbot/ai_search/"
-        self.api_key = os.getenv('BDSTALL_API_KEY', 'mkh677ddd2sxxkkdjff')
-        self.delivery_intent_api_url = "https://www.bdstall.com/api/chatbot/ai_template/"
-        self.assign_agent_api_url = os.getenv(
-            'ASSIGN_AGENT_API_URL', 'https://www.bdstall.com/api/chatbot/chatbot_assign_agent/'
-        )
-        self.assign_agent_api_key = os.getenv('ASSIGN_AGENT_API_KEY', self.api_key)
-        self.assign_bot_api_url = os.getenv(
-            'ASSIGN_BOT_API_URL', 'https://www.bdstall.com/api/chatbot/chatbot_assign_bot/'
-        )
-        self.responder_api_url = os.getenv(
-            'RESPONDER_API_URL', 'https://www.bdstall.com/api/chatbot/chatbot_responder/'
-        )
-        self.responder_api_key = os.getenv('RESPONDER_API_KEY', self.api_key)
-        self.chatbot_history_api_url = os.getenv(
-            'CHATBOT_HISTORY_API_URL', 'https://www.bdstall.com/api/chatbot/chatbot_history/'
-        )
+        api_key = os.getenv('BDSTALL_API_KEY', 'mkh677ddd2sxxkkdjff')
         try:
-            self.chatbot_history_limit = int(os.getenv('CHATBOT_HISTORY_LIMIT', '5'))
+            history_limit = int(os.getenv('CHATBOT_HISTORY_LIMIT', '5'))
         except Exception:
-            self.chatbot_history_limit = 5
+            history_limit = 5
 
+        self._state = StateManager(project_root)
+        self._api = ApiClient(
+            api_key=api_key,
+            api_url="https://www.bdstall.com/api/chatbot/ai_search/",
+            delivery_intent_api_url="https://www.bdstall.com/api/chatbot/ai_template/",
+            assign_agent_api_url=os.getenv(
+                'ASSIGN_AGENT_API_URL', 'https://www.bdstall.com/api/chatbot/chatbot_assign_agent/'
+            ),
+            assign_agent_api_key=os.getenv('ASSIGN_AGENT_API_KEY', api_key),
+            assign_bot_api_url=os.getenv(
+                'ASSIGN_BOT_API_URL', 'https://www.bdstall.com/api/chatbot/chatbot_assign_bot/'
+            ),
+            responder_api_url=os.getenv(
+                'RESPONDER_API_URL', 'https://www.bdstall.com/api/chatbot/chatbot_responder/'
+            ),
+            responder_api_key=os.getenv('RESPONDER_API_KEY', api_key),
+            chatbot_history_api_url=os.getenv(
+                'CHATBOT_HISTORY_API_URL', 'https://www.bdstall.com/api/chatbot/chatbot_history/'
+            ),
+            chatbot_history_limit=history_limit,
+        )
         self.category_validator = CategoryValidator(
             cat_list_url=os.getenv(
                 'CATLIST_API_URL', 'https://www.bdstall.com/api/chatbot/cat_list/'
             ),
-            api_key=self.api_key,
+            api_key=api_key,
         )
-
-        self._load_state()
-        self.database = self._load_database()
+        self._processor = IntentProcessor(
+            groq_client=groq_client,
+            groq_model=groq_model,
+            groq_answer_model=groq_answer_model,
+            category_validator=self.category_validator,
+        )
+        self._database = self._state.load_database()
 
         logger.info("✅ SimpleChatbot initialized")
-        logger.info("📚 Loaded %d FAQ rows", len(self.database))
+        logger.info("📚 Loaded %d FAQ rows", len(self._database))
         logger.info("📂 Loaded %d categories", len(self.category_validator.names_english()))
 
     # ─────────────────────────────────────────────────────────────
-    # State persistence — mode and intent_content excluded (Rules 13, 14)
-    # ─────────────────────────────────────────────────────────────
-    def _load_state(self) -> None:
-        try:
-            if not os.path.exists(self.state_file):
-                return
-            with open(self.state_file, 'r', encoding='utf-8') as f:
-                state = json.load(f)
-            self.user_product_context = dict(state.get('user_product_context') or {})
-            self.user_selected_product = dict(state.get('user_selected_product') or {})
-            self.user_order_context = {
-                uid: bool(a) for uid, a in (state.get('user_order_context') or {}).items()
-            }
-            self.user_order_draft = dict(state.get('user_order_draft') or {})
-            self.user_pending_product_query = dict(state.get('user_pending_product_query') or {})
-            self.user_last_intent = dict(state.get('user_last_intent') or {})
-        except Exception as e:
-            logger.error("❌ State restore failed: %s", e)
-
-    def _save_state(self) -> None:
-        with self._state_lock:
-            try:
-                os.makedirs(os.path.dirname(self.state_file), exist_ok=True)
-                state = {
-                    'user_product_context': self.user_product_context,
-                    'user_selected_product': self.user_selected_product,
-                    'user_order_context': self.user_order_context,
-                    'user_order_draft': self.user_order_draft,
-                    'user_pending_product_query': self.user_pending_product_query,
-                    'user_last_intent': self.user_last_intent,
-                }
-                dir_name = os.path.dirname(self.state_file)
-                tmp_fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
-                try:
-                    with os.fdopen(tmp_fd, 'w', encoding='utf-8') as f:
-                        json.dump(state, f, ensure_ascii=False)
-                    shutil.move(tmp_path, self.state_file)
-                except Exception:
-                    if os.path.exists(tmp_path):
-                        os.remove(tmp_path)
-                    raise
-            except Exception as e:
-                logger.error("❌ State save failed: %s", e)
-
-    # ─────────────────────────────────────────────────────────────
-    # FAQ DB
-    # ─────────────────────────────────────────────────────────────
-    def _load_database(self) -> list:
-        try:
-            import csv
-            path = os.path.join(self.project_root, 'data', 'database.csv')
-            if not os.path.exists(path):
-                return []
-            db = []
-            with open(path, 'r', encoding='utf-8') as f:
-                for row in csv.DictReader(f):
-                    q = row.get('প্রশ্ন') or row.get('প্রশ্ন ') or row.get('Question')
-                    a = row.get('উত্তর') or row.get('Answer')
-                    if q and a:
-                        db.append({'question': q.strip(), 'answer': a.strip()})
-            return db
-        except Exception as e:
-            logger.error("❌ FAQ load failed: %s", e)
-            return []
-
-    def _search_database_faq(self, message: str) -> Optional[str]:
-        msg = message.lower().strip()
-        if not msg:
-            return None
-        try:
-            for item in self.database:
-                q = item['question'].lower()
-                if msg in q or q in msg:
-                    if self._is_blocked_automated_message(item['answer']):
-                        continue
-                    return item['answer']
-            if any(w in msg for w in ['order', 'অর্ডার', 'kibabe', 'kivabe', 'কিভাবে']):
-                for item in self.database:
-                    q = item['question'].lower()
-                    if 'অর্ডার' in q and 'কিভাবে' in q:
-                        return item['answer']
-            if any(w in msg for w in ['delivery', 'ডেলিভারি', 'koto din']):
-                for item in self.database:
-                    if 'ডেলিভারি' in item['question'] or 'কত দিন' in item['question']:
-                        return item['answer']
-        except Exception as e:
-            logger.warning("FAQ search failed: %s", e)
-        return None
-
-    # ─────────────────────────────────────────────────────────────
-    # Responder API — always live, never cached (Rule 13)
-    # ─────────────────────────────────────────────────────────────
-    def _check_responder_type(self, user_id: str) -> Optional[str]:
-        now = time.time()
-        try:
-            url = f"{self.responder_api_url}?key={self.responder_api_key}&user_id={user_id}"
-            resp = requests.get(url, timeout=3)
-            duration_ms = int((time.time() - now) * 1000)
-            if resp.status_code == 200:
-                data = resp.json()
-                if data.get('success') and data.get('data'):
-                    label = data['data'].get('responder_label', 'bot')
-                    _log_api_call(
-                        'responder_type_check', 'GET', url,
-                        {'user_id': user_id}, resp.status_code,
-                        duration_ms, 'PASS',
-                        json.dumps(data.get('data', {}), ensure_ascii=False)[:200]
-                    )
-                    return label
-            return None
-        except Exception as e:
-            logger.warning("Responder check error: %s", e)
-            return None
-
-    # ─────────────────────────────────────────────────────────────
-    # Public mode helpers (for API layer compatibility)
+    # Public API (backward-compatible surface)
     # ─────────────────────────────────────────────────────────────
     def get_user_mode(self, user_id: str) -> str:
-        responder_type = self._check_responder_type(user_id)
-        return 'human' if responder_type == 'agent' else 'ai'
+        return 'human' if self._api.check_responder_type(user_id) == 'agent' else 'ai'
 
     def switch_to_human(self, user_id: str) -> None:
-        try:
-            requests.post(
-                self.assign_agent_api_url,
-                json={'key': self.assign_agent_api_key, 'user_id': user_id, 'intent': 'manual_switch'},
-                timeout=5
-            )
-        except Exception as e:
-            logger.warning("switch_to_human failed: %s", e)
+        self._api.assign_agent(user_id, intent='manual_switch')
 
     def switch_to_ai(self, user_id: str) -> None:
-        try:
-            requests.post(
-                self.assign_bot_api_url,
-                json={'key': self.api_key, 'user_id': user_id},
-                timeout=5
-            )
-        except Exception as e:
-            logger.warning("switch_to_ai failed: %s", e)
+        self._api.assign_bot(user_id)
 
     # ─────────────────────────────────────────────────────────────
-    # Intent content — always read from DB (Rule 14)
+    # Previous intent (Rule 14) — thin wrapper used by handlers
     # ─────────────────────────────────────────────────────────────
-    def _fetch_intent_content_from_db(self, user_id: str) -> Dict:
-        """
-        Pull the last saved intent_content from the chat history API.
-        This is the sole source of truth for previous category/brand/price context.
-        """
-        try:
-            urls = self._build_chat_history_urls(user_id, 10)
-            for url in urls:
-                try:
-                    logger.info("[INTENT_DB] Fetching: %s", url)
-                    resp = requests.get(url, timeout=2)
-                    logger.info("[INTENT_DB] Response: status=%s len=%s", resp.status_code, len(resp.text))
-                    if not (200 <= resp.status_code < 300):
-                        continue
-                    data = resp.json() if resp.text else {}
-                    candidates = []
-                    if isinstance(data, list):
-                        candidates = data
-                    elif isinstance(data, dict):
-                        for k in ['data', 'messages', 'history', 'chat_history', 'conversation', 'result']:
-                            v = data.get(k)
-                            if isinstance(v, list):
-                                candidates = v
-                                break
-                    for item in reversed(candidates):
-                        if not isinstance(item, dict):
-                            continue
-                        sender = str(item.get('sender_type') or '').strip()
-                        if sender != '2':
-                            continue
-                        ic = item.get('intent_content')
-                        if isinstance(ic, str):
-                            try:
-                                ic = json.loads(ic)
-                            except Exception:
-                                continue
-                        if isinstance(ic, dict) and (ic.get('cat') or ic.get('brand') or ic.get('title') or ic.get('product_url')):
-                            logger.info("[INTENT_DB] Restored for %s: cat=%s brand=%s title=%s",
-                                        user_id, ic.get('cat'), ic.get('brand'), ic.get('title'))
-                            return ic
-                except Exception:
-                    continue
-        except Exception as e:
-            logger.warning("_fetch_intent_content_from_db failed: %s", e)
-        return {}
-
     def _load_previous_intent(self, user_id: str) -> Dict:
-        """Always fetch from DB — API context is source of truth."""
-        try:
-            prev = dict(self._fetch_intent_content_from_db(user_id) or {})
-        except Exception as e:
-            logger.warning("_load_previous_intent failed: %s", e)
-            return {}
+        return self._processor.load_previous_intent(
+            user_id, self._api.fetch_intent_content_from_db
+        )
 
-        if not prev:
-            return {}
-
-        # Only expire context if cat is empty — if cat exists, NEVER expire
-        if not prev.get('cat') and not prev.get('category'):
-            updated_at = prev.get('updated_at')
-            if updated_at:
-                try:
-                    age = (datetime.now() - datetime.fromisoformat(updated_at)).total_seconds()
-                    if age > CONTEXT_TTL_SECONDS:
-                        logger.info("Context expired for %s (age=%.0fs)", user_id, age)
-                        return {}
-                except Exception:
-                    pass
-
-        # Normalise cat → category for merge logic
-        if prev.get('cat') and not prev.get('category'):
-            prev['category'] = prev['cat']
-
-        # Store prev_ versions for _intent_to_normalized no-overwrite logic
-        prev['prev_cat'] = prev.get('cat', '')
-        prev['prev_brand'] = prev.get('brand', '')
-        prev['prev_title'] = prev.get('title', '')
-
-        # Restore price_max/price_min for merge logic
-        try:
-            if 'price_max' in prev:
-                prev['price_max'] = int(prev['price_max']) if int(prev['price_max']) > 0 else None
-                prev['prev_price_max'] = prev['price_max']
-        except (ValueError, TypeError):
-            prev['price_max'] = None
-            prev['prev_price_max'] = None
-        try:
-            if 'price_min' in prev:
-                prev['price_min'] = int(prev['price_min']) if int(prev['price_min']) > 0 else None
-                prev['prev_price_min'] = prev['price_min']
-        except (ValueError, TypeError):
-            prev['price_min'] = None
-            prev['prev_price_min'] = None
-
-        return prev
-
-    # ═════════════════════════════════════════════════════════════
+    # ─────────────────────────────────────────────────────────────
     # MAIN ENTRY
-    # ═════════════════════════════════════════════════════════════
+    # ─────────────────────────────────────────────────────────────
     def process_message(self, user_id: str, message: str) -> Dict[str, Any]:
         try:
             start_time = datetime.now()
@@ -438,8 +145,7 @@ class SimpleChatbot:
                     conversation_status=AI_ACTIVE_STATUS
                 )
 
-            # Mode derived live from responder API — never from memory (Rule 13)
-            responder_type = self._check_responder_type(user_id)
+            responder_type = self._api.check_responder_type(user_id)
             if responder_type == 'agent':
                 return self._create_response(
                     user_id=user_id, message=message, response="",
@@ -448,51 +154,43 @@ class SimpleChatbot:
                     conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS
                 )
 
-            # URL detection — check before Groq (faster and more reliable)
             url_match = re.search(r'https?://[^\s]+', message)
             if url_match:
-                return self._handle_url_message(user_id, message, url_match.group(0), start_time)
+                return self.handle_url_message(user_id, message, url_match.group(0), start_time)
 
-            # Product detail follow-up — stock/color/quality/price after product_link
-            product_url = self.user_product_url.get(user_id, '')
+            product_url = self._state.user_product_url.get(user_id, '')
             if not product_url:
                 prev = self._load_previous_intent(user_id)
                 product_url = prev.get('product_url', '')
             if product_url:
-                detail_response = self._handle_product_detail_followup(
+                detail = self.handle_product_detail_followup(
                     user_id, message, product_url, start_time
                 )
-                if detail_response:
-                    return detail_response
+                if detail:
+                    return detail
 
-            # ALL intents — classified by Groq
             return self._handle_main_flow(user_id, message, start_time)
 
         except Exception as e:
             logger.error("❌ Unhandled error: %s", e, exc_info=True)
             return {
                 'response': "দুঃখিত স্যার, একটি সমস্যা হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।",
-                'mode': 'ai',
-                'intent': 'system_error',
-                'intent_content': {},
-                'conversation_status': AI_ACTIVE_STATUS,
-                'products': [],
-                'processing_time': 0.0,
-                'error': str(e)
+                'mode': 'ai', 'intent': 'system_error', 'intent_content': {},
+                'conversation_status': AI_ACTIVE_STATUS, 'products': [],
+                'processing_time': 0.0, 'error': str(e)
             }
 
-    # ═════════════════════════════════════════════════════════════
-    # MAIN flow — all intents classified by Groq
-    # ═════════════════════════════════════════════════════════════
+    # ─────────────────────────────────────────────────────────────
+    # Main flow — Groq classification → handler dispatch
+    # ─────────────────────────────────────────────────────────────
     def _handle_main_flow(self, user_id: str, message: str,
                           start_time: datetime) -> Dict[str, Any]:
-        conversation_context = self._get_history_cached(user_id)
+        conversation_context = self._api.get_history_cached(user_id)
         previous_intent = self._load_previous_intent(user_id)
-        groq_result = self._step1_groq_extract(message, conversation_context, previous_intent)
+        groq_result = self._processor.step1_groq_extract(message, conversation_context, previous_intent)
         intent = groq_result['intent']
         entities = groq_result['entities']
 
-        # Validate category — only if Groq explicitly returned one (Rule 5)
         resolved_cat = None
         if entities.get('category'):
             resolved_cat = self.category_validator.resolve(entities['category'])
@@ -502,42 +200,38 @@ class SimpleChatbot:
                     intent, entities, groq_result['is_followup'],
                     resolved_cat['category_name'] if resolved_cat else None)
 
-        merged = self._merge_intent_context(user_id, groq_result, previous_intent, intent)
+        merged = self._processor.merge_intent_context(
+            user_id, groq_result, previous_intent, intent,
+            self._state.clear_product_search_cache
+        )
 
-        # If products exist in context and category is still empty — restore from previous
-        if not merged.get('category') and self.user_product_context.get(user_id):
+        if not merged.get('category') and self._state.user_product_context.get(user_id):
             merged['category'] = previous_intent.get('category') or previous_intent.get('cat', '')
 
-        # If category still empty but previous intent has it — restore
         if not merged.get('category') and (previous_intent.get('cat') or previous_intent.get('category')):
-            if intent in ('comparison', 'technical_advice', 'price_query',
-                          'faq', 'unknown', 'seller_query'):
+            if intent in ('comparison', 'technical_advice', 'price_query', 'faq', 'unknown', 'seller_query'):
                 merged['category'] = previous_intent.get('category') or previous_intent.get('cat', '')
 
-        if intent == 'seller_query':
-            return self._handoff_to_human(
-                user_id, message, start_time,
-                intent='seller_query',
-                response_text="স্যার, বিক্রয় সংক্রান্ত বিষয়ে আমাদের একজন প্রতিনিধি আপনাকে সাহায্য করবেন।"
-            )
-        if intent == 'hate_speech':
-            return self._handoff_to_human(
-                user_id, message, start_time,
-                intent='hate_speech',
-                response_text="স্যার, অনুগ্রহ করে ভদ্র ভাষায় কথা বলুন। আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।"
-            )
-        if intent == 'human_request':
-            return self._handoff_to_human(
-                user_id, message, start_time,
-                intent='explicit_human_request',
-                response_text="স্যার, আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।"
-            )
-        if intent == 'complaint':
-            return self._handoff_to_human(
-                user_id, message, start_time,
-                intent='complaint_handoff',
-                response_text="স্যার, এই বিষয়ে আমাদের একজন প্রতিনিধি এখনই আপনার সাথে যোগাযোগ করবেন।"
-            )
+        return self._dispatch_intent(user_id, message, intent, merged, start_time)
+
+    def _dispatch_intent(self, user_id: str, message: str, intent: str,
+                         merged: Dict, start_time: datetime) -> Dict[str, Any]:
+        handoff_map = {
+            'seller_query': "স্যার, বিক্রয় সংক্রান্ত বিষয়ে আমাদের একজন প্রতিনিধি আপনাকে সাহায্য করবেন।",
+            'hate_speech': "স্যার, অনুগ্রহ করে ভদ্র ভাষায় কথা বলুন। আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।",
+            'human_request': "স্যার, আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।",
+            'complaint': "স্যার, এই বিষয়ে আমাদের একজন প্রতিনিধি এখনই আপনার সাথে যোগাযোগ করবেন।",
+        }
+        handoff_intent_map = {
+            'seller_query': 'seller_query',
+            'hate_speech': 'hate_speech',
+            'human_request': 'explicit_human_request',
+            'complaint': 'complaint_handoff',
+        }
+        if intent in handoff_map:
+            return self._handoff_to_human(user_id, message, start_time,
+                intent=handoff_intent_map[intent], response_text=handoff_map[intent])
+
         if intent == 'greeting':
             return self._create_response(
                 user_id=user_id, message=message,
@@ -547,11 +241,10 @@ class SimpleChatbot:
                 conversation_status=AI_ACTIVE_STATUS
             )
         if intent == 'goodbye':
-            prev = self._normalize_intent_content_payload(self._load_previous_intent(user_id))
+            prev = self._processor.normalize_intent_content_payload(self._load_previous_intent(user_id))
             prev['exit'] = 1
             return self._create_response(
-                user_id=user_id, message=message,
-                response="ধন্যবাদ স্যার, ভালো থাকবেন।",
+                user_id=user_id, message=message, response="ধন্যবাদ স্যার, ভালো থাকবেন।",
                 mode=ChatMode.AI, intent='goodbye', products=None, intent_content=prev,
                 processing_time=(datetime.now() - start_time).total_seconds(),
                 conversation_status=AI_ACTIVE_STATUS
@@ -563,1132 +256,81 @@ class SimpleChatbot:
                 processing_time=(datetime.now() - start_time).total_seconds(),
                 conversation_status=AI_ACTIVE_STATUS
             )
-        if intent == 'exit':
-            return self.handle_exit(user_id, message, start_time)
-        if intent == 'buy':
-            return self.handle_buy(user_id, message, start_time)
-        if intent == 'technical_advice':
-            return self.handle_technical_advice(user_id, message, merged, start_time)
-        if intent == 'comparison':
-            return self.handle_comparison(user_id, message, merged, start_time)
-        if intent == 'delivery':
-            return self.handle_delivery(user_id, message, merged, start_time)
-        if intent == 'faq':
-            return self.handle_faq(user_id, message, merged, start_time)
-        if intent == 'price_query':
-            return self.handle_price_query(user_id, message, merged, start_time)
-        if intent == 'product_search':
-            return self.handle_product_search(user_id, message, merged, start_time)
 
+        handler_map = {
+            'exit': lambda: self.handle_exit(user_id, message, start_time),
+            'buy': lambda: self.handle_buy(user_id, message, start_time),
+            'technical_advice': lambda: self.handle_technical_advice(user_id, message, merged, start_time),
+            'comparison': lambda: self.handle_comparison(user_id, message, merged, start_time),
+            'delivery': lambda: self.handle_delivery(user_id, message, merged, start_time),
+            'faq': lambda: self.handle_faq(user_id, message, merged, start_time),
+            'price_query': lambda: self.handle_price_query(user_id, message, merged, start_time),
+            'product_search': lambda: self.handle_product_search(user_id, message, merged, start_time),
+        }
+        handler = handler_map.get(intent)
+        if handler:
+            return handler()
         return self.handle_fallback(user_id, message, merged, start_time)
 
-    # ═════════════════════════════════════════════════════════════
-    # INTENT HANDLERS
-    # ═════════════════════════════════════════════════════════════
-
-    def handle_product_search(self, user_id: str, message: str, merged: Dict,
-                              start_time: datetime) -> Dict[str, Any]:
-
-        if not merged.get('category'):
-            return self._ask_for_category(user_id, message, merged, start_time)
-
-        self._reset_clarification_counter(user_id)
-        category = merged['category']
-        brand = merged.get('brand', '')
-        title = merged.get('title', '')
-        price_max = merged.get('price_max')
-        price_min = merged.get('price_min')
-
-        keywords = self._build_search_keywords_from_merged(merged)
-        result = self._cached_search(keywords, price_max, price_min)
-
-        if result['products_found'] == 0:
-            broader = self._build_broader_search_keywords(merged)
-            if broader and broader != keywords:
-                retry = self._cached_search(broader, price_max, price_min)
-                if retry['products_found'] > 0:
-                    keywords = broader
-                    result = retry
-
-        if result['products_found'] == 0:
-            label = ' '.join([v for v in [brand, title, category] if v]) or category
-            no_result = (
-                f"দুঃখিত স্যার, এই মুহূর্তে {label} স্টকে নেই। "
-                "অন্য কোনো ব্র্যান্ড বা মডেল দেখাবো?"
-            )
-            return self._create_response(
-                user_id=user_id, message=message, response=no_result,
-                mode=ChatMode.AI, intent='no_products_found', products=None,
-                search_keywords=keywords,
-                intent_content=self._intent_to_normalized(merged, message),
-                processing_time=(datetime.now() - start_time).total_seconds(),
-                conversation_status=AI_ACTIVE_STATUS
-            )
-
-        products = result['products']
-        self.user_product_context[user_id] = products[:5]
-
-        listing_text, listing_buttons = self._format_product_listing(products[:3])
-        return self._create_response(
-            user_id=user_id, message=message,
-            response=listing_text,
-            mode=ChatMode.AI, intent='product_search', products=products,
-            search_keywords=keywords,
-            link_buttons=listing_buttons,
-            intent_content=self._intent_to_normalized(merged, message),
-            processing_time=(datetime.now() - start_time).total_seconds()
-        )
-
-    def handle_price_query(self, user_id: str, message: str, merged: Dict,
-                           start_time: datetime) -> Dict[str, Any]:
-        if not merged.get('category'):
-            return self._ask_for_category(user_id, message, merged, start_time)
-
-        # Only use context prices if they match the current category
-        # e.g. "ram price koto" after laptop search → search RAM, not show laptop prices
-        ctx_reply = None
-        prev_products = self.user_product_context.get(user_id, [])
-        if prev_products:
-            first_title = (prev_products[0].get('title') or '').lower()
-            current_cat = merged.get('category', '').lower()
-            if current_cat and current_cat in first_title:
-                ctx_reply = self._reply_price_from_context(user_id)
-
-        if ctx_reply:
-            ctx_text, ctx_buttons = ctx_reply
-            self._reset_clarification_counter(user_id)
-            return self._create_response(
-                user_id=user_id, message=message, response=ctx_text,
-                mode=ChatMode.AI, intent='price_from_context', products=None,
-                link_buttons=ctx_buttons if ctx_buttons else None,
-                intent_content=self._intent_to_normalized(merged, message),
-                processing_time=(datetime.now() - start_time).total_seconds(),
-                conversation_status=AI_ACTIVE_STATUS
-            )
-
-        return self.handle_product_search(user_id, message, merged, start_time)
-
-    def handle_comparison(self, user_id: str, message: str, merged: Dict,
-                          start_time: datetime) -> Dict[str, Any]:
-        # Comparison ALWAYS returns fixed safe message — never recommends specific product
-        # Category preserved for context but not required
-        if not merged.get('category') and self.user_product_context.get(user_id):
-            prev = self._load_previous_intent(user_id)
-            merged['category'] = prev.get('category') or prev.get('cat', '')
-
-        self._reset_clarification_counter(user_id)
-        return self._create_response(
-            user_id=user_id, message=message,
-            response="স্যার, আমাদের সকল প্রোডাক্টই ভালো। আপনি প্রোডাক্ট পেইজে গিয়ে রেটিং ও রিভিউ দেখে নিতে পারেন।",
-            mode=ChatMode.AI, intent='comparison', products=None,
-            link_buttons=self._build_comparison_link_buttons(merged),
-            intent_content=self._intent_to_normalized(merged, message),
-            processing_time=(datetime.now() - start_time).total_seconds(),
-            conversation_status=AI_ACTIVE_STATUS
-        )
-
-    def handle_buy(self, user_id: str, message: str,
-                   start_time: datetime) -> Dict[str, Any]:
-        self._reset_clarification_counter(user_id)
-        return self._create_response(
-            user_id=user_id, message=message,
-            response="স্যার এই লিংকে গিয়ে আপনি দেখতে পারেন কিভাবে অর্ডার অথবা বাই করা যায়",
-            mode=ChatMode.AI, intent='buy', products=None,
-            link_buttons=[{
-                'text': 'Shopping Guide',
-                'url': 'https://www.bdstall.com/blog/safe-shopping-guide/'
-            }],
-            intent_content=self._normalize_intent_content_payload(
-                self._load_previous_intent(user_id)
-            ),
-            processing_time=(datetime.now() - start_time).total_seconds(),
-            conversation_status=AI_ACTIVE_STATUS
-        )
-
-    def handle_exit(self, user_id: str, message: str,
-                    start_time: datetime) -> Dict[str, Any]:
-        self._reset_clarification_counter(user_id)
-        prev = self._normalize_intent_content_payload(
+    # ─────────────────────────────────────────────────────────────
+    # Human handoff
+    # ─────────────────────────────────────────────────────────────
+    def _handoff_to_human(self, user_id: str, message: str, start_time: datetime,
+                          intent: str = 'human_handoff',
+                          response_text: str = "স্যার, আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।",
+                          error: Optional[str] = None) -> Dict[str, Any]:
+        self._api.assign_agent(user_id, intent)
+        intent_content = self._processor.normalize_intent_content_payload(
             self._load_previous_intent(user_id)
         )
-        prev['exit'] = 1
+        if error:
+            intent_content['error'] = str(error)[:200]
         return self._create_response(
-            user_id=user_id, message=message,
-            response="সাথে থাকার জন্য ধন্যবাদ।",
-            mode=ChatMode.AI, intent='exit', products=None,
-            intent_content=prev,
-            processing_time=(datetime.now() - start_time).total_seconds(),
-            conversation_status=AI_ACTIVE_STATUS
-        )
-
-    def _handle_product_detail_followup(self, user_id: str, message: str,
-                                        product_url: str,
-                                        start_time: datetime) -> Optional[Dict[str, Any]]:
-        """
-        Handle follow-up questions about a specific product after product_link intent.
-        Detects: stock, color, quality, price questions.
-        Returns fixed response with View button, or None if not a detail question.
-        """
-        msg_lower = message.lower()
-        detail_signals = [
-            'stock', 'ache', 'available', 'color', 'colour', 'rong',
-            'quality', 'maan', 'durable', 'valo', 'price', 'dam', 'koto',
-            'warranty', 'guarantee', 'original', 'kena jabe', 'pabo',
-            'স্টক', 'রং', 'মান', 'দাম', 'ওয়ারেন্টি',
-        ]
-        if not any(s in msg_lower for s in detail_signals):
-            return None
-
-        prev = self._load_previous_intent(user_id)
-        intent_content = self._normalize_intent_content_payload(prev)
-
-        return self._create_response(
-            user_id=user_id, message=message,
-            response="স্যার, এই প্রোডাক্টের সকল তথ্য আমাদের পেজে দেওয়া আছে।",
-            mode=ChatMode.AI, intent='product_detail_followup', products=None,
-            link_buttons=[{
-                'text': 'View Product',
-                'url': product_url,
-            }],
+            user_id=user_id, message=message, response=response_text,
+            mode=ChatMode.HUMAN, intent=intent, products=None,
             intent_content=intent_content,
             processing_time=(datetime.now() - start_time).total_seconds(),
-            conversation_status=AI_ACTIVE_STATUS
+            conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS,
         )
 
-    def _handle_url_message(self, user_id: str, message: str, url: str,
-                            start_time: datetime) -> Dict[str, Any]:
-        """
-        Route URL messages:
-        - BDStall product page (details/listing) → show product
-        - BDStall CDN image URL → ask category and model
-        - BDStall non-product page (category, blog etc) → ask what they want
-        - Non-BDStall URL → soft deny
-        """
-        url_lower = url.lower()
-
-        # BDStall product detail/listing page
-        if re.search(r'bdstall\.com/(details|listing)/', url_lower):
-            return self.handle_product_link(user_id, message, url, start_time)
-
-        # BDStall CDN image URL
-        if re.search(r'(cdn\.bdstall\.com|bdstall\.com/.*\.(jpg|jpeg|png|webp|gif))', url_lower):
-            return self._create_response(
-                user_id=user_id, message=message,
-                response="স্যার, কোন ক্যাটাগরি এবং মডেল সম্পর্কে জানতে চাচ্ছেন? একটু বলুন।",
-                mode=ChatMode.AI, intent='image_url', products=None,
-                intent_content=self._normalize_intent_content_payload(
-                    self._load_previous_intent(user_id)
-                ),
-                processing_time=(datetime.now() - start_time).total_seconds(),
-                conversation_status=AI_ACTIVE_STATUS
-            )
-
-        # BDStall but not a product page (category, blog, search etc)
-        if re.search(r'(www\.)?bdstall\.com', url_lower):
-            return self._create_response(
-                user_id=user_id, message=message,
-                response="স্যার, কী জানতে চাচ্ছেন? একটু বলুন।",
-                mode=ChatMode.AI, intent='bdstall_url', products=None,
-                intent_content=self._normalize_intent_content_payload(
-                    self._load_previous_intent(user_id)
-                ),
-                processing_time=(datetime.now() - start_time).total_seconds(),
-                conversation_status=AI_ACTIVE_STATUS
-            )
-
-        # Non-BDStall URL — soft deny
-        return self._create_response(
-            user_id=user_id, message=message,
-            response="স্যার, আমি শুধুমাত্র BDStall.com এর প্রোডাক্ট লিংক সাপোর্ট করি। অনুগ্রহ করে bdstall.com এর লিংক দিন।",
-            mode=ChatMode.AI, intent='unsupported_url', products=None,
-            intent_content=self._normalize_intent_content_payload(
+    # ─────────────────────────────────────────────────────────────
+    # Single exit point for all responses
+    # ─────────────────────────────────────────────────────────────
+    def _create_response(
+        self, user_id: str, message: str, response: str, mode: ChatMode,
+        intent: str, products: Optional[List[Dict]], processing_time: float = 0.0,
+        search_keywords: str = '', intent_content: Optional[Dict[str, Any]] = None,
+        link_buttons: Optional[List[Dict]] = None,
+        conversation_status: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if conversation_status is None:
+            conversation_status = AI_ACTIVE_STATUS
+        if intent_content is None:
+            intent_content = self._processor.normalize_intent_content_payload(
                 self._load_previous_intent(user_id)
-            ),
-            processing_time=(datetime.now() - start_time).total_seconds(),
-            conversation_status=AI_ACTIVE_STATUS
-        )
-
-    def handle_product_link(self, user_id: str, message: str, url: str,
-                            start_time: datetime) -> Dict[str, Any]:
-        """
-        Purpose: Handle BDStall product URL — extract slug, search, show product.
-        Trigger: message contains bdstall.com/details/ URL.
-        Flow: extract slug → clean to keywords → ai_search → show title + price + button.
-        """
-        keywords = self._extract_keywords_from_bdstall_url(url)
-        if not keywords:
-            return self._create_response(
-                user_id=user_id, message=message,
-                response="স্যার, লিংকটি সঠিকভাবে পড়তে পারছি না। অনুগ্রহ করে আবার চেষ্টা করুন।",
-                mode=ChatMode.AI, intent='product_link_error', products=None,
-                intent_content=self._normalize_intent_content_payload(
-                    self._load_previous_intent(user_id)
-                ),
-                processing_time=(datetime.now() - start_time).total_seconds(),
-                conversation_status=AI_ACTIVE_STATUS
             )
-
-        result = self._cached_search(keywords)
-
-        if result['products_found'] == 0:
-            return self._create_response(
-                user_id=user_id, message=message,
-                response=f"দুঃখিত স্যার, এই প্রোডাক্টটি এই মুহূর্তে পাওয়া যাচ্ছে না।",
-                mode=ChatMode.AI, intent='product_link_not_found', products=None,
-                link_buttons=[{'text': 'View on BDStall', 'url': url}],
-                intent_content=self._normalize_intent_content_payload(
-                    self._load_previous_intent(user_id)
-                ),
-                processing_time=(datetime.now() - start_time).total_seconds(),
-                conversation_status=AI_ACTIVE_STATUS
-            )
-
-        products = result['products']
-        self.user_product_context[user_id] = products[:5]
-        self.user_product_url[user_id] = url  # store for follow-up questions
-        top = products[0]
-        title = top.get('title', 'N/A')
-        price = top.get('price', 'N/A')
-        response_text = f"স্যার, এই প্রোডাক্টটি পেয়েছি:\n\n{title}\nমূল্য: {price}"
-
-        intent_content = self._normalize_intent_content_payload(
-            self._load_previous_intent(user_id)
-        )
-        intent_content['product_url'] = url
-        intent_content['title'] = title
-        intent_content['cat'] = top.get('category', intent_content.get('cat', ''))
-
-        return self._create_response(
-            user_id=user_id, message=message,
-            response=response_text,
-            mode=ChatMode.AI, intent='product_link', products=products,
-            link_buttons=[{
-                'text': 'View Product',
-                'url': url,
-                'title': title,
-                'price': price,
-            }],
-            intent_content=intent_content,
-            processing_time=(datetime.now() - start_time).total_seconds(),
-            conversation_status=AI_ACTIVE_STATUS
-        )
-
-    @staticmethod
-    def _extract_keywords_from_bdstall_url(url: str) -> str:
-        """
-        Extract search keywords from a BDStall product URL.
-        e.g. https://www.bdstall.com/details/hp-elitebook-840-g3-core-i5-24495/
-             → "hp elitebook 840 g3"
-        Keeps brand + model number only — avoids over-broad results.
-        """
-        return extract_keywords_from_bdstall_url(url)
-
-    def handle_delivery(self, user_id: str, message: str, merged: Dict,
-                        start_time: datetime) -> Dict[str, Any]:
-        self._reset_clarification_counter(user_id)
-        tmpl = self._fetch_delivery_intent_response()
-        if tmpl:
-            return self._create_response(
-                user_id=user_id, message=message, response=tmpl,
-                mode=ChatMode.AI, intent='delivery', products=None,
-                intent_content=self._intent_to_normalized(merged, message),
-                processing_time=(datetime.now() - start_time).total_seconds()
-            )
-        faq = self._search_database_faq(message)
-        if faq:
-            return self._create_response(
-                user_id=user_id, message=message, response=faq,
-                mode=ChatMode.AI, intent='delivery', products=None,
-                intent_content=self._intent_to_normalized(merged, message),
-                processing_time=(datetime.now() - start_time).total_seconds()
-            )
-        return self.handle_fallback(user_id, message, merged, start_time)
-
-    def handle_faq(self, user_id: str, message: str, merged: Dict,
-                   start_time: datetime) -> Dict[str, Any]:
-        self._reset_clarification_counter(user_id)
-        faq = self._search_database_faq(message)
-        if faq:
-            return self._create_response(
-                user_id=user_id, message=message, response=faq,
-                mode=ChatMode.AI, intent='faq', products=None,
-                intent_content=self._intent_to_normalized(merged, message),
-                processing_time=(datetime.now() - start_time).total_seconds()
-            )
-        return self.handle_fallback(user_id, message, merged, start_time)
-
-    def handle_technical_advice(self, user_id: str, message: str, merged: Dict,
-                                start_time: datetime) -> Dict[str, Any]:
-        """
-        Purpose: Answer technical suitability/compatibility questions using Groq 70b.
-        Trigger: intent=technical_advice
-        Boundary: only answers if question relates to a known category in cat_list.
-        Disclaimer always appended. Follow-up invitation always appended.
-        """
-        DISCLAIMER = "\n\nতবে স্যার, কেনার আগে অবশ্যই আরেকবার যাচাই করে নিন।"
-        FOLLOWUP = "\n\nকোন প্রোডাক্ট দেখতে চান বললে আমি এখনই দেখিয়ে দিতে পারি।"
-
-        # Only answer if question relates to a known category
-        # Check full message first, then individual words as fallback
-        resolved = self.category_validator.resolve_from_message(message)
-        if not resolved:
-            for word in message.split():
-                resolved = self.category_validator.resolve(word.strip())
-                if resolved:
-                    break
-        if not resolved:
-            return self._create_response(
-                user_id=user_id, message=message,
-                response="স্যার, এই বিষয়ে আমি সাহায্য করতে পারব না। আপনি কি কোনো প্রোডাক্ট খুঁজছেন?",
-                mode=ChatMode.AI, intent='technical_advice_out_of_scope', products=None,
-                intent_content=self._intent_to_normalized(merged, message),
-                processing_time=(datetime.now() - start_time).total_seconds(),
-                conversation_status=AI_ACTIVE_STATUS
-            )
-
-        answer = None
-        if self.groq_client and self.groq_answer_model:
-            try:
-                system_prompt = """You are a helpful technical assistant for BDStall.com, a Bangladeshi e-commerce platform.
-Answer the user's technical question about product suitability or compatibility in 2-3 sentences maximum.
-The user may write in English, Bangla, or Banglish. Always reply in the SAME language the user used.
-If the question seems incomplete (e.g. "laptop valo hobe naki" = "is laptop good or not?"), 
-interpret it as asking whether that product is generally good and answer accordingly.
-Be direct and helpful. Do NOT say you are unsure unless truly necessary.
-Do NOT add any disclaimer or suggestion to visit other websites.
-Do NOT recommend specific models or prices."""
-
-                response = self.groq_client.chat.completions.create(
-                    model=self.groq_answer_model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": message}
-                    ],
-                    temperature=0.2,
-                    max_tokens=200,
-                )
-                answer = response.choices[0].message.content.strip()
-            except Exception as e:
-                logger.warning("technical_advice Groq call failed: %s", e)
-
-        if not answer:
-            answer = "স্যার, এই বিষয়ে আমি নিশ্চিত নই।"
-
-        return self._create_response(
-            user_id=user_id, message=message,
-            response=answer + DISCLAIMER + FOLLOWUP,
-            mode=ChatMode.AI, intent='technical_advice', products=None,
-            intent_content=self._intent_to_normalized(merged, message),
-            processing_time=(datetime.now() - start_time).total_seconds(),
-            conversation_status=AI_ACTIVE_STATUS
-        )
-
-    def handle_fallback(self, user_id: str, message: str, merged: Dict,
-                        start_time: datetime) -> Dict[str, Any]:
-        # buy intent must never ask for category
-        last_intent = self.user_last_intent.get(user_id, '')
-        if last_intent == 'buy':
-            return self.handle_buy(user_id, message, start_time)
-
-        # If category exists in merged — always try product search
-        if merged.get('category'):
-            return self.handle_product_search(user_id, message, merged, start_time)
-
-        # Try to resolve the message as a category name
-        resolved = self.category_validator.resolve(message.strip())
-        if resolved:
-            merged['category'] = resolved['category_name']
-            self._reset_clarification_counter(user_id)
-            return self.handle_product_search(user_id, message, merged, start_time)
-
-        return self._ask_for_category(user_id, message, merged, start_time)
-
-    # ─────────────────────────────────────────────────────────────
-    # Ask for category / clarification counter (no-op)
-    # ─────────────────────────────────────────────────────────────
-    def _ask_for_category(self, user_id: str, message: str, merged: Dict,
-                          start_time: datetime) -> Dict[str, Any]:
-        # Never ask for category if DB context already has one
-        if not merged.get('category'):
-            prev = self._load_previous_intent(user_id)
-            if prev.get('cat') or prev.get('category'):
-                merged['category'] = prev.get('category') or prev.get('cat', '')
-                return self.handle_product_search(user_id, message, merged, start_time)
-
-        return self._create_response(
-            user_id=user_id, message=message, response=CATEGORY_PROMPT,
-            mode=ChatMode.AI, intent='need_category', products=None,
-            intent_content=self._intent_to_normalized(merged, message),
-            processing_time=(datetime.now() - start_time).total_seconds(),
-            conversation_status=AI_ACTIVE_STATUS
-        )
-
-    def _reset_clarification_counter(self, user_id: str) -> None:
-        pass  # Counter removed — human handoff handled by responder API
-
-    # ─────────────────────────────────────────────────────────────
-    # Groq extraction
-    # ─────────────────────────────────────────────────────────────
-    def _step1_groq_extract(self, message: str, conversation_context: str,
-                            previous_intent: Dict) -> Dict[str, Any]:
-        if not self.groq_client:
-            return self._minimal_fallback(message)
-
-        sample_categories = self.category_validator.names_english()[:30]
-        sample_str = ", ".join(sample_categories) if sample_categories else "(none loaded yet)"
-
-        system_prompt = f"""You are a strict JSON extractor for a Bangladeshi e-commerce chatbot (BDStall).
-The user may write in English, Bangla, or Banglish (romanised Bangla). Understand all three equally.
-Return ONLY valid JSON. No prose, no markdown, no explanation.
-
-SCHEMA:
-{{
-  "intent": string,
-  "entities": {{
-    "category": string,
-    "brand": string,
-    "title": string,
-    "price_max": integer or null,
-    "price_min": integer or null
-  }},
-  "missing": array of strings,
-  "is_followup": boolean,
-  "confidence": number 0-1
-}}
-
-INTENT VALUES (pick exactly one):
-product_search | price_query | comparison | buy | exit | delivery | greeting | goodbye | thanks | complaint | faq | human_request | technical_advice | hate_speech | seller_query | unknown
-
-INTENT DEFINITIONS:
-- product_search    : user wants to see, find, or browse products. User is ready to buy or look at options.
-- price_query       : user is asking about price or cost of a product/category
-- comparison        : user asks WHICH product is better, compares two or more options, or asks for a recommendation between choices. Key signals: "konti valo", "konta valo", "which is better", "hp naki dell", "valo naki", "recommend koro konta nibo"
-- buy               : user wants to know HOW to buy or place an order (process question). Includes "kivabe kinbo", "kivabe order korbo", "kinte chai kivabe"
-- exit              : user is leaving, says later / not now / will come back
-- delivery          : user asks about delivery time, charge, or process
-- greeting          : hello / hi / salam with no product intent
-- goodbye           : farewell with no product intent
-- thanks            : thank you messages
-- complaint         : refund, scam, broken product, bad experience
-- faq               : general questions about the site or policies
-- human_request     : user wants to speak to a human agent
-- technical_advice  : user asks about a product's CAPABILITY, COMPATIBILITY, UPGRADE potential, or PERFORMANCE for a specific use case. Key signals: "upgrade kora jabe", "compatible hobe", "enough ki", "fit hobe", "lagano jabe", "kora jay ki"
-- seller_query      : user wants to SELL products, list items, open a shop, register as vendor, ask about commission
-- hate_speech       : abusive language, insults, threats, racial slurs, sexual harassment
-- unknown           : truly cannot determine
-
-CRITICAL SEPARATION — comparison vs technical_advice:
-- "konti valo?" / "konta better?" / "hp naki dell?" → comparison (choosing between options)
-- "ram upgrade kora jabe?" / "ssd lagano jabe?" / "4GB enough?" → technical_advice (capability question)
-- "konti valo gaming er jonno?" → comparison (choosing which is better FOR something)
-- "laptop gaming er jonno valo hobe?" → technical_advice (is THIS product good for something)
-
-TECHNICAL_ADVICE DETECTION RULE — read carefully:
-Ask yourself two questions about the message:
-Q1: "Is the user asking what a product CAN DO, whether it is GOOD for something,
-     whether it is COMPATIBLE, or whether it can be UPGRADED/CHANGED?" → technical_advice
-Q2: "Is the user asking to SEE, FIND, or BUY a product?" → product_search
-
-IMPORTANT: Even if a category word (laptop, RAM, SSD) is present in the message,
-DO NOT classify as product_search if the user is asking about capability, upgrade,
-compatibility, or quality. Category presence alone does NOT mean product_search.
-
-Examples of technical_advice (capability/suitability questions):
-- "laptop er ram ki upgrade kora jay?" → asking CAN IT be upgraded → technical_advice
-- "laptop valo hobe naki desktop?" → asking WHICH IS BETTER → technical_advice
-- "4GB RAM ki enough gaming er jonno?" → asking IS IT SUFFICIENT → technical_advice
-- "ei graphics card ki VR support kore?" → asking CAN IT do something → technical_advice
-- "ssd lagano jabe ki?" → asking CAN IT be done → technical_advice
-- "laptop valo ki?" → asking IS IT GOOD → technical_advice
-
-Examples of product_search (browsing/buying intent):
-- "laptop dekhao" → wants to SEE products → product_search
-- "gaming laptop ache?" → asking if products exist → product_search
-- "HP laptop khujchi" → wants to FIND a product → product_search
-
-The difference: technical_advice = question about product CAPABILITY or QUALITY.
-               product_search  = request to SEE or FIND products.
-
-CATEGORY EXTRACTION — most important rule:
-A "category" is a generic product type. Known examples (not exhaustive): {sample_str}
-RULES:
-- If the message contains a recognisable product type word → ALWAYS set category to that word.
-- A single word that is a product type (e.g. "laptop", "mobile", "AC", "fridge") → category = that word, intent = product_search.
-- "i want laptop", "laptop chai", "laptop lagbe", "laptop dekhao" → category="laptop", intent=product_search.
-- "laptop price" / "laptop dam koto" / "laptop er dam" → category="laptop", intent=price_query.
-- "hp laptop" → brand="hp", category="laptop".
-- "hp 840 g3" → brand="hp", title="840 g3", category="Laptop" (HP 840 G3 is a known laptop model — infer category from model knowledge).
-- If the model/title is a well-known product (e.g. iPhone=mobile, Galaxy=mobile, HP 840=laptop, RTX 4060=graphics card), infer the category even if not explicitly stated.
-- Only leave category="" if truly cannot determine from model name or context.
-- "X ache", "X ki ache", "X paoa jabe" → category=X, intent=product_search ("ache" means "available/do you have").
-
-BRAND vs CATEGORY:
-- brand = manufacturer name (samsung, hp, dell, apple, walton, asus, acer, lenovo).
-- category = product type (laptop, mobile, phone, AC, fridge, television, tablet).
-- "samsung" alone → brand="samsung", category="" (missing).
-- "samsung mobile" → brand="samsung", category="mobile".
-
-is_followup RULE:
-- true ONLY when message has NO product type word AND depends entirely on previous context.
-- If any product type word is present → is_followup = false.
-- "hp 840 g3" → is_followup=true (no product type, relies on context for category).
-- "laptop price" → is_followup=false (product type "laptop" is present).
-- "under 20k", "50k er vitor", "hp er ta" → is_followup=true (price/brand only, no category).
-
-MISSING ARRAY:
-- Add "category" to missing[] when intent is product_search, price_query, or comparison AND category="".
-- All other intents: missing=[].
-
-BUDGET PARSING: "50k"=50000, "30 hazar"=30000, "under 20k"→price_max=20000,
-"50k er vitor"→price_max=50000, "50 hazar er moddhe"→price_max=50000. null if absent.
-"X er vitor ache", "X budget ache", "X te ache" → price_max=X, intent=product_search, is_followup=true.
-
-BANGLISH / BANGLA QUICK REFERENCE:
-- "hi", "hello", "hey", "salam", "assalamu alaikum", "হাই", "হ্যালো", "সালাম"      → greeting
-- "bye", "goodbye", "allah hafez", "আল্লাহ হাফেজ", "বিদায়"                         → goodbye
-- "thanks", "thank you", "ধন্যবাদ", "অনেক ধন্যবাদ"                                 → thanks
-- "pore kinbo", "pore janabo", "ekhon na", "পরে জানাবো", "এখন লাগবে না"              → exit
-- "order korbo kivabe", "kivabe order korbo", "how to buy", "how can i buy",
-  "how can i buy it", "how do i buy", "how to order", "order process",
-  "kivabe kinbo", "kinte chai kivabe", "kinbo kivabe"                              → buy (no category needed)
-- "konti valo", "konta valo", "konta bhalo", "which is better", "কোনটা ভালো",
-  "laptop valo naki desktop", "pc valo naki laptop", "konta nibo", "recommend koro",
-  "konta kinbo", "ei product ki valo"                                              → technical_advice
-- "delivery koto din", "delivery charge", "koto din lagbe", "কত দিন লাগবে"       → delivery
-- "refund chai", "baje", "faltu", "kharap"                                         → complaint
-- "human chai", "agent er sathe kotha"                                             → human_request
-- "bechte chai", "sell korbo kivabe", "product list dibo", "shop open korbo",
-  "vendor hote chai", "commission koto", "listing charge koto",
-  "বিক্রি করতে চাই", "দোকান খুলব", "পণ্য বিক্রি করব"                             → seller_query
-- "i want laptop", "i need mobile", "show me AC", "laptop chai", "mobile dekhao" → product_search with that category
-- "X ache", "X ki ache" where X is a product type                                 → product_search
-- "50k er vitor ache", "20k te ache", "30 hazar er moddhe ache"                   → product_search, price_max=X, is_followup=true
-- "will this work for gaming", "gaming er jonno valo ki", "ei laptop ki editing er jonno valo",
-  "is this RAM enough", "4GB RAM ki sufficient", "compatible hobe ki",
-  "laptop valo hobe naki desktop gaming er jonno",
-  "laptop er ram ki upgrade kora jay", "ram upgrade possible ki",
-  "ei processor ki change kora jay", "ssd lagano jabe ki"                          → technical_advice
-
-PREVIOUS CONTEXT (is_followup detection only — do NOT copy into entities):
-{json.dumps(previous_intent or {}, ensure_ascii=False)}
-"""
-
-        user_prompt = f"""Recent conversation:
-{conversation_context or 'N/A'}
-
-Current user message:
-{message}
-
-Return ONLY the JSON object."""
-
-        try:
-            response = self.groq_client.chat.completions.create(
-                model=self.groq_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.0,
-                max_tokens=400,
-                response_format={"type": "json_object"}
-            )
-            raw = response.choices[0].message.content.strip()
-            parsed = json.loads(raw)
-            return self._validate_groq_schema(parsed)
-        except json.JSONDecodeError as e:
-            logger.warning("Groq JSON parse failed: %s", e)
-            return self._minimal_fallback(message)
-        except Exception as e:
-            logger.warning("Groq call failed: %s", e)
-            return self._minimal_fallback(message)
-
-    def _validate_groq_schema(self, parsed: Dict) -> Dict[str, Any]:
-        intent = str(parsed.get('intent', 'unknown')).lower().strip()
-        if intent not in VALID_INTENTS:
-            intent = 'unknown'
-
-        entities = parsed.get('entities') or {}
-        category = str(entities.get('category') or '').strip()
-        brand = str(entities.get('brand') or '').strip().lower()
-        title = str(entities.get('title') or '').strip()
-
-        def _coerce_price(v):
-            if v is None or v == '':
-                return None
-            try:
-                n = int(float(v))
-                return n if 0 < n < 100_000_000 else None
-            except (ValueError, TypeError):
-                return None
-
-        price_max = _coerce_price(entities.get('price_max'))
-        price_min = _coerce_price(entities.get('price_min'))
-        missing = [str(m) for m in (parsed.get('missing') or []) if isinstance(m, str)]
-
-        return {
-            'intent': intent,
-            'entities': {
-                'category': category, 'brand': brand, 'title': title,
-                'price_max': price_max, 'price_min': price_min,
-            },
-            'missing': missing,
-            'is_followup': bool(parsed.get('is_followup', False)),
-            'confidence': max(0.0, min(1.0, float(parsed.get('confidence', 0.5)))),
-        }
-
-    def _minimal_fallback(self, message: str) -> Dict[str, Any]:
-        """Emergency fallback — only when Groq is unavailable. Returns unknown for everything."""
-        budget = self._extract_budget_range(message)
-        return {
-            'intent': 'unknown',
-            'entities': {
-                'category': '', 'brand': '', 'title': '',
-                'price_max': budget.get('max_price'),
-                'price_min': budget.get('min_price'),
-            },
-            'missing': [],
-            'is_followup': False,
-            'confidence': 0.0,
-        }
-
-    # ─────────────────────────────────────────────────────────────
-    # Context merge (Rules 6, 7, 10)
-    # ─────────────────────────────────────────────────────────────
-    def _merge_intent_context(self, user_id: str, groq_result: Dict,
-                              previous: Dict, intent: str = '') -> Dict:
-        new_entities = groq_result['entities']
-        new_category = new_entities.get('category', '')
-        is_followup = groq_result.get('is_followup', False)
-
-        # Always use DB as source of truth for previous category (Rule 14)
-        # previous dict already comes from _load_previous_intent which reads from DB
-        prev_category = previous.get('category', '') or previous.get('cat', '')
-        prev_brand = previous.get('brand', '')
-        prev_title = previous.get('title', '')
-        prev_price_max = previous.get('price_max')
-        prev_price_min = previous.get('price_min')
-
-        # Rule 6: category switch → FULL reset of all entities
-        # Compare new category against DB-sourced previous category
-        if new_category and prev_category and new_category.lower() != prev_category.lower():
-            logger.info("🔄 Category switch %s → %s. Full reset.", prev_category, new_category)
-            self._clear_product_search_cache(user_id, clear_pending=True)
-            return {
-                'category': new_category,
-                'prev_cat': prev_category,
-                'brand': new_entities.get('brand', ''),
-                'prev_brand': '',
-                'title': new_entities.get('title', ''),
-                'prev_title': '',
-                'price_max': new_entities.get('price_max'),
-                'prev_price_max': None,
-                'price_min': new_entities.get('price_min'),
-                'prev_price_min': None,
-                'updated_at': datetime.now().isoformat(),
-            }
-
-        # Treat as follow-up if message has price/brand/title but no category
-        has_only_refinement = (
-            not new_category
-            and (
-                new_entities.get('price_max') is not None
-                or new_entities.get('price_min') is not None
-                or new_entities.get('brand')
-                or new_entities.get('title')
-            )
-        )
-        if has_only_refinement:
-            is_followup = True
-
-        # Intents that preserve category even without Groq follow-up signal
-        category_preserving_intents = {
-            'technical_advice', 'faq', 'seller_query',
-            'comparison', 'price_query', 'unknown'
-        }
-
-        # Treat as follow-up if Groq says so OR if message has refinement entities
-        is_contextual = (
-            is_followup
-            or has_only_refinement
-            or (new_entities.get('price_max') is not None)
-            or (new_entities.get('price_min') is not None)
-            or bool(new_entities.get('brand'))
-            or bool(new_entities.get('title'))
-        )
-
-        if new_category:
-            effective_category = new_category
-        elif prev_category:
-            # API context is source of truth — NEVER drop category if it exists in DB
-            effective_category = prev_category
         else:
-            effective_category = ''
+            intent_content = self._processor.normalize_intent_content_payload(intent_content)
 
-        if prev_category and not effective_category:
-            self._clear_product_search_cache(user_id, clear_pending=False)
+        self._state.user_last_intent[user_id] = intent
+        self._state.save_state()
 
-        return {
-            'category': effective_category,
-            'prev_cat': prev_category,
-            'brand': new_entities.get('brand') or prev_brand,
-            'prev_brand': prev_brand,
-            'title': new_entities.get('title') or prev_title,
-            'prev_title': prev_title,
-            'price_max': (new_entities.get('price_max')
-                          if new_entities.get('price_max') is not None
-                          else prev_price_max),
-            'prev_price_max': prev_price_max,
-            'price_min': (new_entities.get('price_min')
-                          if new_entities.get('price_min') is not None
-                          else prev_price_min),
-            'prev_price_min': prev_price_min,
-            'updated_at': datetime.now().isoformat(),
+        result: Dict[str, Any] = {
+            'response': response, 'mode': mode.value, 'intent': intent,
+            'intent_content': intent_content, 'conversation_status': conversation_status,
+            'products': products or [], 'processing_time': round(processing_time, 3),
         }
-
-    def _intent_to_normalized(self, merged: Dict, message: str) -> Dict[str, Any]:
-        price_max = merged.get('price_max')
-        price_min = merged.get('price_min')
-
-        # Never overwrite existing values with empty — only update when new value is non-empty
-        new_cat = str(merged.get('category') or '').strip()
-        prev_cat = str(merged.get('prev_cat') or '').strip()
-        effective_cat = new_cat or prev_cat
-
-        new_brand = str(merged.get('brand') or '').strip().lower()
-        prev_brand = str(merged.get('prev_brand') or '').strip().lower()
-        effective_brand = new_brand or prev_brand
-
-        new_title = str(merged.get('title') or '').strip()
-        prev_title_val = str(merged.get('prev_title') or '').strip()
-        effective_title = new_title or prev_title_val
-
-        effective_price_max = price_max if price_max is not None and price_max > 0 else (
-            merged.get('prev_price_max') or 0
-        )
-        effective_price_min = price_min if price_min is not None and price_min > 0 else (
-            merged.get('prev_price_min') or 0
-        )
-
-        return {
-            'title': effective_title,
-            'cat': effective_cat,
-            'brand': effective_brand,
-            'price_max': effective_price_max,
-            'price_min': effective_price_min,
-            'compare': '',
-            'buy': '',
-            'updated_at': merged.get('updated_at', datetime.now().isoformat()),
-        }
-
-    def _normalize_intent_content_payload(self, payload: Optional[Dict] = None) -> Dict[str, Any]:
-        default = {
-            'title': '', 'cat': '', 'brand': '',
-            'price_max': 0, 'price_min': 0,
-            'compare': '', 'buy': '',
-        }
-        if not isinstance(payload, dict):
-            return default
-        out = dict(default)
-        out['title'] = str(payload.get('title') or '').strip()
-        out['cat'] = str(payload.get('cat') or payload.get('category') or '').strip()
-        out['brand'] = str(payload.get('brand') or '').strip().lower()
-        # Support both old 'price' text field and new price_max/price_min
-        try:
-            out['price_max'] = int(payload.get('price_max') or 0)
-        except (ValueError, TypeError):
-            out['price_max'] = 0
-        try:
-            out['price_min'] = int(payload.get('price_min') or 0)
-        except (ValueError, TypeError):
-            out['price_min'] = 0
-        out['compare'] = str(payload.get('compare') or '').strip()
-        out['buy'] = str(payload.get('buy') or '').strip()
-        if 'complain' in payload:
-            out['complain'] = bool(payload['complain'])
-        if 'exit' in payload:
-            try:
-                out['exit'] = 1 if int(payload['exit']) else 0
-            except Exception:
-                out['exit'] = 0
-        if 'product_url' in payload and payload['product_url']:
-            out['product_url'] = str(payload['product_url'])
-        return out
-
-    # ─────────────────────────────────────────────────────────────
-    # Search
-    # ─────────────────────────────────────────────────────────────
-    def _build_search_keywords_from_merged(self, merged: Dict) -> str:
-        parts = []
-        if merged.get('brand'):
-            parts.append(merged['brand'].lower())
-        if merged.get('title'):
-            parts.append(merged['title'].lower())
-        elif merged.get('category'):
-            parts.append(merged['category'].lower())
-        return ' '.join(parts).strip()
-
-    def _build_broader_search_keywords(self, merged: Dict) -> Optional[str]:
-        parts = []
-        if merged.get('brand'):
-            parts.append(merged['brand'].lower())
-        if merged.get('category'):
-            parts.append(merged['category'].lower())
-        elif merged.get('title'):
-            parts.append(merged['title'].lower())
-        broad = ' '.join(parts).strip()
-        return broad or None
-
-    def _extract_budget_range(self, message: str) -> Dict[str, Optional[int]]:
-        return extract_budget_range(message)
-
-    def _cached_search(self, keywords: str, max_price: Optional[int] = None,
-                       min_price: Optional[int] = None) -> Dict[str, Any]:
-        cache_key = f"{keywords}|{min_price or ''}|{max_price or ''}"
-        now = time.time()
-        cached = self._search_cache.get(cache_key)
-        if cached and (now - cached[0]) < self._search_cache_ttl:
-            return cached[1]
-        result = self._do_search(keywords, max_price, min_price)
-        self._search_cache[cache_key] = (now, result)
-        if len(self._search_cache) > self._search_cache_max:
-            oldest = min(self._search_cache.keys(), key=lambda k: self._search_cache[k][0])
-            self._search_cache.pop(oldest, None)
+        if search_keywords:
+            result['search_keywords'] = search_keywords
+        if link_buttons:
+            result['link_buttons'] = link_buttons
         return result
-
-    def _do_search(self, keywords: str, explicit_max_price: Optional[int] = None,
-                   explicit_min_price: Optional[int] = None) -> Dict[str, Any]:
-        try:
-            params = {
-                'term': keywords.strip(),
-                'key': self.api_key,
-                'minPrice': explicit_min_price or '',
-                'maxPrice': explicit_max_price or '',
-            }
-            started = datetime.now()
-            response = requests.get(self.api_url, params=params, timeout=10)
-            duration_ms = int((datetime.now() - started).total_seconds() * 1000)
-            _log_api_call('ai_search', 'GET', self.api_url, params,
-                          response.status_code, duration_ms,
-                          "PASS" if response.status_code == 200 else "FAIL",
-                          response.text[:400])
-            if response.status_code != 200:
-                return {'products_found': 0, 'products': []}
-
-            data = response.json()
-            if not data.get('getListingItem') or len(data['getListingItem']) < 2:
-                return {'products_found': 0, 'products': []}
-
-            total_count = data['getListingItem'][0]
-            products_array = data['getListingItem'][1] or []
-            if not products_array:
-                return {'products_found': 0, 'products': []}
-
-            # API handles price filtering — just take top 5
-            top = products_array[:5]
-            products_list = [{
-                'title': p.get('ListingTitle', 'N/A'),
-                'price': p.get('ListingPrice', 'N/A'),
-                'original_price': p.get('app_ListingOriginalPrice', ''),
-                'discount': p.get('ListingDiscountPercentage', 0),
-                'url': p.get('ListingURL', ''),
-                'image': p.get('ListingThumbAvator', ''),
-            } for p in top]
-
-            return {
-                'products_found': len(top),
-                'total_products': total_count,
-                'products': products_list,
-            }
-        except Exception as e:
-            logger.error("Search failed: %s", e)
-            return {'products_found': 0, 'products': []}
-
-    # ─────────────────────────────────────────────────────────────
-    # History
-    # ─────────────────────────────────────────────────────────────
-    def _get_history_cached(self, user_id: str) -> str:
-        now = time.time()
-        cached = self._history_cache.get(user_id)
-        if cached and (now - cached[0]) < self._history_cache_ttl:
-            return cached[1]
-        ctx = self._fetch_recent_chat_context(user_id, self.chatbot_history_limit)
-        self._history_cache[user_id] = (now, ctx)
-        return ctx
-
-    def _fetch_recent_chat_context(self, user_id: str, limit: int = 5) -> str:
-        if not user_id:
-            return ''
-        safe_limit = max(1, min(int(limit or 5), 20))
-        urls = self._build_chat_history_urls(user_id, safe_limit)
-        for url in urls:
-            try:
-                resp = requests.get(url, timeout=8)
-                if not (200 <= resp.status_code < 300):
-                    continue
-                payload = resp.json() if resp.text else {}
-                lines = self._normalize_history_messages(payload)
-                return '\n'.join(lines).strip()
-            except Exception:
-                continue
-        return ''
-
-    def _build_chat_history_urls(self, user_id: str, limit: int) -> list:
-        base = str(self.chatbot_history_api_url or '').strip()
-        if not base:
-            return []
-        tail = f"user_id={user_id}&limit={limit}&key={self.api_key}"
-        bs = base.rstrip('/')
-        # Always use proper ? separator — never concatenate without it
-        return [f"{bs}?{tail}"]
-
-    def _normalize_history_messages(self, payload: Any) -> list:
-        return normalize_history_messages(payload)
-
-    # ─────────────────────────────────────────────────────────────
-    # Order flow
-    # ─────────────────────────────────────────────────────────────
-    def _maybe_handle_order_flow(self, user_id: str, message: str,
-                                 start_time: datetime) -> Optional[Dict[str, Any]]:
-        incoming = self._extract_order_detail_fields(message)
-        active = self.user_order_context.get(user_id, False)
-        if not incoming and not active:
-            return None
-
-        if active and not incoming:
-            if self._fast_path_intent(message) or \
-               self.category_validator.resolve_from_message(message):
-                self.user_order_context[user_id] = False
-                self.user_order_draft.pop(user_id, None)
-                return None
-
-        draft = dict(self.user_order_draft.get(user_id, {}))
-        draft.update(incoming)
-        required = ['name', 'phone_number', 'address', 'product_name', 'quantity']
-        missing = [k for k in required if not draft.get(k)]
-
-        if not missing:
-            if not re.search(r'\d{10,15}', draft['phone_number']):
-                self.user_order_context[user_id] = True
-                self.user_order_draft[user_id] = draft
-                return self._create_response(
-                    user_id=user_id, message=message,
-                    response="স্যার, Phone Number টি সঠিক ফরম্যাটে দিন (১০-১৫ ডিজিট)।",
-                    mode=ChatMode.AI, intent='order_details_incomplete', products=None,
-                    processing_time=(datetime.now() - start_time).total_seconds()
-                )
-            self.user_order_context[user_id] = False
-            self.user_order_draft.pop(user_id, None)
-            return self._handoff_to_human(
-                user_id, message, start_time,
-                intent='order_details_submission',
-                response_text="ধন্যবাদ স্যার, আমাদের অন্য একজন প্রতিনিধি এসে কথা বলবে।"
-            )
-
-        self.user_order_context[user_id] = True
-        self.user_order_draft[user_id] = draft
-        return self._create_response(
-            user_id=user_id, message=message,
-            response=self._build_missing_order_fields_prompt(missing),
-            mode=ChatMode.AI, intent='order_details_incomplete', products=None,
-            processing_time=(datetime.now() - start_time).total_seconds()
-        )
-
-    def _extract_order_detail_fields(self, message: str) -> Dict[str, str]:
-        return extract_order_detail_fields(message)
-
-    def _build_missing_order_fields_prompt(self, missing: list) -> str:
-        return build_missing_order_fields_prompt(missing)
-
-    # ─────────────────────────────────────────────────────────────
-    # Product selection helpers
-    # ─────────────────────────────────────────────────────────────
-    def _extract_product_selection(self, message: str) -> Optional[int]:
-        return extract_product_selection(message)
-
-    def _format_selected_product_response(self, product: Dict, index: int) -> str:
-        return format_selected_product_response(product, index)
-
-    def _format_product_listing(self, products: list) -> Tuple[str, List[Dict]]:
-        return format_product_listing(products)
-
-    def _reply_price_from_context(self, user_id: str) -> Optional[Tuple[str, List[Dict]]]:
-        """Returns (text, link_buttons) or None."""
-        selected = self.user_selected_product.get(user_id) or {}
-        if selected:
-            title = selected.get('title') or 'এই প্রোডাক্টটির'
-            price = selected.get('price') or ''
-            url = selected.get('url', '')
-            if price and str(price).strip().upper() != 'N/A':
-                text = f"জি স্যার, {title} এর দাম {price}।"
-                buttons = [{'text': 'View', 'url': url, 'title': title, 'price': price}] if url else []
-                return text, buttons
-            return "স্যার, এই প্রোডাক্টটির দাম এখন দেখাতে পারছি না।", []
-
-        products = self.user_product_context.get(user_id) or []
-        if not products:
-            return None
-
-        if len(products) == 1:
-            p = products[0]
-            title = p.get('title') or 'এই প্রোডাক্টটির'
-            price = p.get('price') or ''
-            url = p.get('url', '')
-            if price and str(price).strip().upper() != 'N/A':
-                text = f"জি স্যার, {title} এর দাম {price}।"
-                buttons = [{'text': 'View', 'url': url, 'title': title, 'price': price}] if url else []
-                return text, buttons
-
-        lines = ["স্যার, আপনার দেখা প্রোডাক্টগুলোর দাম:"]
-        buttons = []
-        for i, p in enumerate(products[:5], 1):
-            t = str(p.get('title') or f'প্রোডাক্ট {i}').strip()
-            pr = str(p.get('price') or 'N/A').strip()
-            url = p.get('url', '')
-            if not pr or pr.upper() == 'N/A':
-                pr = 'দাম পাওয়া যায়নি'
-            lines.append(f"{i}. {t} - {pr}")
-            if url:
-                buttons.append({'text': f"{i}. View", 'url': url, 'title': t, 'price': pr})
-        lines.append("যেটা নিতে চান, নম্বর বলুন স্যার।")
-        return "\n".join(lines), buttons
-
-    # ─────────────────────────────────────────────────────────────
-    # Fixed messages
-    # ─────────────────────────────────────────────────────────────
-    def _build_comparison_redirect_response(self) -> str:
-        return ("স্যার, আমাদের সকল প্রোডাক্টই ভালো। "
-                "আপনি আমাদের ওয়েবসাইটের রেটিং ও রিভিউ দেখে নিতে পারেন।")
-
-    def _build_comparison_link_buttons(self, merged: Dict) -> list:
-        return build_comparison_link_buttons(merged)
-
-    def _build_order_guide_response(self) -> str:
-        return "স্যার এই লিংকে গিয়ে আপনি দেখতে পারেন কিভাবে অর্ডার অথবা বাই করা যায়"
-
-    # ─────────────────────────────────────────────────────────────
-    # Template APIs
-    # ─────────────────────────────────────────────────────────────
-    def _fetch_delivery_intent_response(self) -> Optional[str]:
-        try:
-            resp = requests.get(
-                self.delivery_intent_api_url,
-                params={'intent': 'delivery', 'key': self.api_key},
-                timeout=10
-            )
-            if resp.status_code != 200:
-                return None
-            return self._parse_template_response(resp.json() if resp.text else {})
-        except Exception as e:
-            logger.warning("delivery template failed: %s", e)
-            return None
-
-    def _parse_template_response(self, data: Any) -> Optional[str]:
-        return parse_template_response(data)
 
     # ─────────────────────────────────────────────────────────────
     # Misc
     # ─────────────────────────────────────────────────────────────
-    def _is_blocked_automated_message(self, message: str) -> bool:
+    @staticmethod
+    def _is_blocked_automated_message(message: str) -> bool:
         text = str(message or '').strip().lower()
         if not text:
             return False
@@ -1698,111 +340,3 @@ Return ONLY the JSON object."""
             'খুব শীঘ্রই bdstall.com এর একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবে',
         ]
         return sum(1 for p in blocked if p in text) >= 2
-
-    # ─────────────────────────────────────────────────────────────
-    # Cache helpers
-    # ─────────────────────────────────────────────────────────────
-    def _clear_product_search_cache(self, user_id: str, clear_pending: bool = False) -> None:
-        self.user_product_context.pop(user_id, None)
-        self.user_selected_product.pop(user_id, None)
-        self.user_product_url.pop(user_id, None)
-        if clear_pending:
-            self.user_pending_product_query.pop(user_id, None)
-            self.user_order_context.pop(user_id, None)
-            self.user_order_draft.pop(user_id, None)
-
-    # ─────────────────────────────────────────────────────────────
-    # Human handoff
-    # ─────────────────────────────────────────────────────────────
-    def _handoff_to_human(
-        self,
-        user_id: str,
-        message: str,
-        start_time: datetime,
-        intent: str = 'human_handoff',
-        response_text: str = "স্যার, আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।",
-        error: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        try:
-            started = datetime.now()
-            payload = {
-                'key': self.assign_agent_api_key,
-                'user_id': user_id,
-                'intent': intent,
-            }
-            resp = requests.post(self.assign_agent_api_url, json=payload, timeout=5)
-            duration_ms = int((datetime.now() - started).total_seconds() * 1000)
-            _log_api_call(
-                'assign_agent', 'POST', self.assign_agent_api_url,
-                payload, resp.status_code, duration_ms,
-                'PASS' if resp.status_code == 200 else 'FAIL',
-                resp.text[:400] if resp.text else '',
-            )
-        except Exception as e:
-            logger.warning("assign_agent call failed: %s", e)
-
-        intent_content = self._normalize_intent_content_payload(
-            self._load_previous_intent(user_id)
-        )
-        if error:
-            intent_content['error'] = str(error)[:200]
-
-        return self._create_response(
-            user_id=user_id,
-            message=message,
-            response=response_text,
-            mode=ChatMode.HUMAN,
-            intent=intent,
-            products=None,
-            intent_content=intent_content,
-            processing_time=(datetime.now() - start_time).total_seconds(),
-            conversation_status=HUMAN_SUPPORT_REQUIRED_STATUS,
-        )
-
-    # ─────────────────────────────────────────────────────────────
-    # _create_response — single exit point
-    # Saving is done by the API layer (ai_simple_chat.py)
-    # intent_content is returned in result dict for the API layer to save
-    # ─────────────────────────────────────────────────────────────
-    def _create_response(
-        self,
-        user_id: str,
-        message: str,
-        response: str,
-        mode: ChatMode,
-        intent: str,
-        products: Optional[List[Dict]],
-        processing_time: float = 0.0,
-        search_keywords: str = '',
-        intent_content: Optional[Dict[str, Any]] = None,
-        link_buttons: Optional[List[Dict]] = None,
-        conversation_status: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        if conversation_status is None:
-            conversation_status = AI_ACTIVE_STATUS
-
-        if intent_content is None:
-            intent_content = self._normalize_intent_content_payload(
-                self._load_previous_intent(user_id)
-            )
-        else:
-            intent_content = self._normalize_intent_content_payload(intent_content)
-
-        # Only last intent stored locally — no mode, no intent_content (Rules 13, 14)
-        self.user_last_intent[user_id] = intent
-        self._save_state()
-
-        result: Dict[str, Any] = {
-            'response': response,
-            'mode': mode.value,
-            'intent': intent,
-            'intent_content': intent_content,
-            'conversation_status': conversation_status,
-            'products': products or [],
-            'processing_time': round(processing_time, 3),
-        }
-        if search_keywords:
-            result['search_keywords'] = search_keywords
-        if link_buttons:
-            result['link_buttons'] = link_buttons
-        return result
