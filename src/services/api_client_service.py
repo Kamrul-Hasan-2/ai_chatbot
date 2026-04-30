@@ -1,269 +1,332 @@
 """
-External API interactions for SimpleChatbot.
-Covers: responder check, agent/bot assignment, product search, delivery template,
-        and chat-history fetching.
+src/services/api_client_service.py — ALL external HTTP calls live here.
+No other file calls requests directly.
+
+Public functions:
+  check_responder_type(user_id)               → 'agent' | 'bot' | None
+  assign_agent(user_id, intent)               → None
+  assign_bot(user_id)                         → None
+  search_products(keywords, max, min)         → {products_found, products}
+  fetch_history(user_id)                      → str
+  fetch_intent_from_history(user_id)          → dict
+  fetch_delivery_template()                   → str | None
+  save_message(user_id, sender, text, ...)    → bool
+  fetch_categories()                          → list[dict]
 """
-import os
 import json
 import logging
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import requests
 
-from models.chatbot_config import _log_api_call
-from utils.flow_helpers import normalize_history_messages, parse_template_response, extract_budget_range
+from models.chatbot_config import (
+    API_KEY, SEARCH_URL, DELIVERY_URL,
+    ASSIGN_AGENT_URL, ASSIGN_AGENT_KEY,
+    ASSIGN_BOT_URL, RESPONDER_URL, RESPONDER_KEY,
+    HISTORY_URL, HISTORY_LIMIT,
+    SAVE_MESSAGE_URL, SAVE_MESSAGE_KEY,
+    CAT_LIST_URL,
+    _log_api_call,
+)
 
 logger = logging.getLogger(__name__)
 
+# ── Simple in-memory caches ───────────────────────────────────────────────────
 
-class ApiClient:
-    """Wraps all outbound HTTP calls used by SimpleChatbot."""
+_search_cache:  Dict[str, tuple] = {}
+_history_cache: Dict[str, tuple] = {}
+_SEARCH_TTL  = 300
+_HISTORY_TTL = 60
+_SEARCH_MAX  = 200
 
-    def __init__(self, api_key: str, api_url: str, delivery_intent_api_url: str,
-                 assign_agent_api_url: str, assign_agent_api_key: str,
-                 assign_bot_api_url: str, responder_api_url: str,
-                 responder_api_key: str, chatbot_history_api_url: str,
-                 chatbot_history_limit: int) -> None:
-        self.api_key = api_key
-        self.api_url = api_url
-        self.delivery_intent_api_url = delivery_intent_api_url
-        self.assign_agent_api_url = assign_agent_api_url
-        self.assign_agent_api_key = assign_agent_api_key
-        self.assign_bot_api_url = assign_bot_api_url
-        self.responder_api_url = responder_api_url
-        self.responder_api_key = responder_api_key
-        self.chatbot_history_api_url = chatbot_history_api_url
-        self.chatbot_history_limit = chatbot_history_limit
 
-        self._search_cache: Dict[str, Tuple[float, Dict]] = {}
-        self._search_cache_ttl = 300
-        self._search_cache_max = 200
-        self._history_cache: Dict[str, Tuple[float, str]] = {}
-        self._history_cache_ttl = 60
+# ── Responder / mode ──────────────────────────────────────────────────────────
 
-    # ─────────────────────────────────────────────────────────────
-    # Responder / mode
-    # ─────────────────────────────────────────────────────────────
-    def check_responder_type(self, user_id: str) -> Optional[str]:
-        now = time.time()
-        try:
-            url = f"{self.responder_api_url}?key={self.responder_api_key}&user_id={user_id}"
-            resp = requests.get(url, timeout=3)
-            duration_ms = int((time.time() - now) * 1000)
-            if resp.status_code == 200:
-                data = resp.json()
-                if data.get('success') and data.get('data'):
-                    label = data['data'].get('responder_label', 'bot')
-                    _log_api_call(
-                        'responder_type_check', 'GET', url,
-                        {'user_id': user_id}, resp.status_code,
-                        duration_ms, 'PASS',
-                        json.dumps(data.get('data', {}), ensure_ascii=False)[:200]
-                    )
-                    return label
-            return None
-        except Exception as e:
-            logger.warning("Responder check error: %s", e)
-            return None
+def check_responder_type(user_id: str) -> Optional[str]:
+    try:
+        started = time.time()
+        url = f"{RESPONDER_URL}?key={RESPONDER_KEY}&user_id={user_id}"
+        resp = requests.get(url, timeout=3)
+        duration_ms = int((time.time() - started) * 1000)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get('success') and data.get('data'):
+                label = data['data'].get('responder_label', 'bot')
+                _log_api_call('responder_type_check', 'GET', url, {'user_id': user_id},
+                              resp.status_code, duration_ms, 'PASS',
+                              str(data.get('data', {}))[:200])
+                return label
+        return None
+    except Exception as e:
+        logger.warning("check_responder_type failed: %s", e)
+        return None
 
-    def assign_agent(self, user_id: str, intent: str) -> None:
-        try:
-            started = datetime.now()
-            payload = {
-                'key': self.assign_agent_api_key,
-                'user_id': user_id,
-                'intent': intent,
-            }
-            resp = requests.post(self.assign_agent_api_url, json=payload, timeout=5)
-            duration_ms = int((datetime.now() - started).total_seconds() * 1000)
-            _log_api_call(
-                'assign_agent', 'POST', self.assign_agent_api_url,
-                payload, resp.status_code, duration_ms,
-                'PASS' if resp.status_code == 200 else 'FAIL',
-                resp.text[:400] if resp.text else '',
-            )
-        except Exception as e:
-            logger.warning("assign_agent call failed: %s", e)
 
-    def assign_bot(self, user_id: str) -> None:
-        try:
-            requests.post(
-                self.assign_bot_api_url,
-                json={'key': self.api_key, 'user_id': user_id},
-                timeout=5
-            )
-        except Exception as e:
-            logger.warning("assign_bot failed: %s", e)
+def assign_agent(user_id: str, intent: str) -> None:
+    try:
+        started = datetime.now()
+        payload = {'key': ASSIGN_AGENT_KEY, 'user_id': user_id, 'intent': intent}
+        resp = requests.post(ASSIGN_AGENT_URL, json=payload, timeout=5)
+        duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+        _log_api_call('assign_agent', 'POST', ASSIGN_AGENT_URL, payload,
+                      resp.status_code, duration_ms,
+                      'PASS' if resp.status_code == 200 else 'FAIL', resp.text[:400])
+    except Exception as e:
+        logger.warning("assign_agent failed: %s", e)
 
-    # ─────────────────────────────────────────────────────────────
-    # Product search
-    # ─────────────────────────────────────────────────────────────
-    def cached_search(self, keywords: str, max_price: Optional[int] = None,
-                      min_price: Optional[int] = None) -> Dict[str, Any]:
-        cache_key = f"{keywords}|{min_price or ''}|{max_price or ''}"
-        now = time.time()
-        cached = self._search_cache.get(cache_key)
-        if cached and (now - cached[0]) < self._search_cache_ttl:
-            return cached[1]
-        result = self._do_search(keywords, max_price, min_price)
-        self._search_cache[cache_key] = (now, result)
-        if len(self._search_cache) > self._search_cache_max:
-            oldest = min(self._search_cache.keys(), key=lambda k: self._search_cache[k][0])
-            self._search_cache.pop(oldest, None)
-        return result
 
-    def _do_search(self, keywords: str, explicit_max_price: Optional[int] = None,
-                   explicit_min_price: Optional[int] = None) -> Dict[str, Any]:
-        try:
-            params = {
-                'term': keywords.strip(),
-                'key': self.api_key,
-                'minPrice': explicit_min_price or '',
-                'maxPrice': explicit_max_price or '',
-            }
-            started = datetime.now()
-            response = requests.get(self.api_url, params=params, timeout=10)
-            duration_ms = int((datetime.now() - started).total_seconds() * 1000)
-            _log_api_call('ai_search', 'GET', self.api_url, params,
-                          response.status_code, duration_ms,
-                          "PASS" if response.status_code == 200 else "FAIL",
-                          response.text[:400])
-            if response.status_code != 200:
-                return {'products_found': 0, 'products': []}
+def assign_bot(user_id: str) -> None:
+    try:
+        requests.post(ASSIGN_BOT_URL, json={'key': API_KEY, 'user_id': user_id}, timeout=5)
+    except Exception as e:
+        logger.warning("assign_bot failed: %s", e)
 
-            data = response.json()
-            if not data.get('getListingItem') or len(data['getListingItem']) < 2:
-                return {'products_found': 0, 'products': []}
 
-            total_count = data['getListingItem'][0]
-            products_array = data['getListingItem'][1] or []
-            if not products_array:
-                return {'products_found': 0, 'products': []}
+# ── Product search ────────────────────────────────────────────────────────────
 
-            top = products_array[:5]
-            products_list = [{
-                'title': p.get('ListingTitle', 'N/A'),
-                'price': p.get('ListingPrice', 'N/A'),
-                'original_price': p.get('app_ListingOriginalPrice', ''),
-                'discount': p.get('ListingDiscountPercentage', 0),
-                'url': p.get('ListingURL', ''),
-                'image': p.get('ListingThumbAvator', ''),
-            } for p in top]
+def search_products(keywords: str, price_max: Optional[int] = None,
+                    price_min: Optional[int] = None) -> Dict[str, Any]:
+    cache_key = f"{keywords}|{price_min or ''}|{price_max or ''}"
+    now = time.time()
+    cached = _search_cache.get(cache_key)
+    if cached and (now - cached[0]) < _SEARCH_TTL:
+        return cached[1]
+    result = _do_search(keywords, price_max, price_min)
+    _search_cache[cache_key] = (now, result)
+    if len(_search_cache) > _SEARCH_MAX:
+        oldest = min(_search_cache, key=lambda k: _search_cache[k][0])
+        _search_cache.pop(oldest, None)
+    return result
 
-            return {
-                'products_found': len(top),
-                'total_products': total_count,
-                'products': products_list,
-            }
-        except Exception as e:
-            logger.error("Search failed: %s", e)
+
+def _do_search(keywords: str, price_max: Optional[int],
+               price_min: Optional[int]) -> Dict[str, Any]:
+    try:
+        params = {
+            'term':     keywords.strip(),
+            'key':      API_KEY,
+            'minPrice': price_min or '',
+            'maxPrice': price_max or '',
+        }
+        started = datetime.now()
+        resp = requests.get(SEARCH_URL, params=params, timeout=10)
+        duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+        _log_api_call('ai_search', 'GET', SEARCH_URL, params, resp.status_code,
+                      duration_ms, 'PASS' if resp.status_code == 200 else 'FAIL', resp.text[:400])
+        if resp.status_code != 200:
             return {'products_found': 0, 'products': []}
+        data = resp.json()
+        if not data.get('getListingItem') or len(data['getListingItem']) < 2:
+            return {'products_found': 0, 'products': []}
+        total = data['getListingItem'][0]
+        raw   = data['getListingItem'][1] or []
+        top = raw[:5]
+        products = [{
+            'title':          p.get('ListingTitle', 'N/A'),
+            'price':          p.get('ListingPrice', 'N/A'),
+            'original_price': p.get('app_ListingOriginalPrice', ''),
+            'discount':       p.get('ListingDiscountPercentage', 0),
+            'url':            p.get('ListingURL', ''),
+            'image':          p.get('ListingThumbAvator', ''),
+        } for p in top]
+        return {'products_found': len(top), 'total_products': total, 'products': products}
+    except Exception as e:
+        logger.error("_do_search failed: %s", e)
+        return {'products_found': 0, 'products': []}
 
-    # ─────────────────────────────────────────────────────────────
-    # Chat history
-    # ─────────────────────────────────────────────────────────────
-    def get_history_cached(self, user_id: str) -> str:
-        now = time.time()
-        cached = self._history_cache.get(user_id)
-        if cached and (now - cached[0]) < self._history_cache_ttl:
-            return cached[1]
-        ctx = self._fetch_recent_chat_context(user_id, self.chatbot_history_limit)
-        self._history_cache[user_id] = (now, ctx)
-        return ctx
 
-    def _fetch_recent_chat_context(self, user_id: str, limit: int = 5) -> str:
-        if not user_id:
+# ── Chat history ──────────────────────────────────────────────────────────────
+
+def fetch_history(user_id: str) -> str:
+    now = time.time()
+    cached = _history_cache.get(user_id)
+    if cached and (now - cached[0]) < _HISTORY_TTL:
+        return cached[1]
+    text = _fetch_history_raw(user_id)
+    _history_cache[user_id] = (now, text)
+    return text
+
+
+def _fetch_history_raw(user_id: str) -> str:
+    if not user_id:
+        return ''
+    url = f"{HISTORY_URL.rstrip('/')}?user_id={user_id}&limit={HISTORY_LIMIT}&key={API_KEY}"
+    try:
+        resp = requests.get(url, timeout=8)
+        if not (200 <= resp.status_code < 300):
             return ''
-        safe_limit = max(1, min(int(limit or 5), 20))
-        urls = self.build_chat_history_urls(user_id, safe_limit)
-        for url in urls:
-            try:
-                resp = requests.get(url, timeout=8)
-                if not (200 <= resp.status_code < 300):
-                    continue
-                payload = resp.json() if resp.text else {}
-                lines = normalize_history_messages(payload)
-                return '\n'.join(lines).strip()
-            except Exception:
-                continue
+        payload = resp.json() if resp.text else {}
+        lines = _normalize_history(payload)
+        return '\n'.join(lines).strip()
+    except Exception as e:
+        logger.warning("fetch_history failed: %s", e)
         return ''
 
-    def build_chat_history_urls(self, user_id: str, limit: int) -> list:
-        base = str(self.chatbot_history_api_url or '').strip()
-        if not base:
-            return []
-        tail = f"user_id={user_id}&limit={limit}&key={self.api_key}"
-        return [f"{base.rstrip('/')}?{tail}"]
 
-    def fetch_intent_content_from_db(self, user_id: str) -> Dict:
-        """Pull the last saved intent_content from the chat history API (Rule 14)."""
-        try:
-            urls = self.build_chat_history_urls(user_id, 10)
-            for url in urls:
+def _normalize_history(payload: Any) -> List[str]:
+    candidates = []
+    if isinstance(payload, list):
+        candidates = payload
+    elif isinstance(payload, dict):
+        for k in ['data', 'messages', 'history', 'chat_history', 'conversation', 'result']:
+            v = payload.get(k)
+            if isinstance(v, list):
+                candidates = v
+                break
+    lines = []
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get('message') or item.get('text') or
+                   item.get('content') or item.get('body') or '').strip()
+        if not text:
+            continue
+        sender = str(item.get('sender_type') or '').strip()
+        role   = str(item.get('role') or '').strip().lower()
+        if sender == '2' or role in {'assistant', 'bot', 'ai'}:
+            lines.append(f"Bot: {text}")
+        elif sender == '1' or role in {'agent', 'human'}:
+            lines.append(f"Agent: {text}")
+        else:
+            lines.append(f"User: {text}")
+    return lines[-10:]
+
+
+# ── Intent content from history (Rule 14) ────────────────────────────────────
+
+def fetch_intent_from_history(user_id: str) -> Dict:
+    """Pull last saved intent_content from history — DB is source of truth."""
+    url = f"{HISTORY_URL.rstrip('/')}?user_id={user_id}&limit=10&key={API_KEY}"
+    try:
+        resp = requests.get(url, timeout=2)
+        if not (200 <= resp.status_code < 300):
+            return {}
+        data = resp.json() if resp.text else {}
+        candidates: List = []
+        if isinstance(data, list):
+            candidates = data
+        elif isinstance(data, dict):
+            for k in ['data', 'messages', 'history', 'chat_history', 'conversation', 'result']:
+                v = data.get(k)
+                if isinstance(v, list):
+                    candidates = v
+                    break
+        for item in reversed(candidates):
+            if not isinstance(item, dict):
+                continue
+            if str(item.get('sender_type') or '').strip() != '2':
+                continue
+            ic = item.get('intent_content')
+            if isinstance(ic, str):
                 try:
-                    logger.info("[INTENT_DB] Fetching: %s", url)
-                    resp = requests.get(url, timeout=2)
-                    logger.info("[INTENT_DB] Response: status=%s len=%s",
-                                resp.status_code, len(resp.text))
-                    if not (200 <= resp.status_code < 300):
-                        continue
-                    data = resp.json() if resp.text else {}
-                    candidates: list = []
-                    if isinstance(data, list):
-                        candidates = data
-                    elif isinstance(data, dict):
-                        for k in ['data', 'messages', 'history',
-                                  'chat_history', 'conversation', 'result']:
-                            v = data.get(k)
-                            if isinstance(v, list):
-                                candidates = v
-                                break
-                    for item in reversed(candidates):
-                        if not isinstance(item, dict):
-                            continue
-                        if str(item.get('sender_type') or '').strip() != '2':
-                            continue
-                        ic = item.get('intent_content')
-                        if isinstance(ic, str):
-                            try:
-                                ic = json.loads(ic)
-                            except Exception:
-                                continue
-                        if isinstance(ic, dict) and (
-                            ic.get('cat') or ic.get('brand')
-                            or ic.get('title') or ic.get('product_url')
-                        ):
-                            logger.info("[INTENT_DB] Restored for %s: cat=%s brand=%s title=%s",
-                                        user_id, ic.get('cat'), ic.get('brand'), ic.get('title'))
-                            return ic
+                    ic = json.loads(ic)
                 except Exception:
                     continue
-        except Exception as e:
-            logger.warning("fetch_intent_content_from_db failed: %s", e)
-        return {}
+            if isinstance(ic, dict) and (ic.get('cat') or ic.get('brand')
+                                         or ic.get('title') or ic.get('product_url')):
+                return ic
+    except Exception as e:
+        logger.warning("fetch_intent_from_history failed: %s", e)
+    return {}
 
-    # ─────────────────────────────────────────────────────────────
-    # Delivery template
-    # ─────────────────────────────────────────────────────────────
-    def fetch_delivery_intent_response(self) -> Optional[str]:
-        try:
-            resp = requests.get(
-                self.delivery_intent_api_url,
-                params={'intent': 'delivery', 'key': self.api_key},
-                timeout=10
-            )
-            if resp.status_code != 200:
-                return None
-            return parse_template_response(resp.json() if resp.text else {})
-        except Exception as e:
-            logger.warning("delivery template failed: %s", e)
+
+# ── Delivery template ─────────────────────────────────────────────────────────
+
+def fetch_delivery_template() -> Optional[str]:
+    try:
+        resp = requests.get(DELIVERY_URL,
+                            params={'intent': 'delivery', 'key': API_KEY}, timeout=10)
+        if resp.status_code != 200:
             return None
+        return _parse_template(resp.json() if resp.text else {})
+    except Exception as e:
+        logger.warning("fetch_delivery_template failed: %s", e)
+        return None
 
-    # ─────────────────────────────────────────────────────────────
-    # Budget helper (delegated from flow)
-    # ─────────────────────────────────────────────────────────────
-    @staticmethod
-    def extract_budget_range(message: str) -> Dict[str, Optional[int]]:
-        return extract_budget_range(message)
+
+def _parse_template(data: Any) -> Optional[str]:
+    if isinstance(data, str):
+        return data.strip() or None
+    if isinstance(data, dict):
+        if data.get('success') is False:
+            return None
+        for k in ['response', 'message', 'template', 'text', 'content', 'data']:
+            v = data.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+    return None
+
+
+# ── Save message ──────────────────────────────────────────────────────────────
+
+def save_message(user_id: str, sender_type: int, message: str,
+                 user_name: Optional[str] = None,
+                 intent_content: Optional[Dict] = None) -> bool:
+    if not message:
+        return False
+    payload: Dict[str, Any] = {
+        'key':         SAVE_MESSAGE_KEY,
+        'user_id':     str(user_id),
+        'sender_type': int(sender_type),
+        'message':     message,
+    }
+    if user_name:
+        payload['user_name'] = str(user_name)
+    if isinstance(intent_content, dict) and intent_content:
+        payload['intent_content'] = intent_content
+
+    form_payload = dict(payload)
+    if isinstance(form_payload.get('intent_content'), dict):
+        form_payload['intent_content'] = json.dumps(
+            form_payload['intent_content'], ensure_ascii=False)
+
+    for mode, fn in [
+        ('json', lambda: requests.post(SAVE_MESSAGE_URL, json=payload, timeout=10)),
+        ('form', lambda: requests.post(SAVE_MESSAGE_URL, data=form_payload, timeout=10)),
+    ]:
+        started = datetime.now()
+        try:
+            resp = fn()
+            duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+            ok = 200 <= resp.status_code < 300
+            if ok:
+                try:
+                    d = resp.json()
+                    if isinstance(d, dict) and 'success' in d:
+                        ok = bool(d.get('success'))
+                except Exception:
+                    pass
+            _log_api_call('save_message', f'POST[{mode}]', SAVE_MESSAGE_URL,
+                          payload, resp.status_code, duration_ms,
+                          'PASS' if ok else 'FAIL', resp.text[:400])
+            if ok:
+                return True
+        except Exception as e:
+            logger.warning("save_message[%s] failed: %s", mode, e)
+    return False
+
+
+# ── Category list ─────────────────────────────────────────────────────────────
+
+def fetch_categories() -> List[Dict]:
+    try:
+        resp = requests.get(CAT_LIST_URL, params={'key': API_KEY}, timeout=8)
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+        if not isinstance(data, list):
+            return []
+        return [
+            {
+                'category_id':      str(e.get('category_id', '')).strip(),
+                'category_name':    str(e.get('category_name', '')).strip(),
+                'bn_category_name': str(e.get('bn_category_name', '')).strip(),
+            }
+            for e in data
+            if isinstance(e, dict) and e.get('category_id') and e.get('category_name')
+        ]
+    except Exception as e:
+        logger.warning("fetch_categories failed: %s", e)
+        return []
