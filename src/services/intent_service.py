@@ -220,8 +220,41 @@ def _validate_groq(parsed: Dict) -> Dict[str, Any]:
 
 def _fallback_intent(message: str) -> Dict[str, Any]:
     budget = extract_budget_range(message)
+    msg = message.lower().strip()
+
+    _GREETING_WORDS = {
+        'hi', 'hello', 'hey', 'hlw', 'hlo', 'helo', 'salam', 'salaam',
+        'assalamu', 'assalamualaikum', 'walaikum', 'হাই', 'হ্যালো', 'সালাম',
+        'হেলো', 'আসসালামু', 'ওয়ালাইকুম',
+    }
+    _GOODBYE_WORDS = {
+        'bye', 'goodbye', 'good bye', 'alvida', 'বিদায়', 'আল্লাহ হাফেজ',
+    }
+    _THANKS_WORDS = {
+        'thanks', 'thank you', 'thankyou', 'thx', 'tnx', 'ধন্যবাদ', 'শুকরিয়া',
+    }
+    _DELIVERY_WORDS = {
+        'delivery', 'deliver', 'charge', 'shipping', 'courier',
+        'ডেলিভারি', 'চার্জ', 'শিপিং',
+    }
+    _BUY_WORDS = {
+        'buy', 'order', 'কিনতে', 'অর্ডার', 'purchase', 'কিনব',
+    }
+
+    intent = 'unknown'
+    if any(w in msg for w in _GREETING_WORDS):
+        intent = 'greeting'
+    elif any(w in msg for w in _GOODBYE_WORDS):
+        intent = 'goodbye'
+    elif any(w in msg for w in _THANKS_WORDS):
+        intent = 'thanks'
+    elif any(w in msg for w in _DELIVERY_WORDS):
+        intent = 'delivery'
+    elif any(w in msg for w in _BUY_WORDS):
+        intent = 'buy'
+
     return {
-        'intent': 'unknown',
+        'intent': intent,
         'entities': {
             'category': '', 'brand': '', 'title': '',
             'price_max': budget.get('max_price'),
@@ -229,7 +262,7 @@ def _fallback_intent(message: str) -> Dict[str, Any]:
         },
         'missing': [],
         'is_followup': False,
-        'confidence': 0.0,
+        'confidence': 0.3,
     }
 
 
