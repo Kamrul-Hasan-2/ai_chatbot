@@ -11,5 +11,5 @@ ENV/
 *.log
 *.db
 data/user_data.json
-models/
+/models/
 .DS_Store
