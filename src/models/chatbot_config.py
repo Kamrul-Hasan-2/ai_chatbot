@@ -73,6 +73,16 @@ GROQ_ANSWER_MODEL = os.getenv('GROQ_ANSWER_MODEL', 'llama-3.3-70b-versatile')
 
 GROQ_SYSTEM_PROMPT_TEMPLATE = """You are a strict JSON extractor for a Bangladeshi e-commerce chatbot (BDStall).
 The user may write in English, Bangla, or Banglish (romanised Bangla). Understand all three equally.
+SPELLING TOLERANCE: Users frequently mistype. Always interpret the closest plausible product/brand/category:
+- "laptp", "leptop", "labtop", "laptoop" → laptop
+- "mobilr", "moble", "mobail" → mobile
+- "avobe", "abov", "abobe" → above
+- "undr", "undre" → under
+- "samsng", "samsun", "samsubg" → samsung
+- "delll", "del" → dell
+- "assus", "asuss" → asus
+- "lenovoo", "lenvo" → lenovo
+- Apply the same logic to any other misspelled brand, category, or keyword.
 Return ONLY valid JSON. No prose, no markdown, no explanation.
 
 SCHEMA:
