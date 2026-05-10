@@ -185,8 +185,21 @@ def handle_delivery(ctx: Dict, user_id: str, message: str, faq_db: List) -> Dict
     return _ok(_DELIVERY_INFO + LOOP_BACK, 'delivery', ic)
 
 
+_WARRANTY_WORDS = {
+    'warranty', 'warenty', 'warrenty', 'warrantee', 'guarantee',
+    'ওয়ারেন্টি', 'গ্যারান্টি', 'গ্যারান্টি', 'waranti', 'garantee',
+}
+
+_WARRANTY_RESPONSE = (
+    "স্যার, দয়া করে আমাদের ওয়েবসাইট ভিজিট করুন: 👉 www.bdstall.com"
+)
+
+
 def handle_faq(ctx: Dict, user_id: str, message: str, faq_db: List) -> Dict:
     ic = intent_to_normalized(ctx)
+    msg_lower = message.lower()
+    if any(w in msg_lower for w in _WARRANTY_WORDS):
+        return _ok(_WARRANTY_RESPONSE + LOOP_BACK, 'faq_warranty', ic)
     faq = search_faq(message, faq_db)
     if faq:
         return _ok(faq + LOOP_BACK, 'faq', ic)
@@ -364,10 +377,14 @@ def handle_fallback(ctx: Dict, user_id: str, message: str,
                     faq_db: List = None) -> Dict:
     if get_last_intent(user_id) == 'buy':
         return handle_buy(ctx, user_id, message)
+    msg_lower = message.lower()
+    # Warranty questions always get the fixed website response
+    if any(w in msg_lower for w in _WARRANTY_WORDS):
+        ic = normalize_payload(load_context(user_id))
+        return _ok(_WARRANTY_RESPONSE + LOOP_BACK, 'faq_warranty', ic)
     # If products were shown and user asks about price/selection, route to price handler
     prev_products = get_product_context(user_id)
     if prev_products:
-        msg_lower = message.lower()
         _price_signals = {'price', 'dam', 'দাম', 'koto', 'কত', 'cost', 'rate', 'মূল্য', 'taka', 'টাকা'}
         if any(w in msg_lower for w in _price_signals):
             return handle_price_query(ctx, user_id, message)
