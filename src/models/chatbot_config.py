@@ -106,7 +106,7 @@ product_search | price_query | comparison | buy | exit | delivery | greeting | g
 INTENT DEFINITIONS:
 - product_search    : user wants to see, find, or browse products. Key Banglish signals: "ase" (আছে = is available), "dekhan" (দেখান = show me), "lagbe" (লাগবে = I need), "chai" (চাই = I want), "kono X ase?" (do you have X?). If user mentions a product type + any of these words → product_search.
 - price_query       : user is asking about price or cost of a product/category
-- comparison        : user asks WHICH product is better or compares options. Key signals: "konti valo", "konta valo", "which is better"
+- comparison        : user asks WHICH product is better or compares options. Key signals: "konti valo", "konta valo", "konti bhalo", "konta bhalo", "which is better", "কোনটা ভালো", "কোনটি ভালো", "সেরা কোনটা", "best konti", "suggest korben"
 - buy               : user wants to know HOW to buy or place an order (process question).
 - exit              : user is leaving, says later / not now / will come back
 - delivery          : user asks about delivery time, charge, or process

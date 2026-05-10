@@ -155,8 +155,8 @@ def handle_buy(ctx: Dict, user_id: str, message: str) -> Dict:
 def handle_comparison(ctx: Dict, user_id: str, message: str) -> Dict:
     ic = intent_to_normalized(ctx)
     return _ok(
-        "স্যার, আমাদের সকল প্রোডাক্টই মানসম্পন্ন। "
-        "আরও বিস্তারিত জানতে আমাদের ওয়েবসাইট ভিজিট করুন: 👉 www.bdstall.com"
+        "স্যার, আমাদের সকল প্রোডাক্টেই ভালো রেটিং এবং রিভিউ আছে। "
+        "রিভিউ দেখে পছন্দের প্রোডাক্টটি নিতে পারেন: 👉 www.bdstall.com"
         + LOOP_BACK,
         'comparison', ic, link_buttons=_comparison_buttons(ctx)
     )

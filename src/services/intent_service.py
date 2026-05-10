@@ -263,6 +263,11 @@ def _fallback_intent(message: str) -> Dict[str, Any]:
     _BUY_WORDS = {
         'buy', 'order', 'কিনতে', 'অর্ডার', 'purchase', 'কিনব',
     }
+    _COMPARISON_WORDS = {
+        'konti', 'konta', 'কোনটা', 'কোনটি', 'bhalo', 'ভালো', 'valo',
+        'better', 'best', 'compare', 'which', 'কোনটা ভালো', 'সেরা',
+        'shera', 'recommended', 'suggest', 'vs', 'difference',
+    }
     _SEARCH_WORDS = {
         'ase', 'আছে', 'dekhan', 'দেখান', 'lagbe', 'লাগবে',
         'chai', 'চাই', 'show', 'find', 'search', 'khujchi',
@@ -287,6 +292,8 @@ def _fallback_intent(message: str) -> Dict[str, Any]:
         intent = 'delivery'
     elif any(w in msg for w in _BUY_WORDS):
         intent = 'buy'
+    elif any(w in msg for w in _COMPARISON_WORDS):
+        intent = 'comparison'
     elif any(w in msg for w in _PRICE_WORDS):
         intent = 'price_query'
     elif any(w in msg for w in _SEARCH_WORDS):
