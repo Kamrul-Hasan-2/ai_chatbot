@@ -256,19 +256,21 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
 
 
 def handle_price_query(ctx: Dict, user_id: str, message: str) -> Dict:
-    if not ctx.get('category'):
-        return _ask_category(ctx)
-
+    # If products already shown in this session, list their prices directly
     prev_products = get_product_context(user_id)
     if prev_products:
-        first_title = (prev_products[0].get('title') or '').lower()
-        current_cat = ctx.get('category', '').lower()
-        if current_cat and current_cat in first_title:
-            ctx_reply = _reply_price_from_context(user_id)
-            if ctx_reply:
-                text, buttons = ctx_reply
-                ic = intent_to_normalized(ctx)
-                return _ok(text, 'price_from_context', ic, link_buttons=buttons)
+        ctx_reply = _reply_price_from_context(user_id)
+        if ctx_reply:
+            text, buttons = ctx_reply
+            ic = intent_to_normalized(ctx)
+            return _ok(text, 'price_from_context', ic, link_buttons=buttons)
+
+    if not ctx.get('category'):
+        ic = intent_to_normalized(ctx)
+        return _ok(
+            "স্যার, কোন প্রোডাক্টের দাম জানতে চাচ্ছেন? একটু বলুন।" + LOOP_BACK,
+            'need_product', ic
+        )
 
     return handle_product_search(ctx, user_id, message)
 
@@ -342,11 +344,18 @@ def handle_fallback(ctx: Dict, user_id: str, message: str,
                     faq_db: List = None) -> Dict:
     if get_last_intent(user_id) == 'buy':
         return handle_buy(ctx, user_id, message)
+    # If products were shown and user asks about price/selection, route to price handler
+    prev_products = get_product_context(user_id)
+    if prev_products:
+        msg_lower = message.lower()
+        _price_signals = {'price', 'dam', 'দাম', 'koto', 'কত', 'cost', 'rate', 'মূল্য', 'taka', 'টাকা'}
+        if any(w in msg_lower for w in _price_signals):
+            return handle_price_query(ctx, user_id, message)
     if ctx.get('category'):
         return handle_product_search(ctx, user_id, message)
     ic = normalize_payload(load_context(user_id))
     return _ok(
-        "এই বিষয়ে আমি নিশ্চিত নই। আরও সাহায্যের জন্য আমাদের ওয়েবসাইট দেখুন অথবা সরাসরি কল করুন।"
+        "স্যার, কোন প্রোডাক্টটি খুঁজছেন? ক্যাটাগরি বা মডেলের নাম বলুন, আমি দেখাচ্ছি।"
         + LOOP_BACK,
         'unknown', ic
     )

@@ -203,9 +203,13 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
             inherited = prev_ctx.get('category') or prev_ctx.get('cat', '')
             if inherited and groq_result['intent'] in (
                 'comparison', 'technical_advice', 'price_query',
-                'faq', 'unknown', 'seller_query'
+                'faq', 'unknown', 'seller_query', 'product_search',
             ):
                 merged['category'] = inherited
+
+        # Promote unknown → product_search when category is now known
+        if groq_result['intent'] == 'unknown' and merged.get('category'):
+            groq_result['intent'] = 'product_search'
 
         # ── STEP 4: handle_intent ────────────────────────────────────────────
         handler_result = _dispatch(groq_result['intent'], merged, user_id, message)
