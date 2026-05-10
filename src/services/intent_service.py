@@ -307,16 +307,18 @@ def merge_context(groq_result: Dict, prev: Dict, intent: str, clear_fn) -> Dict:
     prev_price_max = prev.get('price_max')
     prev_price_min = prev.get('price_min')
 
-    # Rule 6: category switch → full reset
+    # Rule 6: category switch → reset product state but KEEP budget from new message
     if new_category and prev_category and new_category.lower() != prev_category.lower():
-        logger.info("Category switch %s → %s. Full reset.", prev_category, new_category)
+        logger.info("Category switch %s → %s. Resetting product state.", prev_category, new_category)
         clear_fn()
         return {
             'category':      new_category,  'prev_cat':      prev_category,
-            'brand':         new_ent.get('brand', ''), 'prev_brand': '',
-            'title':         new_ent.get('title', ''), 'prev_title': '',
-            'price_max':     new_ent.get('price_max'), 'prev_price_max': None,
-            'price_min':     new_ent.get('price_min'), 'prev_price_min': None,
+            'brand':         new_ent.get('brand', ''), 'prev_brand': prev_brand,
+            'title':         new_ent.get('title', ''), 'prev_title': prev_title,
+            'price_max':     new_ent.get('price_max') if new_ent.get('price_max') is not None else prev_price_max,
+            'price_min':     new_ent.get('price_min') if new_ent.get('price_min') is not None else prev_price_min,
+            'prev_price_max': prev_price_max,
+            'prev_price_min': prev_price_min,
             'updated_at':    datetime.now().isoformat(),
         }
 

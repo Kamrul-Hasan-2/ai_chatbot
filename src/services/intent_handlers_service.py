@@ -226,15 +226,35 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
     if not ctx.get('category'):
         return _ask_category(ctx)
 
-    keywords = _build_keywords(ctx)
-    result   = search_products(keywords, ctx.get('price_max'), ctx.get('price_min'))
+    price_max = ctx.get('price_max')
+    price_min = ctx.get('price_min')
+    keywords  = _build_keywords(ctx)
+    result    = search_products(keywords, price_max, price_min)
 
     if result['products_found'] == 0:
         broader = _build_broader_keywords(ctx)
         if broader and broader != keywords:
-            retry = search_products(broader, ctx.get('price_max'), ctx.get('price_min'))
+            retry = search_products(broader, price_max, price_min)
             if retry['products_found'] > 0:
                 keywords, result = broader, retry
+
+    # If still no results and a budget was applied, retry without budget filter
+    if result['products_found'] == 0 and (price_max is not None or price_min is not None):
+        no_budget_retry = search_products(_build_broader_keywords(ctx) or keywords, None, None)
+        if no_budget_retry['products_found'] > 0:
+            result = no_budget_retry
+            budget_str = ''
+            if price_max:
+                budget_str = f"৳{price_max:,}"
+            elif price_min:
+                budget_str = f"৳{price_min:,}"
+            # Prepend a note that exact budget had no results
+            ic = intent_to_normalized(ctx)
+            products = result['products']
+            set_product_context(user_id, products[:5])
+            text, buttons = _format_listing(products[:3])
+            note = f"স্যার, এই বাজেটে সরাসরি কোনো প্রোডাক্ট পাওয়া যায়নি। কাছাকাছি দামে এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
+            return _ok(note + text, 'product_search', ic, products=products, link_buttons=buttons)
 
     ic = intent_to_normalized(ctx)
 
