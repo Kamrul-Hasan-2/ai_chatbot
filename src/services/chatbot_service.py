@@ -178,6 +178,15 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         if raw_cat:
             resolved = resolve_category(raw_cat, _categories)
             groq_result['entities']['category'] = resolved
+        else:
+            # Groq missed category — scan message directly
+            from services.intent_service import resolve_category_from_message
+            scanned = resolve_category_from_message(message, _categories)
+            if scanned:
+                groq_result['entities']['category'] = scanned
+                # Promote unknown → product_search when we found a category
+                if groq_result['intent'] == 'unknown':
+                    groq_result['intent'] = 'product_search'
 
         logger.info("Intent=%s entities=%s followup=%s",
                     groq_result['intent'], groq_result['entities'],

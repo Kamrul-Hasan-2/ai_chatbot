@@ -260,10 +260,23 @@ def _fallback_intent(message: str) -> Dict[str, Any]:
     elif any(w in msg for w in _SEARCH_WORDS):
         intent = 'product_search'
 
+    # Extract brand from message for product intents
+    _BRANDS = {
+        'hp', 'dell', 'lenovo', 'asus', 'acer', 'apple', 'samsung',
+        'walton', 'xiaomi', 'oppo', 'vivo', 'realme', 'lg', 'sony',
+        'toshiba', 'msi', 'gigabyte', 'intel', 'amd', 'nvidia',
+    }
+    brand = ''
+    if intent in ('product_search', 'price_query', 'unknown'):
+        for b in _BRANDS:
+            if b in msg:
+                brand = b
+                break
+
     return {
         'intent': intent,
         'entities': {
-            'category': '', 'brand': '', 'title': '',
+            'category': '', 'brand': brand, 'title': '',
             'price_max': budget.get('max_price'),
             'price_min': budget.get('min_price'),
         },
