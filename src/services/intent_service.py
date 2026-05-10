@@ -55,11 +55,12 @@ def extract_budget_range(message: str) -> Dict[str, Optional[int]]:
         return {'min_price': None, 'max_price': _to_taka(um.group(1), um.group(2) or '')}
 
     om = re.search(
-        r'(?:over|above|upore|উপরে|বেশি|beshi|more than|er upore|er beshi|minimum)'
+        r'(?:over|above|avobe|avobe|upore|উপরে|বেশি|beshi|more than|er upore|er beshi|minimum|theke beshi|theke upore)'
         r'\s*(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা|hazar)?', text)
     if om:
         return {'min_price': _to_taka(om.group(1), om.group(2) or ''), 'max_price': None}
 
+    # Plain number with unit (e.g. "50k", "30 hazar") — treat as max budget
     gm = re.search(r'\b(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা|hazar)\b', text)
     if gm:
         return {'min_price': None, 'max_price': _to_taka(gm.group(1), gm.group(2) or '')}
@@ -256,7 +257,7 @@ def _fallback_intent(message: str) -> Dict[str, Any]:
         'মূল্য', 'টাকা', 'taka', 'কত টাকা', 'দাম কত',
         'under', 'within', 'modde', 'budget', 'er modde',
         'মধ্যে', 'below', 'hazar', 'হাজার',
-        'over', 'above', 'upore', 'উপরে', 'বেশি', 'beshi',
+        'over', 'above', 'avobe', 'upore', 'উপরে', 'বেশি', 'beshi',
     }
 
     intent = 'unknown'
