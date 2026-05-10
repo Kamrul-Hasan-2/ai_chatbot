@@ -248,6 +248,8 @@ def _fallback_intent(message: str) -> Dict[str, Any]:
     _PRICE_WORDS = {
         'price', 'dam', 'দাম', 'koto', 'কত', 'cost', 'rate',
         'মূল্য', 'টাকা', 'taka', 'কত টাকা', 'দাম কত',
+        'under', 'within', 'modde', 'budget', 'er modde',
+        'মধ্যে', 'below', 'hazar', 'হাজার',
     }
 
     intent = 'unknown'
