@@ -240,6 +240,11 @@ def _fallback_intent(message: str) -> Dict[str, Any]:
     _BUY_WORDS = {
         'buy', 'order', 'কিনতে', 'অর্ডার', 'purchase', 'কিনব',
     }
+    _SEARCH_WORDS = {
+        'ase', 'আছে', 'dekhan', 'দেখান', 'lagbe', 'লাগবে',
+        'chai', 'চাই', 'show', 'find', 'search', 'khujchi',
+        'খুঁজছি', 'dekhao', 'দেখাও', 'নিব', 'nibo',
+    }
 
     intent = 'unknown'
     if any(w in msg for w in _GREETING_WORDS):
@@ -252,6 +257,8 @@ def _fallback_intent(message: str) -> Dict[str, Any]:
         intent = 'delivery'
     elif any(w in msg for w in _BUY_WORDS):
         intent = 'buy'
+    elif any(w in msg for w in _SEARCH_WORDS):
+        intent = 'product_search'
 
     return {
         'intent': intent,
