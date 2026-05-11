@@ -201,7 +201,9 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
 
         # Inherit category for non-product intents when still empty
         if not merged.get('category'):
-            inherited = prev_ctx.get('category') or prev_ctx.get('cat', '')
+            # Session memory is more reliable than DB (DB may have stale category)
+            inherited = (get_session_category(user_id)
+                         or prev_ctx.get('category') or prev_ctx.get('cat', ''))
             if inherited and groq_result['intent'] in (
                 'comparison', 'technical_advice', 'price_query',
                 'faq', 'unknown', 'seller_query', 'product_search',
@@ -229,9 +231,9 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         # Budget follow-up: inherit prev category and force fresh product_search
         has_budget = (merged.get('price_max') is not None or merged.get('price_min') is not None)
         if has_budget and not merged.get('category'):
-            # 1) DB context, 2) session memory, 3) in-memory product cache
-            prev_cat = (prev_ctx.get('category') or prev_ctx.get('cat', '')
-                        or get_session_category(user_id))
+            # Session memory first (most reliable), then DB context
+            prev_cat = (get_session_category(user_id)
+                        or prev_ctx.get('category') or prev_ctx.get('cat', ''))
             if not prev_cat:
                 from repositories.state_repository import get_product_context
                 cached_products = get_product_context(user_id)
