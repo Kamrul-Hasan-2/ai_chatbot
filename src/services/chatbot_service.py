@@ -32,6 +32,7 @@ from services.api_client_service import (
 from repositories.state_repository import (
     load_context, save_last_intent, get_last_intent,
     get_product_url, clear_product_state, load_faq_db,
+    set_session_category, get_session_category,
 )
 from services.intent_service import (
     detect_intent, merge_context,
@@ -55,7 +56,6 @@ if not _groq_client:
 
 _categories: List[Dict] = []
 _faq_db:     List[Dict] = []
-_session_category: Dict[str, str] = {}  # user_id → last known category
 
 
 def _boot() -> None:
@@ -224,14 +224,14 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
 
         # Save known category to session memory whenever we have one
         if merged.get('category'):
-            _session_category[user_id] = merged['category']
+            set_session_category(user_id, merged['category'])
 
         # Budget follow-up: inherit prev category and force fresh product_search
         has_budget = (merged.get('price_max') is not None or merged.get('price_min') is not None)
         if has_budget and not merged.get('category'):
             # 1) DB context, 2) session memory, 3) in-memory product cache
             prev_cat = (prev_ctx.get('category') or prev_ctx.get('cat', '')
-                        or _session_category.get(user_id, ''))
+                        or get_session_category(user_id))
             if not prev_cat:
                 from repositories.state_repository import get_product_context
                 cached_products = get_product_context(user_id)

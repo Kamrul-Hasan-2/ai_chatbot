@@ -13,6 +13,8 @@ Public functions:
   set_product_url(user_id, url)       → None
   get_product_url(user_id)            → str
   clear_product_state(user_id)        → None
+  set_session_category(user_id, cat)  → None
+  get_session_category(user_id)       → str
   load_faq_db()                       → list[dict]
   search_faq(message, db)             → str | None
 """
@@ -32,9 +34,10 @@ logger = logging.getLogger(__name__)
 
 # ── Per-user in-session state ─────────────────────────────────────────────────
 
-_product_context: Dict[str, List]    = {}
-_product_url:     Dict[str, str]     = {}
-_last_intent:     Dict[str, str]     = {}
+_product_context:  Dict[str, List] = {}
+_product_url:      Dict[str, str]  = {}
+_last_intent:      Dict[str, str]  = {}
+_session_category: Dict[str, str]  = {}  # persisted so restarts don't lose category
 _state_lock = threading.Lock()
 
 _PROJECT_ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
@@ -49,6 +52,7 @@ def _load_local_state() -> None:
             state = json.load(f)
         _product_context.update(state.get('user_product_context') or {})
         _last_intent.update(state.get('user_last_intent') or {})
+        _session_category.update(state.get('user_session_category') or {})
     except Exception as e:
         logger.warning("_load_local_state failed: %s", e)
 
@@ -58,8 +62,9 @@ def _save_local_state() -> None:
         try:
             os.makedirs(os.path.dirname(_STATE_FILE), exist_ok=True)
             state = {
-                'user_product_context': _product_context,
-                'user_last_intent':     _last_intent,
+                'user_product_context':  _product_context,
+                'user_last_intent':      _last_intent,
+                'user_session_category': _session_category,
             }
             fd, tmp = tempfile.mkstemp(dir=os.path.dirname(_STATE_FILE), suffix='.tmp')
             try:
@@ -154,6 +159,15 @@ def get_product_url(user_id: str) -> str:
 def clear_product_state(user_id: str) -> None:
     _product_context.pop(user_id, None)
     _product_url.pop(user_id, None)
+
+
+def set_session_category(user_id: str, category: str) -> None:
+    _session_category[user_id] = category
+    _save_local_state()
+
+
+def get_session_category(user_id: str) -> str:
+    return _session_category.get(user_id, '')
 
 
 # ── FAQ database ──────────────────────────────────────────────────────────────
