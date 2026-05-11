@@ -116,6 +116,8 @@ def _extract_keywords_from_url(url: str) -> str:
 # ── Intent handlers ───────────────────────────────────────────────────────────
 
 def handle_greeting(ctx: Dict, user_id: str, message: str) -> Dict:
+    from repositories.state_repository import clear_product_state
+    clear_product_state(user_id)
     ic = normalize_payload(load_context(user_id))
     return _ok("ওয়ালাইকুম আসসালাম! 😊 BDStall-এ স্বাগতম। আপনি কোন প্রোডাক্টটি খুঁজছেন?", 'greeting', ic)
 

@@ -39,7 +39,8 @@ def extract_budget_range(message: str) -> Dict[str, Optional[int]]:
         return val * 1000 if val < 1000 else val
 
     rm = re.search(
-        r'(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা|hazar)?\s*(?:-|to|থেকে)\s*'
+        r'(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা|hazar)?\s*'
+        r'(?:-|to|theke|থেকে)\s*'
         r'(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা|hazar)?', text)
     if rm:
         mn = _to_taka(rm.group(1), rm.group(2) or rm.group(4) or '')
