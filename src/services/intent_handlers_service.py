@@ -99,16 +99,11 @@ def _extract_keywords_from_url(url: str) -> str:
         if not match:
             return ''
         slug = re.sub(r'-\d+$', '', match.group(1).strip('/'))
-        stop = {'core', 'intel', 'amd', 'gen', 'th', 'gb', 'tb', 'ssd', 'hdd', 'ram',
-                'display', 'inch', 'fhd', 'hd', 'uhd', 'touch', 'screen', 'series',
-                'laptop', 'desktop', 'pc', 'windows', 'wifi', 'bluetooth', 'usb',
-                'with', 'and', 'the'}
-        filtered = []
-        for w in slug.replace('-', ' ').split():
-            if w.lower() in stop:
-                break
-            filtered.append(w)
-        return ' '.join(filtered[:4])
+        words = slug.replace('-', ' ').split()
+        skip = {'with', 'and', 'the', 'for', 'from', 'plus', 'pro', 'max',
+                'ultra', 'new', 'edition', 'version', 'series', 'set'}
+        filtered = [w for w in words if w.lower() not in skip]
+        return ' '.join(filtered[:6])
     except Exception:
         return ''
 
@@ -342,6 +337,7 @@ def handle_url_message(ctx: Dict, user_id: str, message: str, url: str) -> Dict:
 
 
 def handle_product_link(ctx: Dict, user_id: str, message: str, url: str) -> Dict:
+    from services.intent_service import resolve_category_from_message
     keywords = _extract_keywords_from_url(url)
     ic = normalize_payload(load_context(user_id))
     if not keywords:
@@ -349,25 +345,50 @@ def handle_product_link(ctx: Dict, user_id: str, message: str, url: str) -> Dict
             "স্যার, লিংকটি সঠিকভাবে পড়তে পারছি না। অনুগ্রহ করে আবার চেষ্টা করুন।" + LOOP_BACK,
             'product_link_error', ic
         )
+
+    # Try exact URL slug search first, then broader keyword
     result = search_products(keywords)
     if result['products_found'] == 0:
+        broader = ' '.join(keywords.split()[:3])
+        if broader != keywords:
+            result = search_products(broader)
+
+    if result['products_found'] == 0:
         return _ok(
-            "দুঃখিত স্যার, এই প্রোডাক্টটি এই মুহূর্তে পাওয়া যাচ্ছে না।"
-            " স্টক আপডেটের জন্য www.bdstall.com ফলো করুন।" + LOOP_BACK,
+            f"স্যার, এই লিংকের প্রোডাক্টটি ({keywords}) এই মুহূর্তে স্টকে নেই।"
+            " সরাসরি লিংকে গিয়ে দেখতে পারেন।" + LOOP_BACK,
             'product_link_not_found', ic,
             link_buttons=[{'text': 'View on BDStall', 'url': url}]
         )
+
     products = result['products']
     set_product_context(user_id, products[:5])
     set_product_url(user_id, url)
     top = products[0]
     title = top.get('title', 'N/A')
     price = top.get('price', 'N/A')
+    orig_price = top.get('original_price', '')
+    discount = top.get('discount', 0)
+
+    # Extract category from URL slug and store in session
+    from services.chatbot_service import _categories, _session_category
+    slug_text = url.replace('-', ' ')
+    cat_from_url = resolve_category_from_message(slug_text, _categories)
+    if cat_from_url:
+        _session_category[user_id] = cat_from_url
+        ic['cat'] = cat_from_url
+
     ic['product_url'] = url
-    ic['title']       = title
-    ic['cat']         = top.get('category', ic.get('cat', ''))
+    ic['title'] = title
+
+    lines = [f"স্যার, এই প্রোডাক্টটি পেয়েছি:", f"", f"📦 {title}", f"💰 মূল্য: {price}"]
+    if orig_price and discount:
+        lines.append(f"🏷️ আগের দাম: {orig_price} ({discount}% ছাড়)")
+    lines.append(f"\nদাম, স্টক বা বিস্তারিত জানতে নিচের লিংকে ক্লিক করুন।")
+    lines.append(LOOP_BACK)
+
     return _ok(
-        f"স্যার, এই প্রোডাক্টটি পেয়েছি:\n\n{title}\nমূল্য: {price}",
+        '\n'.join(lines),
         'product_link', ic, products=products,
         link_buttons=[{'text': 'View Product', 'url': url, 'title': title, 'price': price}]
     )
@@ -375,19 +396,36 @@ def handle_product_link(ctx: Dict, user_id: str, message: str, url: str) -> Dict
 
 def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
                                    product_url: str) -> Optional[Dict]:
+    msg = message.lower()
     signals = [
         'stock', 'ache', 'available', 'color', 'colour', 'rong',
         'quality', 'maan', 'durable', 'valo', 'price', 'dam', 'koto',
-        'warranty', 'guarantee', 'original', 'kena jabe', 'pabo',
-        'স্টক', 'রং', 'মান', 'দাম', 'ওয়ারেন্টি',
+        'warranty', 'warenty', 'guarantee', 'original', 'kena jabe', 'pabo',
+        'স্টক', 'রং', 'মান', 'দাম', 'ওয়ারেন্টি', 'spec', 'feature',
+        'detail', 'বিস্তারিত', 'কেমন', 'kemon', 'review', 'rating',
     ]
-    if not any(s in message.lower() for s in signals):
+    if not any(s in msg for s in signals):
         return None
+
     ic = normalize_payload(load_context(user_id))
+    prev_products = get_product_context(user_id)
+    top = prev_products[0] if prev_products else {}
+    title = top.get('title', '')
+
+    if any(w in msg for w in ('price', 'dam', 'দাম', 'koto', 'কত', 'মূল্য')):
+        price = top.get('price', 'N/A')
+        reply = f"স্যার, {title} এর মূল্য {price}।" if title else f"স্যার, দাম জানতে লিংকটি দেখুন।"
+    elif any(w in msg for w in ('warranty', 'warenty', 'guarantee', 'ওয়ারেন্টি')):
+        reply = "স্যার, ওয়ারেন্টি সংক্রান্ত বিস্তারিত তথ্য প্রোডাক্ট পেজে দেওয়া আছে।"
+    elif any(w in msg for w in ('stock', 'ache', 'available', 'পাবো', 'pabo')):
+        reply = "স্যার, স্টক আপডেট জানতে প্রোডাক্ট পেজটি দেখুন।"
+    else:
+        reply = f"স্যার, {title} এর বিস্তারিত তথ্য প্রোডাক্ট পেজে পাবেন।" if title else "স্যার, বিস্তারিত জানতে প্রোডাক্ট পেজটি দেখুন।"
+
     return _ok(
-        "স্যার, এই প্রোডাক্টের সকল তথ্য আমাদের পেজে দেওয়া আছে।" + LOOP_BACK,
+        reply + LOOP_BACK,
         'product_detail_followup', ic,
-        link_buttons=[{'text': 'View Product', 'url': product_url}]
+        link_buttons=[{'text': 'View Product', 'url': product_url, 'title': title}]
     )
 
 
