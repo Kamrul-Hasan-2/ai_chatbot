@@ -55,6 +55,7 @@ if not _groq_client:
 
 _categories: List[Dict] = []
 _faq_db:     List[Dict] = []
+_session_category: Dict[str, str] = {}  # user_id → last known category
 
 
 def _boot() -> None:
@@ -211,15 +212,30 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         if groq_result['intent'] == 'unknown' and merged.get('category'):
             groq_result['intent'] = 'product_search'
 
+        # Save known category to session memory whenever we have one
+        if merged.get('category'):
+            _session_category[user_id] = merged['category']
+
         # Budget follow-up: inherit prev category and force fresh product_search
         has_budget = (merged.get('price_max') is not None or merged.get('price_min') is not None)
-        if has_budget:
-            prev_cat = prev_ctx.get('category') or prev_ctx.get('cat', '')
-            if not merged.get('category') and prev_cat:
+        if has_budget and not merged.get('category'):
+            # 1) DB context, 2) session memory, 3) in-memory product cache
+            prev_cat = (prev_ctx.get('category') or prev_ctx.get('cat', '')
+                        or _session_category.get(user_id, ''))
+            if not prev_cat:
+                from repositories.state_repository import get_product_context
+                cached_products = get_product_context(user_id)
+                if cached_products:
+                    first_title = (cached_products[0].get('title') or '').lower()
+                    for cat_rec in _categories:
+                        cname = cat_rec['category_name'].lower()
+                        if len(cname) >= 4 and cname in first_title:
+                            prev_cat = cat_rec['category_name']
+                            break
+            if prev_cat:
                 merged['category'] = prev_cat
-            # If budget is present and category known, always do fresh search
-            if merged.get('category'):
-                groq_result['intent'] = 'product_search'
+        if has_budget and merged.get('category'):
+            groq_result['intent'] = 'product_search'
 
         # ── STEP 4: handle_intent ────────────────────────────────────────────
         handler_result = _dispatch(groq_result['intent'], merged, user_id, message)
