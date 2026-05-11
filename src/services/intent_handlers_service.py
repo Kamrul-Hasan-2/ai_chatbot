@@ -109,9 +109,11 @@ def _extract_keywords_from_url(url: str) -> str:
 # ── Intent handlers ───────────────────────────────────────────────────────────
 
 def handle_greeting(ctx: Dict, user_id: str, message: str) -> Dict:
-    from repositories.state_repository import clear_product_state
+    from repositories.state_repository import clear_product_state, set_session_category
     clear_product_state(user_id)
+    set_session_category(user_id, '')  # clear stale category so next query starts fresh
     ic = normalize_payload(load_context(user_id))
+    ic['cat'] = ''  # also clear cat in intent_content saved to DB
     return _ok("ওয়ালাইকুম আসসালাম! 😊 BDStall-এ স্বাগতম। আপনি কোন প্রোডাক্টটি খুঁজছেন?", 'greeting', ic)
 
 
@@ -272,9 +274,15 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
             logger.info("no-budget retry found=%d first=%s", no_budget_retry['products_found'],
                         no_budget_retry['products'][0]['title'] if no_budget_retry['products'] else 'none')
             if no_budget_retry['products_found'] > 0:
-                result = no_budget_retry
+                # Filter: keep only products whose title contains the category keyword
+                cat_kw = ctx.get('category', '').lower().split()[0] if ctx.get('category') else ''
+                filtered = [p for p in no_budget_retry['products']
+                            if not cat_kw or cat_kw in p.get('title', '').lower()]
+                if not filtered:
+                    filtered = no_budget_retry['products']  # fallback: use all if filter removes everything
+                result = {'products_found': len(filtered), 'products': filtered}
                 ic = intent_to_normalized(ctx)
-                products = result['products']
+                products = filtered
                 set_product_context(user_id, products[:5])
                 text, buttons = _format_listing(products[:3])
                 note = "স্যার, এই বাজেটে সরাসরি কোনো প্রোডাক্ট পাওয়া যায়নি। কাছাকাছি দামে এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"

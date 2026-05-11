@@ -191,10 +191,12 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
 
         # Hard override: buy-process keywords always → buy, regardless of Groq
         _BUY_SIGNALS = {
+            'how to buy', 'how to order', 'how to purchase',
             'kibabe kinbo', 'kivabe kinbo', 'kibhabe kinbo',
             'kibabe order', 'kivabe order', 'order korbo kibabe', 'order korbo kivabe',
             'kinte chai', 'kinbo kibabe', 'kinbo kivabe',
             'কিভাবে কিনবো', 'কিনতে চাই', 'কিভাবে অর্ডার',
+            'payment method', 'cash on delivery', ' cod ',
         }
         msg_lower = message.lower().strip()
         if any(sig in msg_lower for sig in _BUY_SIGNALS):
