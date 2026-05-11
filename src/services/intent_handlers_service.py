@@ -49,10 +49,10 @@ def _build_keywords(ctx: Dict) -> str:
     parts = []
     if ctx.get('brand'):
         parts.append(ctx['brand'].lower())
+    if ctx.get('category'):
+        parts.append(ctx['category'].lower())
     if ctx.get('title'):
         parts.append(ctx['title'].lower())
-    elif ctx.get('category'):
-        parts.append(ctx['category'].lower())
     return ' '.join(parts).strip()
 
 
@@ -62,8 +62,6 @@ def _build_broader_keywords(ctx: Dict) -> str:
         parts.append(ctx['brand'].lower())
     if ctx.get('category'):
         parts.append(ctx['category'].lower())
-    elif ctx.get('title'):
-        parts.append(ctx['title'].lower())
     return ' '.join(parts).strip()
 
 
