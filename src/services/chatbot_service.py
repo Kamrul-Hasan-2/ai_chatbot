@@ -212,6 +212,16 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         if groq_result['intent'] == 'unknown' and merged.get('category'):
             groq_result['intent'] = 'product_search'
 
+        # Clear title if it looks like a Banglish filler word, not a product model
+        _FILLER_WORDS = {
+            'khujtasi', 'khujchi', 'lagbe', 'chai', 'ase', 'nibo', 'dekhan',
+            'dekhao', 'bolun', 'jানি', 'jani', 'bolen', 'please', 'kindly',
+            'apnader', 'apnar', 'amader', 'amra', 'ami', 'apni',
+        }
+        title_val = (merged.get('title') or '').lower().strip()
+        if title_val and any(w in title_val for w in _FILLER_WORDS):
+            merged['title'] = ''
+
         # Save known category to session memory whenever we have one
         if merged.get('category'):
             _session_category[user_id] = merged['category']

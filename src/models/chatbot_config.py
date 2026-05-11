@@ -130,6 +130,7 @@ Known examples (not exhaustive): {sample_str}
 BRAND vs CATEGORY:
 - brand = manufacturer name (samsung, hp, dell, apple, walton, asus, acer, lenovo).
 - category = product type (laptop, mobile, AC, fridge, television, tablet).
+- title = specific model name or number ONLY (e.g. "iPhone 15", "RTX 4060", "Galaxy S24"). NEVER put Bengali words, Banglish filler words (khujtasi, lagbe, chai, ase, dekhan), or general descriptions in title. Leave title="" if no specific model is mentioned.
 
 is_followup: true ONLY when message has NO product type word AND depends entirely on previous context.
 
