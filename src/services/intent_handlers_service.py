@@ -241,12 +241,14 @@ def handle_technical_advice(ctx: Dict, user_id: str, message: str,
 
 
 def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
+    logger.info("handle_product_search ctx=%s", {k: ctx.get(k) for k in ('category','brand','title','price_min','price_max')})
     if not ctx.get('category'):
         return _ask_category(ctx)
 
     price_max = ctx.get('price_max')
     price_min = ctx.get('price_min')
     keywords  = _build_keywords(ctx)
+    logger.info("handle_product_search keywords=%r price_min=%s price_max=%s", keywords, price_min, price_max)
     result    = search_products(keywords, price_max, price_min)
 
     if result['products_found'] == 0:
@@ -264,8 +266,11 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
             category_only = f"{brand} {category_only}"
         elif brand:
             category_only = brand
+        logger.info("handle_product_search no-budget retry: category_only=%r", category_only)
         if category_only:  # only retry if we have a concrete search term
             no_budget_retry = search_products(category_only, None, None)
+            logger.info("no-budget retry found=%d first=%s", no_budget_retry['products_found'],
+                        no_budget_retry['products'][0]['title'] if no_budget_retry['products'] else 'none')
             if no_budget_retry['products_found'] > 0:
                 result = no_budget_retry
                 ic = intent_to_normalized(ctx)
