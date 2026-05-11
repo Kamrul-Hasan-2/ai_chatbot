@@ -263,6 +263,8 @@ def _fallback_intent(message: str) -> Dict[str, Any]:
     }
     _BUY_WORDS = {
         'buy', 'order', 'কিনতে', 'অর্ডার', 'purchase', 'কিনব',
+        'kinbo', 'kinte', 'kibabe', 'kivabe', 'kiভাবে', 'কিভাবে',
+        'kibhabe', 'payment', 'cash on delivery', 'cod',
     }
     _COMPARISON_WORDS = {
         'konti', 'konta', 'কোনটা', 'কোনটি', 'bhalo', 'ভালো', 'valo',
