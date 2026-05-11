@@ -189,6 +189,17 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                 if groq_result['intent'] == 'unknown':
                     groq_result['intent'] = 'product_search'
 
+        # Hard override: buy-process keywords always → buy, regardless of Groq
+        _BUY_SIGNALS = {
+            'kibabe kinbo', 'kivabe kinbo', 'kibhabe kinbo',
+            'kibabe order', 'kivabe order', 'order korbo kibabe', 'order korbo kivabe',
+            'kinte chai', 'kinbo kibabe', 'kinbo kivabe',
+            'কিভাবে কিনবো', 'কিনতে চাই', 'কিভাবে অর্ডার',
+        }
+        msg_lower = message.lower().strip()
+        if any(sig in msg_lower for sig in _BUY_SIGNALS):
+            groq_result['intent'] = 'buy'
+
         logger.info("Intent=%s entities=%s followup=%s",
                     groq_result['intent'], groq_result['entities'],
                     groq_result['is_followup'])
