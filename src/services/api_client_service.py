@@ -104,12 +104,11 @@ def search_products(keywords: str, price_max: Optional[int] = None,
 def _do_search(keywords: str, price_max: Optional[int],
                price_min: Optional[int]) -> Dict[str, Any]:
     try:
-        params = {
-            'term':     keywords.strip(),
-            'key':      API_KEY,
-            'minPrice': price_min or '',
-            'maxPrice': price_max or '',
-        }
+        params = {'term': keywords.strip(), 'key': API_KEY}
+        if price_min and price_min > 0:
+            params['minPrice'] = price_min
+        if price_max and price_max > 0:
+            params['maxPrice'] = price_max
         started = datetime.now()
         resp = requests.get(SEARCH_URL, params=params, timeout=10)
         duration_ms = int((datetime.now() - started).total_seconds() * 1000)
