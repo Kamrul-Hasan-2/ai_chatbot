@@ -211,13 +211,14 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         if groq_result['intent'] == 'unknown' and merged.get('category'):
             groq_result['intent'] = 'product_search'
 
-        # Budget-only follow-up (e.g. "under 14k", "avobe 50k", "30k") →
-        # always inherit prev category and search with new budget
-        if not merged.get('category'):
+        # Budget follow-up: inherit prev category and force fresh product_search
+        has_budget = (merged.get('price_max') is not None or merged.get('price_min') is not None)
+        if has_budget:
             prev_cat = prev_ctx.get('category') or prev_ctx.get('cat', '')
-            has_budget = (merged.get('price_max') is not None or merged.get('price_min') is not None)
-            if prev_cat and has_budget:
+            if not merged.get('category') and prev_cat:
                 merged['category'] = prev_cat
+            # If budget is present and category known, always do fresh search
+            if merged.get('category'):
                 groq_result['intent'] = 'product_search'
 
         # ── STEP 4: handle_intent ────────────────────────────────────────────

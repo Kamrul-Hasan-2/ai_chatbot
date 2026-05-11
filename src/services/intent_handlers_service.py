@@ -289,9 +289,15 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
 
 
 def handle_price_query(ctx: Dict, user_id: str, message: str) -> Dict:
-    # If products already shown in this session, list their prices directly
+    has_budget = (ctx.get('price_max') is not None or ctx.get('price_min') is not None)
+
+    # If a budget filter is given, do a fresh search (ignore cache)
+    if has_budget and ctx.get('category'):
+        return handle_product_search(ctx, user_id, message)
+
+    # If products already shown and no budget filter, list cached prices
     prev_products = get_product_context(user_id)
-    if prev_products:
+    if prev_products and not has_budget:
         ctx_reply = _reply_price_from_context(user_id)
         if ctx_reply:
             text, buttons = ctx_reply
