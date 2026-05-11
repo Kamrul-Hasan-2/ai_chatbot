@@ -259,9 +259,12 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
     # If still no results and a budget was applied, retry with category-only (no budget)
     if result['products_found'] == 0 and (price_max is not None or price_min is not None):
         category_only = ctx.get('category', '').strip()
-        if ctx.get('brand'):
-            category_only = f"{ctx['brand']} {category_only}".strip()
-        if category_only:
+        brand = ctx.get('brand', '').strip()
+        if brand and category_only:
+            category_only = f"{brand} {category_only}"
+        elif brand:
+            category_only = brand
+        if category_only:  # only retry if we have a concrete search term
             no_budget_retry = search_products(category_only, None, None)
             if no_budget_retry['products_found'] > 0:
                 result = no_budget_retry

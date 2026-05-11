@@ -275,6 +275,7 @@ def _fallback_intent(message: str) -> Dict[str, Any]:
         'ase', 'আছে', 'dekhan', 'দেখান', 'lagbe', 'লাগবে',
         'chai', 'চাই', 'show', 'find', 'search', 'khujchi',
         'খুঁজছি', 'dekhao', 'দেখাও', 'নিব', 'nibo', 'দেখি', 'dekhi',
+        'khujtasi', 'khujsi', 'khuji', 'খুঁজতাছি', 'খুঁজছি',
     }
     _PRICE_WORDS = {
         'price', 'dam', 'দাম', 'koto', 'কত', 'cost', 'rate',
@@ -297,10 +298,10 @@ def _fallback_intent(message: str) -> Dict[str, Any]:
         intent = 'buy'
     elif any(w in msg for w in _COMPARISON_WORDS):
         intent = 'comparison'
-    elif any(w in msg for w in _PRICE_WORDS):
-        intent = 'price_query'
     elif any(w in msg for w in _SEARCH_WORDS):
         intent = 'product_search'
+    elif any(w in msg for w in _PRICE_WORDS):
+        intent = 'price_query'
 
     # Extract brand from message for product intents
     _BRANDS = {
