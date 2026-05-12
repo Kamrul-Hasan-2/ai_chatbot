@@ -31,12 +31,16 @@ logger = logging.getLogger(__name__)
 
 
 def _extract_product_id(url: str) -> str:
-    """Extract numeric product ID from a BDStall listing URL."""
+    """Extract numeric product ID from a BDStall listing URL.
+    Handles formats:
+      /details/some-slug-33323/
+      /listing/33323/
+      /33323/
+    """
     if not url:
         return ''
-    m = re.search(r'/(\d+)/?(?:\?|$|#)', url)
-    if not m:
-        m = re.search(r'[_\-/](\d{4,})(?:[_\-/]|$)', url)
+    # Last numeric segment at end of URL path (before optional trailing slash/query)
+    m = re.search(r'[/-](\d{3,})/?(?:[?#].*)?$', url.rstrip('/') + '/')
     return m.group(1) if m else ''
 
 
