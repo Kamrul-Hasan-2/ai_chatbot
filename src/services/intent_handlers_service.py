@@ -252,8 +252,51 @@ def handle_technical_advice(ctx: Dict, user_id: str, message: str,
     return _ok(full_answer, 'technical_advice', ic)
 
 
+_CONDITION_WORDS = {
+    'used', 'new', 'notun', 'purano', 'second hand', 'refurbished',
+    'condition', 'কন্ডিশন', 'fresh', 'is it used', 'is it new',
+    'nতুন', 'পুরনো', 'পুরাতন', 'naki purano', 'notun naki',
+}
+
+
+def _handle_condition_question(user_id: str, message: str) -> Optional[Dict]:
+    """If user asks about condition and products are in cache, respond or ask clarification."""
+    msg = message.lower()
+    if not any(w in msg for w in _CONDITION_WORDS):
+        return None
+    prev_products = get_product_context(user_id)
+    if not prev_products:
+        return None
+    ic = normalize_payload(load_context(user_id))
+    if len(prev_products) > 1:
+        product_list = '\n'.join(
+            f"{i+1}. {p.get('title', '')[:50]}"
+            for i, p in enumerate(prev_products[:3])
+        )
+        return _ok(
+            f"স্যার, কোন প্রোডাক্টটি সম্পর্কে জানতে চাইছেন?\n\n{product_list}" + LOOP_BACK,
+            'product_clarification', ic
+        )
+    top = prev_products[0]
+    product_url_top = top.get('url', '')
+    product_id = _extract_product_id(product_url_top)
+    api_reply = fetch_condition_template(product_id) if product_id else None
+    condition_text = (api_reply or
+                      f"স্যার, {top.get('title', 'এই প্রোডাক্টটি')} এর কন্ডিশন জানতে "
+                      "প্রোডাক্ট পেজটি দেখুন।")
+    buttons = [{'text': 'View Product', 'url': product_url_top,
+                'title': top.get('title', '')}] if product_url_top else []
+    return _ok(condition_text + LOOP_BACK, 'product_condition', ic, link_buttons=buttons)
+
+
 def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
     logger.info("handle_product_search ctx=%s", {k: ctx.get(k) for k in ('category','brand','title','price_min','price_max')})
+
+    # Intercept condition questions — don't re-search, answer about cached products
+    condition_result = _handle_condition_question(user_id, message)
+    if condition_result:
+        return condition_result
+
     if not ctx.get('category'):
         return _ask_category(ctx)
 
@@ -492,31 +535,9 @@ def handle_fallback(ctx: Dict, user_id: str, message: str,
         _price_signals = {'price', 'dam', 'দাম', 'koto', 'কত', 'cost', 'rate', 'মূল্য', 'taka', 'টাকা'}
         if any(w in msg_lower for w in _price_signals):
             return handle_price_query(ctx, user_id, message)
-        _condition_signals = {'used', 'new', 'notun', 'purano', 'second hand',
-                              'refurbished', 'condition', 'কন্ডিশন', 'fresh',
-                              'is it', 'eta ki', 'এটা কি'}
-        if any(w in msg_lower for w in _condition_signals):
-            ic = normalize_payload(load_context(user_id))
-            if len(prev_products) > 1:
-                product_list = '\n'.join(
-                    f"{i+1}. {p.get('title', '')[:50]}"
-                    for i, p in enumerate(prev_products[:3])
-                )
-                return _ok(
-                    f"স্যার, কোন প্রোডাক্টটি সম্পর্কে জানতে চাইছেন?\n\n{product_list}"
-                    + LOOP_BACK,
-                    'product_clarification', ic
-                )
-            top = prev_products[0]
-            product_url_fb = top.get('url', '')
-            product_id = _extract_product_id(product_url_fb)
-            api_reply = fetch_condition_template(product_id) if product_id else None
-            condition_text = (api_reply or
-                              f"স্যার, {top.get('title', 'এই প্রোডাক্টটি')} এর কন্ডিশন জানতে "
-                              "প্রোডাক্ট পেজটি দেখুন।")
-            buttons = [{'text': 'View Product', 'url': product_url_fb,
-                        'title': top.get('title', '')}] if product_url_fb else []
-            return _ok(condition_text + LOOP_BACK, 'product_condition', ic, link_buttons=buttons)
+        condition_result = _handle_condition_question(user_id, message)
+        if condition_result:
+            return condition_result
     if ctx.get('category'):
         return handle_product_search(ctx, user_id, message)
     ic = normalize_payload(load_context(user_id))
