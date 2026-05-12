@@ -415,22 +415,45 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
         'warranty', 'warenty', 'guarantee', 'original', 'kena jabe', 'pabo',
         'স্টক', 'রং', 'মান', 'দাম', 'ওয়ারেন্টি', 'spec', 'feature',
         'detail', 'বিস্তারিত', 'কেমন', 'kemon', 'review', 'rating',
+        'used', 'new', 'nতুন', 'পুরনো', 'purano', 'second hand', 'refurbished',
+        'condition', 'কন্ডিশন', 'notun', 'fresh',
     ]
     if not any(s in msg for s in signals):
         return None
 
     ic = normalize_payload(load_context(user_id))
     prev_products = get_product_context(user_id)
+
+    # If multiple products shown and user asks a general question, ask which one
+    _AMBIGUOUS_SIGNALS = {
+        'used', 'new', 'notun', 'purano', 'second hand', 'refurbished',
+        'condition', 'কন্ডিশন', 'fresh',
+    }
+    if len(prev_products) > 1 and any(s in msg for s in _AMBIGUOUS_SIGNALS):
+        product_list = '\n'.join(
+            f"{i+1}. {p.get('title', '')[:50]}"
+            for i, p in enumerate(prev_products[:3])
+        )
+        return _ok(
+            f"স্যার, কোন প্রোডাক্টটি সম্পর্কে জানতে চাইছেন?\n\n{product_list}"
+            + LOOP_BACK,
+            'product_clarification', ic
+        )
+
     top = prev_products[0] if prev_products else {}
     title = top.get('title', '')
 
     if any(w in msg for w in ('price', 'dam', 'দাম', 'koto', 'কত', 'মূল্য')):
         price = top.get('price', 'N/A')
-        reply = f"স্যার, {title} এর মূল্য {price}।" if title else f"স্যার, দাম জানতে লিংকটি দেখুন।"
+        reply = f"স্যার, {title} এর মূল্য {price}।" if title else "স্যার, দাম জানতে লিংকটি দেখুন।"
     elif any(w in msg for w in ('warranty', 'warenty', 'guarantee', 'ওয়ারেন্টি')):
         reply = "স্যার, ওয়ারেন্টি সংক্রান্ত বিস্তারিত তথ্য প্রোডাক্ট পেজে দেওয়া আছে।"
     elif any(w in msg for w in ('stock', 'ache', 'available', 'পাবো', 'pabo')):
         reply = "স্যার, স্টক আপডেট জানতে প্রোডাক্ট পেজটি দেখুন।"
+    elif any(w in msg for w in ('used', 'new', 'notun', 'purano', 'second hand',
+                                'refurbished', 'condition', 'কন্ডিশন', 'fresh')):
+        reply = (f"স্যার, {title} নতুন প্রোডাক্ট। বিস্তারিত কন্ডিশন জানতে প্রোডাক্ট পেজটি দেখুন।"
+                 if title else "স্যার, প্রোডাক্টের কন্ডিশন জানতে পেজটি দেখুন।")
     else:
         reply = f"স্যার, {title} এর বিস্তারিত তথ্য প্রোডাক্ট পেজে পাবেন।" if title else "স্যার, বিস্তারিত জানতে প্রোডাক্ট পেজটি দেখুন।"
 
@@ -450,12 +473,33 @@ def handle_fallback(ctx: Dict, user_id: str, message: str,
     if any(w in msg_lower for w in _WARRANTY_WORDS):
         ic = normalize_payload(load_context(user_id))
         return _ok(_WARRANTY_RESPONSE + LOOP_BACK, 'faq_warranty', ic)
-    # If products were shown and user asks about price/selection, route to price handler
+    # If products were shown, handle product-specific questions
     prev_products = get_product_context(user_id)
     if prev_products:
         _price_signals = {'price', 'dam', 'দাম', 'koto', 'কত', 'cost', 'rate', 'মূল্য', 'taka', 'টাকা'}
         if any(w in msg_lower for w in _price_signals):
             return handle_price_query(ctx, user_id, message)
+        _condition_signals = {'used', 'new', 'notun', 'purano', 'second hand',
+                              'refurbished', 'condition', 'কন্ডিশন', 'fresh',
+                              'is it', 'eta ki', 'এটা কি'}
+        if any(w in msg_lower for w in _condition_signals):
+            ic = normalize_payload(load_context(user_id))
+            if len(prev_products) > 1:
+                product_list = '\n'.join(
+                    f"{i+1}. {p.get('title', '')[:50]}"
+                    for i, p in enumerate(prev_products[:3])
+                )
+                return _ok(
+                    f"স্যার, কোন প্রোডাক্টটি সম্পর্কে জানতে চাইছেন?\n\n{product_list}"
+                    + LOOP_BACK,
+                    'product_clarification', ic
+                )
+            top = prev_products[0]
+            return _ok(
+                f"স্যার, {top.get('title', 'এই প্রোডাক্টটি')} নতুন প্রোডাক্ট। "
+                "বিস্তারিত জানতে প্রোডাক্ট পেজটি দেখুন।" + LOOP_BACK,
+                'product_condition', ic
+            )
     if ctx.get('category'):
         return handle_product_search(ctx, user_id, message)
     ic = normalize_payload(load_context(user_id))
