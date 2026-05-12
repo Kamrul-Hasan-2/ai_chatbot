@@ -197,6 +197,14 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                 if groq_result['intent'] == 'unknown':
                     groq_result['intent'] = 'product_search'
 
+        # Hard override: search words + brand/category = product_search, never greeting
+        _SEARCH_OVERRIDE_WORDS = {
+            'dekhan', 'dekhao', 'দেখান', 'দেখাও', 'lagbe', 'লাগবে',
+            'ase', 'আছে', 'chai', 'চাই', 'khujchi', 'khujtasi', 'show me',
+        }
+        if groq_result['intent'] == 'greeting' and any(w in msg_lower for w in _SEARCH_OVERRIDE_WORDS):
+            groq_result['intent'] = 'product_search'
+
         # Hard override: buy-process keywords always → buy, regardless of Groq
         _BUY_SIGNALS = {
             'how to buy', 'how to order', 'how to purchase',

@@ -284,7 +284,9 @@ def _handle_condition_question(user_id: str, message: str) -> Optional[Dict]:
     top = prev_products[0]
     product_url_top = top.get('url', '')
     product_id = _extract_product_id(product_url_top)
+    logger.info("condition_question: url=%r id=%r", product_url_top, product_id)
     api_reply = fetch_condition_template(product_id) if product_id else None
+    logger.info("condition_question: api_reply=%r", api_reply)
     condition_text = (api_reply or
                       f"স্যার, {top.get('title', 'এই প্রোডাক্টটি')} এর কন্ডিশন জানতে "
                       "প্রোডাক্ট পেজটি দেখুন।")
@@ -316,7 +318,9 @@ def handle_clarification_selection(user_id: str, message: str) -> Optional[Dict]
     selected = prev_products[idx]
     product_url_sel = selected.get('url', '')
     product_id = _extract_product_id(product_url_sel)
+    logger.info("clarification_selection: idx=%d url=%r id=%r", idx, product_url_sel, product_id)
     api_reply = fetch_condition_template(product_id) if product_id else None
+    logger.info("clarification_selection: api_reply=%r", api_reply)
     title = selected.get('title', '')
     condition_text = (api_reply or
                       f"স্যার, {title} এর কন্ডিশন জানতে প্রোডাক্ট পেজটি দেখুন।")
