@@ -289,6 +289,38 @@ def _handle_condition_question(user_id: str, message: str) -> Optional[Dict]:
     return _ok(condition_text + LOOP_BACK, 'product_condition', ic, link_buttons=buttons)
 
 
+def handle_clarification_selection(user_id: str, message: str) -> Optional[Dict]:
+    """After product_clarification, detect numbered selection and call condition API."""
+    prev_products = get_product_context(user_id)
+    if not prev_products:
+        return None
+    msg = message.strip()
+    # Match leading number: "1", "1.", "1)", "#1", or message starting with product title fragment
+    num_match = re.match(r'^[#\s]*([123])[.):\s]', msg)
+    if not num_match:
+        # Try matching by product title keyword
+        for i, p in enumerate(prev_products[:3]):
+            title_words = (p.get('title') or '').lower().split()[:3]
+            if any(w in msg.lower() for w in title_words if len(w) > 3):
+                num_match = type('m', (), {'group': lambda self, x: str(i+1)})()
+                break
+    if not num_match:
+        return None
+    idx = int(num_match.group(1)) - 1
+    if idx < 0 or idx >= len(prev_products):
+        return None
+    selected = prev_products[idx]
+    product_url_sel = selected.get('url', '')
+    product_id = _extract_product_id(product_url_sel)
+    api_reply = fetch_condition_template(product_id) if product_id else None
+    title = selected.get('title', '')
+    condition_text = (api_reply or
+                      f"স্যার, {title} এর কন্ডিশন জানতে প্রোডাক্ট পেজটি দেখুন।")
+    ic = normalize_payload(load_context(user_id))
+    buttons = [{'text': 'View Product', 'url': product_url_sel, 'title': title}] if product_url_sel else []
+    return _ok(condition_text + LOOP_BACK, 'product_condition', ic, link_buttons=buttons)
+
+
 def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
     logger.info("handle_product_search ctx=%s", {k: ctx.get(k) for k in ('category','brand','title','price_min','price_max')})
 

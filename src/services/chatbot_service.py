@@ -43,6 +43,7 @@ from services.intent_handlers_service import (
     handle_buy, handle_comparison, handle_delivery, handle_faq,
     handle_technical_advice, handle_product_search, handle_price_query,
     handle_url_message, handle_product_detail_followup, handle_fallback,
+    handle_clarification_selection,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -163,6 +164,13 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
             detail = handle_product_detail_followup({}, user_id, message, product_url)
             if detail:
                 return _build_response(user_id, detail, ChatMode.AI, AI_ACTIVE_STATUS,
+                                       (datetime.now() - start_time).total_seconds())
+
+        # Clarification selection — user picks a numbered product after clarification prompt
+        if get_last_intent(user_id) == 'product_clarification':
+            selected = handle_clarification_selection(user_id, message)
+            if selected:
+                return _build_response(user_id, selected, ChatMode.AI, AI_ACTIVE_STATUS,
                                        (datetime.now() - start_time).total_seconds())
 
         # ── STEP 1: load_context ─────────────────────────────────────────────
