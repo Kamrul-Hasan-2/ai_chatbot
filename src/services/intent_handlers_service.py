@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 from models.chatbot_config import CATEGORY_PROMPT, LOOP_BACK
-from services.api_client_service import search_products, fetch_delivery_template
+from services.api_client_service import search_products, fetch_delivery_template, fetch_condition_template
 from repositories.state_repository import (
     load_context, get_last_intent,
     set_product_context, get_product_context,
@@ -28,6 +28,16 @@ from services.intent_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_product_id(url: str) -> str:
+    """Extract numeric product ID from a BDStall listing URL."""
+    if not url:
+        return ''
+    m = re.search(r'/(\d+)/?(?:\?|$|#)', url)
+    if not m:
+        m = re.search(r'[_\-/](\d{4,})(?:[_\-/]|$)', url)
+    return m.group(1) if m else ''
 
 
 # ── Response builder helper ───────────────────────────────────────────────────
@@ -452,8 +462,11 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
         reply = "স্যার, স্টক আপডেট জানতে প্রোডাক্ট পেজটি দেখুন।"
     elif any(w in msg for w in ('used', 'new', 'notun', 'purano', 'second hand',
                                 'refurbished', 'condition', 'কন্ডিশন', 'fresh')):
-        reply = (f"স্যার, {title} নতুন প্রোডাক্ট। বিস্তারিত কন্ডিশন জানতে প্রোডাক্ট পেজটি দেখুন।"
-                 if title else "স্যার, প্রোডাক্টের কন্ডিশন জানতে পেজটি দেখুন।")
+        product_id = _extract_product_id(product_url)
+        api_reply = fetch_condition_template(product_id) if product_id else None
+        reply = (api_reply or
+                 (f"স্যার, {title} এর কন্ডিশন জানতে প্রোডাক্ট পেজটি দেখুন।"
+                  if title else "স্যার, প্রোডাক্টের কন্ডিশন জানতে পেজটি দেখুন।"))
     else:
         reply = f"স্যার, {title} এর বিস্তারিত তথ্য প্রোডাক্ট পেজে পাবেন।" if title else "স্যার, বিস্তারিত জানতে প্রোডাক্ট পেজটি দেখুন।"
 
@@ -495,11 +508,15 @@ def handle_fallback(ctx: Dict, user_id: str, message: str,
                     'product_clarification', ic
                 )
             top = prev_products[0]
-            return _ok(
-                f"স্যার, {top.get('title', 'এই প্রোডাক্টটি')} নতুন প্রোডাক্ট। "
-                "বিস্তারিত জানতে প্রোডাক্ট পেজটি দেখুন।" + LOOP_BACK,
-                'product_condition', ic
-            )
+            product_url_fb = top.get('url', '')
+            product_id = _extract_product_id(product_url_fb)
+            api_reply = fetch_condition_template(product_id) if product_id else None
+            condition_text = (api_reply or
+                              f"স্যার, {top.get('title', 'এই প্রোডাক্টটি')} এর কন্ডিশন জানতে "
+                              "প্রোডাক্ট পেজটি দেখুন।")
+            buttons = [{'text': 'View Product', 'url': product_url_fb,
+                        'title': top.get('title', '')}] if product_url_fb else []
+            return _ok(condition_text + LOOP_BACK, 'product_condition', ic, link_buttons=buttons)
     if ctx.get('category'):
         return handle_product_search(ctx, user_id, message)
     ic = normalize_payload(load_context(user_id))

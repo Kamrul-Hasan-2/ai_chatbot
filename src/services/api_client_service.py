@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from models.chatbot_config import (
-    API_KEY, SEARCH_URL, DELIVERY_URL,
+    API_KEY, SEARCH_URL, DELIVERY_URL, CONDITION_URL,
     ASSIGN_AGENT_URL, ASSIGN_AGENT_KEY,
     ASSIGN_BOT_URL, RESPONDER_URL, RESPONDER_KEY,
     HISTORY_URL, HISTORY_LIMIT,
@@ -256,6 +256,22 @@ def _parse_template(data: Any) -> Optional[str]:
             if isinstance(v, str) and v.strip():
                 return v.strip()
     return None
+
+
+# ── Condition template ────────────────────────────────────────────────────────
+
+def fetch_condition_template(product_id: str) -> Optional[str]:
+    """Fetch product condition info (new/used) from ai_template API."""
+    try:
+        resp = requests.get(CONDITION_URL,
+                            params={'intent': 'condition', 'id': product_id, 'key': API_KEY},
+                            timeout=10)
+        if resp.status_code != 200:
+            return None
+        return _parse_template(resp.json() if resp.text else {})
+    except Exception as e:
+        logger.warning("fetch_condition_template failed: %s", e)
+        return None
 
 
 # ── Save message ──────────────────────────────────────────────────────────────
