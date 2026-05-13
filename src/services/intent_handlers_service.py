@@ -80,7 +80,7 @@ def _build_broader_keywords(ctx: Dict) -> str:
 
 
 def _format_listing(products: List[Dict]) -> Tuple[str, List[Dict]]:
-    lines = ["স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:\n"]
+    lines = []
     buttons = []
     for i, p in enumerate(products[:3], 1):
         title = p.get('title', 'N/A')
@@ -397,20 +397,19 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
     products = result['products']
     set_product_context(user_id, products[:5])
     text, buttons = _format_listing(products[:3])
-    # Add budget note when price filter was applied
     title_kw = (ctx.get('title') or '').lower().strip()
-    if price_max and price_min:
-        note = f"স্যার, ৳{price_min:,} - ৳{price_max:,} বাজেটে এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
-    elif price_max:
-        note = f"স্যার, ৳{price_max:,} এর মধ্যে এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
-    elif price_min:
-        note = f"স্যার, ৳{price_min:,} এর উপরে এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
-    else:
-        note = ''
     # Warn if specific model/type requested but results don't match
     if title_kw and not any(title_kw in p.get('title', '').lower() for p in products):
-        note = f"স্যার, এই বাজেটে '{ctx.get('title')}' পাওয়া যায়নি। কাছাকাছি অপশন:\n\n"
-    return _ok(note + text, 'product_search', ic, products=products, link_buttons=buttons)
+        header = f"স্যার, এই বাজেটে '{ctx.get('title')}' পাওয়া যায়নি। কাছাকাছি অপশন:\n\n"
+    elif price_max and price_min:
+        header = f"স্যার, ৳{price_min:,} - ৳{price_max:,} বাজেটে এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
+    elif price_max:
+        header = f"স্যার, ৳{price_max:,} এর মধ্যে এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
+    elif price_min:
+        header = f"স্যার, ৳{price_min:,} এর উপরে এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
+    else:
+        header = "স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
+    return _ok(header + text, 'product_search', ic, products=products, link_buttons=buttons)
 
 
 def handle_price_query(ctx: Dict, user_id: str, message: str) -> Dict:
