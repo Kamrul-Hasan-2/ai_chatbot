@@ -152,22 +152,23 @@ def handle_buy(ctx: Dict, user_id: str, message: str) -> Dict:
     ic = normalize_payload(load_context(user_id))
     prev_products = get_product_context(user_id)
     buttons = []
+    # Show Order Now only for the most recently viewed single product
     if prev_products:
-        for p in prev_products[:3]:
-            url = p.get('url', '')
-            title = (p.get('title') or 'প্রোডাক্ট দেখুন')[:40]
-            if url:
-                buttons.append({'text': 'Order Now', 'url': url, 'title': title})
+        p = prev_products[0]
+        url = p.get('url', '')
+        title = (p.get('title') or 'প্রোডাক্ট দেখুন')[:40]
+        if url:
+            buttons.append({'text': 'Order Now', 'url': url, 'title': title})
     if not buttons:
-        buttons = [{'text': 'Shopping Guide',
-                    'url': 'https://www.bdstall.com/blog/safe-shopping-guide/'}]
+        buttons = [{'text': 'BDStall.com দেখুন', 'url': 'https://www.bdstall.com/'}]
     return _ok(
         "স্যার, অর্ডার করার নিয়ম:\n\n"
-        "১. www.bdstall.com-এ গিয়ে প্রোডাক্ট সিলেক্ট করুন\n"
-        "২. 'Order Now' বাটনে ক্লিক করুন\n"
-        "৩. আপনার নাম, ঠিকানা ও ফোন নম্বর দিন\n"
-        "৪. অর্ডার কনফার্ম করুন\n\n"
-        "✅ Cash on Delivery সুবিধাও পাওয়া যায়। আমাদের টিম আপনাকে কল করে কনফার্ম করবে।"
+        "১. পছন্দের প্রোডাক্টের 'Order Now' বাটনে ক্লিক করুন\n"
+        "২. আপনার নাম, ঠিকানা ও ফোন নম্বর দিন\n"
+        "৩. অর্ডার সাবমিট করুন\n\n"
+        "✅ ক্যাশ অন ডেলিভারি সুবিধা পাওয়া যায়। "
+        "আমাদের টিম আপনাকে কল করে অর্ডার কনফার্ম করবে।\n\n"
+        "আরও সাহায্যের জন্য 👉 www.bdstall.com ভিজিট করুন।"
         + LOOP_BACK,
         'buy', ic, link_buttons=buttons
     )
