@@ -279,7 +279,7 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                             break
             if prev_cat:
                 merged['category'] = prev_cat
-        if has_budget and merged.get('category'):
+        if has_budget and merged.get('category') and groq_result['intent'] not in ('buy', 'greeting', 'goodbye', 'thanks', 'exit', 'delivery', 'faq', 'complaint', 'human_request', 'seller_query', 'hate_speech'):
             groq_result['intent'] = 'product_search'
 
         # ── STEP 4: handle_intent ────────────────────────────────────────────

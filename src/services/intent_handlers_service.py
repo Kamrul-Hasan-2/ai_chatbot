@@ -125,9 +125,9 @@ def _extract_keywords_from_url(url: str) -> str:
 def handle_greeting(ctx: Dict, user_id: str, message: str) -> Dict:
     from repositories.state_repository import clear_product_state, set_session_category
     clear_product_state(user_id)
-    set_session_category(user_id, '')  # clear stale category so next query starts fresh
-    ic = normalize_payload(load_context(user_id))
-    ic['cat'] = ''  # also clear cat in intent_content saved to DB
+    set_session_category(user_id, '')
+    # Reset all context so stale category/price don't bleed into next conversation
+    ic = {'title': '', 'cat': '', 'brand': '', 'price_max': 0, 'price_min': 0, 'compare': '', 'buy': ''}
     return _ok("ওয়ালাইকুম আসসালাম! 😊 BDStall-এ স্বাগতম। আপনি কোন প্রোডাক্টটি খুঁজছেন?", 'greeting', ic)
 
 
@@ -302,7 +302,7 @@ def handle_clarification_selection(user_id: str, message: str) -> Optional[Dict]
         return None
     msg = message.strip()
     # Match leading number: "1", "1.", "1)", "#1", or message starting with product title fragment
-    num_match = re.match(r'^[#\s]*([123])[.):\s]', msg)
+    num_match = re.match(r'^[#\s]*([123])[.):\s]?$|^[#\s]*([123])[.):\s]', msg)
     if not num_match:
         # Try matching by product title keyword
         for i, p in enumerate(prev_products[:3]):
@@ -312,7 +312,7 @@ def handle_clarification_selection(user_id: str, message: str) -> Optional[Dict]
                 break
     if not num_match:
         return None
-    idx = int(num_match.group(1)) - 1
+    idx = int(num_match.group(1) or num_match.group(2)) - 1
     if idx < 0 or idx >= len(prev_products):
         return None
     selected = prev_products[idx]
