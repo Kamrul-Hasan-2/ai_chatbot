@@ -217,11 +217,24 @@ _WARRANTY_RESPONSE = (
 )
 
 
+_SHOWROOM_WORDS = {
+    'showroom', 'show room', 'শোরুম', 'শো রুম', 'office', 'অফিস',
+    'address', 'ঠিকানা', 'location', 'লোকেশন', 'kothay', 'কোথায়',
+}
+
+_SHOWROOM_RESPONSE = (
+    "বিডিস্টলের নির্দিষ্ট কোনো শোরুম নেই। তবে এখানে অনেক বিক্রেতা আছেন, "
+    "আপনি চাইলে তাদের দেখতে পারেন: 👉 www.bdstall.com"
+)
+
+
 def handle_faq(ctx: Dict, user_id: str, message: str, faq_db: List) -> Dict:
     ic = intent_to_normalized(ctx)
     msg_lower = message.lower()
     if any(w in msg_lower for w in _WARRANTY_WORDS):
         return _ok(_WARRANTY_RESPONSE + LOOP_BACK, 'faq_warranty', ic)
+    if any(w in msg_lower for w in _SHOWROOM_WORDS):
+        return _ok(_SHOWROOM_RESPONSE + LOOP_BACK, 'faq_showroom', ic)
     faq = search_faq(message, faq_db)
     if faq:
         return _ok(faq + LOOP_BACK, 'faq', ic)
@@ -582,6 +595,10 @@ def handle_fallback(ctx: Dict, user_id: str, message: str,
     if any(w in msg_lower for w in _WARRANTY_WORDS):
         ic = normalize_payload(load_context(user_id))
         return _ok(_WARRANTY_RESPONSE + LOOP_BACK, 'faq_warranty', ic)
+    # Showroom / address / location questions get the fixed response
+    if any(w in msg_lower for w in _SHOWROOM_WORDS):
+        ic = normalize_payload(load_context(user_id))
+        return _ok(_SHOWROOM_RESPONSE + LOOP_BACK, 'faq_showroom', ic)
     # If products were shown, handle product-specific questions
     prev_products = get_product_context(user_id)
     if prev_products:
