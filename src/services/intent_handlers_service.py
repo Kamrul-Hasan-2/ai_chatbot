@@ -372,15 +372,15 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
                 cat_kw = ctx.get('category', '').lower().split()[0] if ctx.get('category') else ''
                 filtered = [p for p in no_budget_retry['products']
                             if not cat_kw or cat_kw in p.get('title', '').lower()]
-                if not filtered:
-                    filtered = no_budget_retry['products']  # fallback: use all if filter removes everything
-                result = {'products_found': len(filtered), 'products': filtered}
-                ic = intent_to_normalized(ctx)
-                products = filtered
-                set_product_context(user_id, products[:5])
-                text, buttons = _format_listing(products[:3])
-                note = "স্যার, এই বাজেটে সরাসরি কোনো প্রোডাক্ট পাওয়া যায়নি। কাছাকাছি দামে এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
-                return _ok(note + text, 'product_search', ic, products=products, link_buttons=buttons)
+                if filtered:
+                    result = {'products_found': len(filtered), 'products': filtered}
+                    ic = intent_to_normalized(ctx)
+                    products = filtered
+                    set_product_context(user_id, products[:5])
+                    text, buttons = _format_listing(products[:3])
+                    note = "স্যার, এই বাজেটে সরাসরি কোনো প্রোডাক্ট পাওয়া যায়নি। কাছাকাছি দামে এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
+                    return _ok(note + text, 'product_search', ic, products=products, link_buttons=buttons)
+                # filtered is empty — fall through to out-of-stock message below
 
     ic = intent_to_normalized(ctx)
 
