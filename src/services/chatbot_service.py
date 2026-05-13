@@ -207,6 +207,18 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         if groq_result['intent'] == 'greeting' and any(w in msg_lower for w in _SEARCH_OVERRIDE_WORDS):
             groq_result['intent'] = 'product_search'
 
+        # Hard override: comparison/recommendation words → comparison, never greeting
+        _COMPARISON_OVERRIDE_WORDS = {
+            'konti', 'konta', 'kunti', 'kunta', 'কোনটা', 'কোনটি',
+            'konti valo', 'konta valo', 'konti bhalo', 'konta bhalo',
+            'কোনটা ভালো', 'কোনটি ভালো', 'valo hobe', 'bhalo hobe',
+            'ভালো হবে', 'better', 'best', 'which one', 'recommend',
+            'suggest', 'shera', 'সেরা',
+        }
+        if (groq_result['intent'] in ('greeting', 'unknown')
+                and any(w in msg_lower for w in _COMPARISON_OVERRIDE_WORDS)):
+            groq_result['intent'] = 'comparison'
+
         # Hard override: buy-process keywords always → buy, regardless of Groq
         _BUY_SIGNALS = {
             'how to buy', 'how to order', 'how to purchase',

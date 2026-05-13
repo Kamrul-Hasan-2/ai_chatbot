@@ -176,6 +176,23 @@ def handle_buy(ctx: Dict, user_id: str, message: str) -> Dict:
 
 def handle_comparison(ctx: Dict, user_id: str, message: str) -> Dict:
     ic = intent_to_normalized(ctx)
+    prev_products = get_product_context(user_id)
+    if prev_products:
+        top = prev_products[0]
+        title = top.get('title', '')
+        price = top.get('price', '')
+        url = top.get('url', '')
+        lines = [f"স্যার, দেখানো প্রোডাক্টগুলোর মধ্যে এটি সবচেয়ে ভালো হবে:", ""]
+        if title:
+            lines.append(f"📦 {title}")
+        if price:
+            lines.append(f"💰 মূল্য: {price}")
+        lines.append("")
+        lines.append("রিভিউ ও বিস্তারিত দেখে পছন্দ হলে অর্ডার করতে পারেন।")
+        lines.append(LOOP_BACK)
+        buttons = [{'text': 'View Product', 'url': url, 'title': title,
+                    'price': price}] if url else _comparison_buttons(ctx)
+        return _ok('\n'.join(lines), 'comparison', ic, link_buttons=buttons)
     return _ok(
         "স্যার, আমাদের সকল প্রোডাক্টেই ভালো রেটিং এবং রিভিউ আছে। "
         "রিভিউ দেখে পছন্দের প্রোডাক্টটি নিতে পারেন: 👉 www.bdstall.com"
