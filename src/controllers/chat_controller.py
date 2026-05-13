@@ -341,6 +341,25 @@ def _send_facebook_payload(recipient_id: str, payload: dict) -> bool:
         return False
 
 
+def _send_typing_indicator(recipient_id: str, on: bool = True) -> None:
+    """Send typing_on or typing_off sender action to Messenger."""
+    if not PAGE_ACCESS_TOKEN or not recipient_id:
+        return
+    action = "typing_on" if on else "typing_off"
+    payload = {
+        "recipient": {"id": recipient_id},
+        "sender_action": action,
+    }
+    try:
+        requests.post(
+            f"https://graph.facebook.com/v25.0/me/messages?access_token={PAGE_ACCESS_TOKEN}",
+            json=payload,
+            timeout=5,
+        )
+    except Exception:
+        pass
+
+
 def _split_messenger_text(message_text: str, chunk_size: int = MESSENGER_SAFE_CHUNK_SIZE) -> list[str]:
     """Split long message text into Messenger-safe chunks without cutting words aggressively."""
     text = str(message_text or '').strip()
@@ -1224,6 +1243,8 @@ def messenger_webhook():
 
                 processed_count += 1
 
+                _send_typing_indicator(sender_id, on=True)
+
                 result = _process_user_message(
                     user_id=sender_id,
                     message=message_text,
@@ -1233,6 +1254,8 @@ def messenger_webhook():
                 )
                 response_text = (result.get('response') or '').strip()
                 link_buttons = result.get('link_buttons') or []
+
+                _send_typing_indicator(sender_id, on=False)
 
                 # In HUMAN handoff mode, chatbot intentionally returns empty response.
                 if not response_text:
