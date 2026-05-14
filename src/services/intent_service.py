@@ -3,6 +3,7 @@ src/services/intent_service.py — intent detection, context merge, normalisatio
 
 Public functions:
   detect_intent(message, history, prev_ctx, category_names, groq_client, model)
+  apply_post_groq_overrides(groq_result, message, prev_ctx)
   merge_context(groq_result, prev_ctx, intent, clear_fn)
   normalize_payload(ctx)
   intent_to_normalized(merged)
@@ -398,6 +399,126 @@ def merge_context(groq_result: Dict, prev: Dict, intent: str, clear_fn) -> Dict:
         'price_min':      (new_ent['price_min'] if new_ent.get('price_min') is not None else prev_price_min),
         'prev_price_min': prev_price_min,
         'updated_at':     datetime.now().isoformat(),
+    }
+
+
+# ── Post-Groq override rules ─────────────────────────────────────────────────
+#
+# Groq sometimes misclassifies in predictable ways. Rather than fixing the
+# prompt for every edge case, we apply deterministic rule-based corrections
+# AFTER Groq returns. Each rule below is keyed to a real bug we've hit in
+# production.
+
+_BUDGET_ONLY_PRE_RE = re.compile(
+    r'^[\s\W]*(?:'
+    r'(?:under|within|modde|budget|er modde|er vitor|vitor|মধ্যে|এর মধ্যে|below|less than|'
+    r'over|above|avobe|upore|উপরে|বেশি|beshi|more than|er upore|er beshi|minimum|'
+    r'amar budget|budget|দাম|price|taka|টাকা|takar|টাকার)'
+    r'[\s\W]*)*'
+    r'(?:\d+(?:\.\d+)?)\s*'
+    r'(?:k|tk|taka|হাজার|টাকা|hazar|lakh|lac|lacs|lakhs|লাখ|লক্ষ|takar|টাকার)?\s*'
+    r'(?:upore|উপরে|beshi|বেশি|above|over|er upore|er beshi|'
+    r'modde|vitor|মধ্যে|এর মধ্যে|er modde|er vitor|within|under|below|'
+    r'taka|টাকা|takar|টাকার)?'
+    r'[\s\W]*$',
+    re.IGNORECASE,
+)
+
+_OVER_SIGNALS = (
+    'upore', 'উপরে', 'beshi', 'বেশি', 'above', 'over',
+    'more than', 'er upore', 'er beshi', 'minimum',
+    'theke beshi', 'theke upore', 'avobe',
+)
+_UNDER_SIGNALS = (
+    'under', 'within', 'modde', 'মধ্যে', 'এর মধ্যে',
+    'below', 'less than', 'er modde', 'er vitor', 'vitor',
+)
+
+_SEARCH_OVERRIDE_WORDS = {
+    'dekhan', 'dekhao', 'দেখান', 'দেখাও', 'lagbe', 'লাগবে',
+    'ase', 'আছে', 'chai', 'চাই', 'khujchi', 'khujtasi', 'show me',
+}
+
+_COMPARISON_OVERRIDE_WORDS = {
+    'konti', 'konta', 'kunti', 'kunta', 'কোনটা', 'কোনটি',
+    'konti valo', 'konta valo', 'konti bhalo', 'konta bhalo',
+    'কোনটা ভালো', 'কোনটি ভালো', 'valo hobe', 'bhalo hobe',
+    'ভালো হবে', 'better', 'best', 'which one', 'recommend',
+    'suggest', 'shera', 'সেরা',
+}
+
+_BUY_SIGNALS = {
+    'how to buy', 'how to order', 'how to purchase',
+    'kibabe kinbo', 'kivabe kinbo', 'kibhabe kinbo',
+    'kibabe order', 'kivabe order', 'order korbo kibabe', 'order korbo kivabe',
+    'kinte chai', 'kinbo kibabe', 'kinbo kivabe',
+    'কিভাবে কিনবো', 'কিনতে চাই', 'কিভাবে অর্ডার',
+    'payment method', 'cash on delivery', ' cod ',
+}
+
+
+def apply_post_groq_overrides(
+    groq_result: Dict,
+    message: str,
+    prev_ctx: Optional[Dict] = None,
+) -> Dict[str, Any]:
+    """Apply deterministic corrections to Groq's intent/entities output.
+
+    Returns a dict with:
+      - groq_result: the (possibly mutated) groq_result
+      - prev_ctx:    the (possibly mutated) prev_ctx dict
+      - is_pure_budget_msg: True when message is a pure budget refinement
+
+    Mutates prev_ctx in place when present (to drop stale titles); callers
+    that pass None get a no-op prev_ctx in the return.
+    """
+    msg_lower = (message or '').lower().strip()
+    prev_ctx = prev_ctx if isinstance(prev_ctx, dict) else {}
+
+    # Rule 1 — pure budget refinement: strip any title Groq returned AND
+    # mark prev_ctx to drop its stale title. This must run BEFORE merge so
+    # merge_context can't fall back to a stale prev_title.
+    is_pure_budget_msg = bool(_BUDGET_ONLY_PRE_RE.match(msg_lower))
+    if is_pure_budget_msg:
+        groq_result['entities']['title'] = ''
+        prev_ctx['title'] = ''
+        prev_ctx['prev_title'] = ''
+        logger.info("Pure budget message detected — pre-clearing titles")
+
+    # Rule 2 — budget over/under post-correction: Groq sometimes flips
+    # over→max. Re-run regex extraction and override when the message has
+    # explicit over/under signals.
+    has_over = any(s in msg_lower for s in _OVER_SIGNALS)
+    has_under = any(s in msg_lower for s in _UNDER_SIGNALS)
+    if has_over or has_under:
+        regex_budget = extract_budget_range(message)
+        r_min = regex_budget.get('min_price')
+        r_max = regex_budget.get('max_price')
+        if has_over and r_min is not None:
+            groq_result['entities']['price_min'] = r_min
+            groq_result['entities']['price_max'] = None
+        elif has_under and r_max is not None:
+            groq_result['entities']['price_max'] = r_max
+            groq_result['entities']['price_min'] = None
+
+    # Rule 3 — search words + brand/category = product_search, never greeting
+    if (groq_result['intent'] == 'greeting'
+            and any(w in msg_lower for w in _SEARCH_OVERRIDE_WORDS)):
+        groq_result['intent'] = 'product_search'
+
+    # Rule 4 — comparison/recommendation words → comparison, never greeting
+    if (groq_result['intent'] in ('greeting', 'unknown')
+            and any(w in msg_lower for w in _COMPARISON_OVERRIDE_WORDS)):
+        groq_result['intent'] = 'comparison'
+
+    # Rule 5 — buy-process keywords always → buy, regardless of Groq
+    if any(sig in msg_lower for sig in _BUY_SIGNALS):
+        groq_result['intent'] = 'buy'
+
+    return {
+        'groq_result': groq_result,
+        'prev_ctx': prev_ctx,
+        'is_pure_budget_msg': is_pure_budget_msg,
     }
 
 

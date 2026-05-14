@@ -37,6 +37,7 @@ from repositories.state_repository import (
 from services.intent_service import (
     detect_intent, merge_context,
     resolve_category, normalize_payload,
+    apply_post_groq_overrides, resolve_category_from_message,
 )
 from services.intent_handlers_service import (
     handle_greeting, handle_goodbye, handle_thanks, handle_exit,
@@ -189,7 +190,6 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
             groq_result['entities']['category'] = resolved
         else:
             # Groq missed category — scan message directly
-            from services.intent_service import resolve_category_from_message
             scanned = resolve_category_from_message(message, _categories)
             if scanned:
                 groq_result['entities']['category'] = scanned
@@ -197,85 +197,12 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                 if groq_result['intent'] == 'unknown':
                     groq_result['intent'] = 'product_search'
 
-        msg_lower = message.lower().strip()
-
-        # Pre-merge: pure budget refinement → strip any title Groq returned AND
-        # mark prev_ctx to drop its stale title. This is checked BEFORE merge so
-        # merge_context can't fall back to a stale prev_title.
-        _budget_only_pre_re = re.compile(
-            r'^[\s\W]*(?:'
-            r'(?:under|within|modde|budget|er modde|er vitor|vitor|মধ্যে|এর মধ্যে|below|less than|'
-            r'over|above|avobe|upore|উপরে|বেশি|beshi|more than|er upore|er beshi|minimum|'
-            r'amar budget|budget|দাম|price|taka|টাকা|takar|টাকার)'
-            r'[\s\W]*)*'
-            r'(?:\d+(?:\.\d+)?)\s*'
-            r'(?:k|tk|taka|হাজার|টাকা|hazar|lakh|lac|lacs|lakhs|লাখ|লক্ষ|takar|টাকার)?\s*'
-            r'(?:upore|উপরে|beshi|বেশি|above|over|er upore|er beshi|'
-            r'modde|vitor|মধ্যে|এর মধ্যে|er modde|er vitor|within|under|below|'
-            r'taka|টাকা|takar|টাকার)?'
-            r'[\s\W]*$',
-            re.IGNORECASE,
-        )
-        _is_pure_budget_msg = bool(_budget_only_pre_re.match(msg_lower))
-        if _is_pure_budget_msg:
-            groq_result['entities']['title'] = ''
-            # Mutate prev_ctx so merge_context doesn't inherit the stale title.
-            if isinstance(prev_ctx, dict):
-                prev_ctx['title'] = ''
-                prev_ctx['prev_title'] = ''
-            logger.info("Pure budget message detected — pre-clearing titles")
-
-        # Budget post-correction: Groq sometimes flips over→max. Re-run regex
-        # extraction and override when the message has explicit over/under signals.
-        from services.intent_service import extract_budget_range
-        _OVER_SIGNALS = ('upore', 'উপরে', 'beshi', 'বেশি', 'above', 'over',
-                         'more than', 'er upore', 'er beshi', 'minimum',
-                         'theke beshi', 'theke upore', 'avobe')
-        _UNDER_SIGNALS = ('under', 'within', 'modde', 'মধ্যে', 'এর মধ্যে',
-                          'below', 'less than', 'er modde', 'er vitor', 'vitor')
-        has_over = any(s in msg_lower for s in _OVER_SIGNALS)
-        has_under = any(s in msg_lower for s in _UNDER_SIGNALS)
-        if has_over or has_under:
-            regex_budget = extract_budget_range(message)
-            r_min, r_max = regex_budget.get('min_price'), regex_budget.get('max_price')
-            if has_over and r_min is not None:
-                groq_result['entities']['price_min'] = r_min
-                groq_result['entities']['price_max'] = None
-            elif has_under and r_max is not None:
-                groq_result['entities']['price_max'] = r_max
-                groq_result['entities']['price_min'] = None
-
-        # Hard override: search words + brand/category = product_search, never greeting
-        _SEARCH_OVERRIDE_WORDS = {
-            'dekhan', 'dekhao', 'দেখান', 'দেখাও', 'lagbe', 'লাগবে',
-            'ase', 'আছে', 'chai', 'চাই', 'khujchi', 'khujtasi', 'show me',
-        }
-        if groq_result['intent'] == 'greeting' and any(w in msg_lower for w in _SEARCH_OVERRIDE_WORDS):
-            groq_result['intent'] = 'product_search'
-
-        # Hard override: comparison/recommendation words → comparison, never greeting
-        _COMPARISON_OVERRIDE_WORDS = {
-            'konti', 'konta', 'kunti', 'kunta', 'কোনটা', 'কোনটি',
-            'konti valo', 'konta valo', 'konti bhalo', 'konta bhalo',
-            'কোনটা ভালো', 'কোনটি ভালো', 'valo hobe', 'bhalo hobe',
-            'ভালো হবে', 'better', 'best', 'which one', 'recommend',
-            'suggest', 'shera', 'সেরা',
-        }
-        if (groq_result['intent'] in ('greeting', 'unknown')
-                and any(w in msg_lower for w in _COMPARISON_OVERRIDE_WORDS)):
-            groq_result['intent'] = 'comparison'
-
-        # Hard override: buy-process keywords always → buy, regardless of Groq
-        _BUY_SIGNALS = {
-            'how to buy', 'how to order', 'how to purchase',
-            'kibabe kinbo', 'kivabe kinbo', 'kibhabe kinbo',
-            'kibabe order', 'kivabe order', 'order korbo kibabe', 'order korbo kivabe',
-            'kinte chai', 'kinbo kibabe', 'kinbo kivabe',
-            'কিভাবে কিনবো', 'কিনতে চাই', 'কিভাবে অর্ডার',
-            'payment method', 'cash on delivery', ' cod ',
-        }
-        if any(sig in msg_lower for sig in _BUY_SIGNALS):
-            groq_result['intent'] = 'buy'
+        # Apply deterministic post-Groq corrections (budget refinement,
+        # over/under signals, search/comparison/buy overrides).
+        override_result = apply_post_groq_overrides(groq_result, message, prev_ctx)
+        groq_result = override_result['groq_result']
+        prev_ctx = override_result['prev_ctx']
+        _is_pure_budget_msg = override_result['is_pure_budget_msg']
 
         logger.info("Intent=%s entities=%s followup=%s",
                     groq_result['intent'], groq_result['entities'],
