@@ -738,13 +738,42 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
     top = prev_products[0] if prev_products else {}
     title = top.get('title', '')
 
+    _SPEC_SIGNALS = {
+        'ram', 'gb', 'storage', 'memory', 'processor', 'cpu', 'battery', 'mah',
+        'display', 'screen', 'camera', 'mp', 'os', 'weight', 'configuration',
+        'hard disk', 'ssd', 'hdd', 'ghz', 'chipset', 'graphics', 'gpu',
+        'র‍্যাম', 'প্রসেসর', 'ব্যাটারি', 'ডিসপ্লে', 'ক্যামেরা',
+        'spec', 'specification', 'full spec',
+    }
+    _COLOR_SIZE_SIGNALS = {
+        'color', 'colour', 'rong', 'রং', 'রঙ', 'ki ki color', 'কি কি রং',
+        'size', 'সাইজ', 'কত সাইজ', 'variant', 'option',
+    }
+    _STOCK_SIGNALS = {
+        'stock', 'available', 'পাবো', 'pabo', 'পাওয়া যাবে', 'ache', 'আছে কি',
+    }
+
+    buttons = [{'text': 'View Product', 'url': product_url, 'title': title}] if product_url else []
+
     if any(w in msg for w in ('price', 'dam', 'দাম', 'koto', 'কত', 'মূল্য')):
         price = top.get('price', 'N/A')
         reply = f"স্যার, {title} এর মূল্য {price}।" if title else "স্যার, দাম জানতে লিংকটি দেখুন।"
+
     elif any(w in msg for w in ('warranty', 'warenty', 'guarantee', 'ওয়ারেন্টি')):
         reply = "স্যার, ওয়ারেন্টি সংক্রান্ত বিস্তারিত তথ্য প্রোডাক্ট পেজে দেওয়া আছে।"
-    elif any(w in msg for w in ('stock', 'ache', 'available', 'পাবো', 'pabo')):
-        reply = "স্যার, স্টক আপডেট জানতে প্রোডাক্ট পেজটি দেখুন।"
+
+    elif any(w in msg for w in _STOCK_SIGNALS):
+        reply = (f"স্যার, {title} এর স্টক তথ্য প্রতিনিয়ত আপডেট হয়। "
+                 "সর্বশেষ স্টক জানতে প্রোডাক্ট পেজটি দেখুন।"
+                 if title else
+                 "স্যার, স্টক আপডেট জানতে প্রোডাক্ট পেজটি দেখুন।")
+
+    elif any(w in msg for w in _COLOR_SIZE_SIGNALS):
+        reply = (f"স্যার, {title} এর রং ও ভেরিয়েন্ট তথ্য প্রোডাক্ট পেজে দেওয়া আছে। "
+                 "স্টক ও রং প্রতিনিয়ত পরিবর্তন হয়, তাই সরাসরি পেজটি দেখুন।"
+                 if title else
+                 "স্যার, রং ও সাইজ সংক্রান্ত তথ্য প্রোডাক্ট পেজে পাবেন।")
+
     elif any(w in msg for w in ('used', 'new', 'notun', 'purano', 'second hand',
                                 'refurbished', 'condition', 'কন্ডিশন', 'fresh')):
         product_id = _extract_product_id(product_url)
@@ -752,13 +781,21 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
         reply = (api_reply or
                  (f"স্যার, {title} এর কন্ডিশন জানতে প্রোডাক্ট পেজটি দেখুন।"
                   if title else "স্যার, প্রোডাক্টের কন্ডিশন জানতে পেজটি দেখুন।"))
+
+    elif any(w in msg for w in _SPEC_SIGNALS):
+        # Spec question — delegate to handle_product_spec_query for DB lookup.
+        # Defined later in this file; forward reference is fine at call time.
+        ctx_for_spec = {'category': '', 'brand': '', 'title': title}
+        return handle_product_spec_query(ctx_for_spec, user_id, message)
+
     else:
-        reply = f"স্যার, {title} এর বিস্তারিত তথ্য প্রোডাক্ট পেজে পাবেন।" if title else "স্যার, বিস্তারিত জানতে প্রোডাক্ট পেজটি দেখুন।"
+        reply = (f"স্যার, {title} সম্পর্কে আরও বিস্তারিত জানতে প্রোডাক্ট পেজটি দেখুন।"
+                 if title else "স্যার, বিস্তারিত জানতে প্রোডাক্ট পেজটি দেখুন।")
 
     return _ok(
         reply + LOOP_BACK,
         'product_detail_followup', ic,
-        link_buttons=[{'text': 'View Product', 'url': product_url, 'title': title}]
+        link_buttons=buttons
     )
 
 
@@ -1030,11 +1067,26 @@ def handle_product_spec_query(ctx: Dict, user_id: str, message: str,
         logger.info("handle_product_spec_query: Groq review-based answer returned")
         return _ok(groq_answer + LOOP_BACK, 'product_spec_query', ic)
 
-    # ── Nothing found — redirect to product page with link ───────────────────
-    reply = (f"স্যার, এই তথ্যটি আমাদের ডেটাবেজে পাওয়া যাচ্ছে না। "
-             f"বিস্তারিত জানতে প্রোডাক্ট পেজটি দেখুন।"
-             if title else
-             "স্যার, বিস্তারিত তথ্য প্রোডাক্ট পেজে পাবেন।")
+    # ── Nothing found — warm redirect with product page link ─────────────────
+    _LIVE_INVENTORY_WORDS = {
+        'color', 'colour', 'rong', 'রং', 'রঙ',
+        'size', 'সাইজ', 'variant',
+        'stock', 'available', 'ache', 'আছে',
+    }
+    if any(w in msg for w in _LIVE_INVENTORY_WORDS):
+        reply = (
+            f"স্যার, রং, সাইজ ও স্টক তথ্য প্রতিনিয়ত পরিবর্তন হয়, "
+            f"তাই আমাদের ডেটাবেজে সবসময় আপডেট থাকে না। "
+            f"সর্বশেষ তথ্য জানতে প্রোডাক্ট পেজটি দেখুন"
+            + (f" অথবা আমাদের টিমের সাথে যোগাযোগ করুন।" if title else "।")
+        )
+    else:
+        reply = (
+            f"স্যার, এই তথ্যটি এই মুহূর্তে আমাদের কাছে নেই। "
+            f"বিস্তারিত জানতে প্রোডাক্ট পেজটি দেখুন।"
+            if title else
+            "স্যার, বিস্তারিত তথ্য প্রোডাক্ট পেজে পাবেন।"
+        )
     buttons = [{'text': 'View Product', 'url': product_url,
                 'title': title}] if product_url else []
     return _ok(reply + LOOP_BACK, 'product_spec_query', ic, link_buttons=buttons)

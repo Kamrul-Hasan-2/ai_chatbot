@@ -229,8 +229,17 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                                    (datetime.now() - start_time).total_seconds(),
                                    user_message=message, profile=profile)
 
-        # Product detail follow-up
-        product_url = get_product_url(user_id) or prev_ctx.get('product_url', '')
+        # Product detail follow-up.
+        # Fire when either: (a) a specific product URL was pinned via set_product_url,
+        # or (b) products from a search result are cached — use the first result's URL.
+        # Without (b), questions like "ki ki color ase" after a search result bypassed
+        # this intercept and hit Groq cold, producing a new product search instead.
+        from repositories.state_repository import get_product_context as _gpc_early
+        _cached_products_early = _gpc_early(user_id)
+        product_url = (get_product_url(user_id)
+                       or prev_ctx.get('product_url', '')
+                       or (_cached_products_early[0].get('url', '')
+                           if _cached_products_early else ''))
         if product_url:
             detail = handle_product_detail_followup(prev_ctx, user_id, message, product_url)
             if detail:
