@@ -756,9 +756,11 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
     buttons = [{'text': 'View Product', 'url': product_url, 'title': title}] if product_url else []
 
     if any(w in msg for w in ('price', 'dam', 'দাম', 'koto', 'কত', 'মূল্য')):
-        price = top.get('price', 'N/A')
-        if title:
+        price = str(top.get('price') or '').strip()
+        if price:
             reply = f"💰 মূল্য\n━━━━━━━━━━━━━━━\n{price}"
+        elif title:
+            reply = f"💰 মূল্য\n━━━━━━━━━━━━━━━\n{title} এর সর্বশেষ মূল্য জানতে প্রোডাক্ট পেজটি দেখুন।"
         else:
             reply = "স্যার, দাম জানতে প্রোডাক্ট পেজটি দেখুন।"
 
