@@ -901,48 +901,32 @@ def handle_product_spec_query(ctx: Dict, user_id: str, message: str,
 
     if wants_full or not features:
         if features:
-            lines = [f"স্যার, **{title}** এর স্পেসিফিকেশন:", ""]
+            lines = [f"📋 {title}", "─────────────────────", ""]
             for feat_name, feat_val in list(features.items())[:15]:
-                lines.append(f"• {feat_name}: {feat_val}")
+                lines.append(f"▪ {feat_name}: {feat_val}")
+            lines.append("")
             lines.append(LOOP_BACK)
-            return _ok('\n'.join(lines), 'product_spec_query', ic,
-                       link_buttons=[{'text': 'View Product', 'url': product_url,
-                                      'title': title}] if product_url else [])
+            return _ok('\n'.join(lines), 'product_spec_query', ic)
         # No features at all — fall through to review-based Groq answer
 
     # ── Try structured feature match first ────────────────────────────────────
     matched = _match_spec_key(msg, features)
     if matched:
         feat_name, feat_val = matched.split(': ', 1)
-        reply = f"স্যার, {title} এর {feat_name} হলো: **{feat_val}**।"
+        reply = f"✅ {feat_name}\n━━━━━━━━━━━━━━━\n{feat_val}"
         logger.info("handle_product_spec_query: structured match %r → %r", feat_name, feat_val)
-        return _ok(
-            reply + LOOP_BACK,
-            'product_spec_query', ic,
-            link_buttons=[{'text': 'View Product', 'url': product_url,
-                           'title': title}] if product_url else []
-        )
+        return _ok(reply + LOOP_BACK, 'product_spec_query', ic)
 
     # ── Groq constrained to this product's own review text ────────────────────
     groq_answer = _get_technical_answer_from_review(message, review, groq_client, groq_model)
     if groq_answer:
         logger.info("handle_product_spec_query: Groq review-based answer returned")
-        return _ok(
-            groq_answer + LOOP_BACK,
-            'product_spec_query', ic,
-            link_buttons=[{'text': 'View Product', 'url': product_url,
-                           'title': title}] if product_url else []
-        )
+        return _ok(groq_answer + LOOP_BACK, 'product_spec_query', ic)
 
     # ── Nothing found — redirect to product page ──────────────────────────────
     reply = (f"স্যার, এই তথ্যটি {title} এর পেজে বিস্তারিত দেওয়া আছে।"
              if title else "স্যার, বিস্তারিত তথ্য প্রোডাক্ট পেজে পাবেন।")
-    return _ok(
-        reply + LOOP_BACK,
-        'product_spec_query', ic,
-        link_buttons=[{'text': 'View Product', 'url': product_url,
-                       'title': title}] if product_url else []
-    )
+    return _ok(reply + LOOP_BACK, 'product_spec_query', ic)
 
 
 def handle_fallback(ctx: Dict, user_id: str, message: str,
