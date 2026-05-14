@@ -763,44 +763,151 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
 
 
 # ── Spec keyword → ListingFeatures key mapping ────────────────────────────────
-# Maps user message keywords to the exact ItemFeatureName values the API returns.
-# Add more rows here if you discover new feature names in the API response.
+# Real field names verified from the live API across product types:
+#   Laptop : Processor Type, Processor Speed, Chipset, Screen Size, RAM,
+#            Hard Disk, Disk Type, Graphics Card, Battery, Product Weight (Kg)
+#   Mobile : CPU, Display, RAM, Built In Memory, Battery Capacity, Camera,
+#            OS, Network, SIM, Weight
+#   TV     : Screen Size, Resolution, Refresh Rate, Panel, Technology
+#   AC     : BTU, Coverage, AC Type, Energy Efficient, Power Consumption
+#   Fridge : Capacity, Freezer Type, Dimension
+#   GPU    : Capacity (MB), Clock Speed, Memory Type, Graphics Processor
+#
+# Rule: first matching api_key with a non-empty value wins.
+# To add a new product type: just append a row — no other code needs changing.
 
 _SPEC_KEYWORD_MAP = [
-    # (message_keywords,                  api_feature_names)
-    (['ram', 'র‍্যাম'],                   ['RAM']),
-    (['storage', 'memory', 'built in',
-      'internal', 'হার্ড', 'hard'],       ['Built In Memory', 'Storage', 'Internal Memory']),
-    (['processor', 'cpu', 'chipset',
-      'প্রসেসর', 'chip'],                 ['Processor', 'CPU', 'Chipset']),
-    (['display', 'screen', 'inch',
-      'ডিসপ্লে', 'স্ক্রিন'],             ['Display', 'Screen Size', 'Display Size']),
-    (['battery', 'mah', 'ব্যাটারি'],      ['Battery', 'Battery Capacity']),
-    (['camera', 'mp', 'megapixel',
-      'ক্যামেরা'],                        ['Camera', 'Main Camera', 'Rear Camera',
-                                           'Primary Camera']),
-    (['os', 'operating system',
-      'windows', 'android', 'ios'],       ['Operating System', 'OS']),
-    (['weight', 'ওজন'],                   ['Weight']),
-    (['sim', 'সিম'],                      ['SIM']),
-    (['network', 'connectivity',
-      '5g', '4g', 'lte'],                 ['Network', 'Connectivity']),
-    (['gpu', 'graphics', 'gfx',
-      'গ্রাফিক্স'],                       ['GPU', 'Graphics', 'Graphics Card']),
-    (['color', 'colour', 'rong',
-      'রং', 'রঙ'],                        ['Color', 'Colour']),
+    # ── RAM ───────────────────────────────────────────────────────────────────
+    (['ram', 'র‍্যাম', 'memory gb', 'gb ram'],
+     ['RAM']),
+
+    # ── Processor / CPU ───────────────────────────────────────────────────────
+    # "speed" alone matches processor speed (not clock speed / refresh rate).
+    # Order matters: check Processor Speed before plain Processor Type.
+    (['processor speed', 'cpu speed', 'ghz', 'clock speed', 'processor frequency',
+      'প্রসেসর স্পিড'],
+     ['Processor Speed', 'Clock Speed']),
+
+    (['processor', 'cpu', 'chipset', 'প্রসেসর', 'chip', 'core'],
+     ['Processor Type', 'CPU', 'Processor', 'Chipset', 'Graphics Processor']),
+
+    # ── Storage / HDD / SSD ───────────────────────────────────────────────────
+    (['storage', 'hard disk', 'hdd', 'ssd', 'disk', 'hard drive',
+      'হার্ড', 'hard', 'built in', 'internal memory'],
+     ['Hard Disk', 'Built In Memory', 'Storage', 'Internal Memory']),
+
+    (['disk type', 'storage type'],
+     ['Disk Type']),
+
+    # ── Display / Screen ──────────────────────────────────────────────────────
+    (['display size', 'screen size', 'screen inch', 'display inch',
+      'কত ইঞ্চি', 'inch', 'ডিসপ্লে', 'স্ক্রিন'],
+     ['Screen Size', 'Display', 'Display Size']),
+
+    (['resolution', 'রেজোলিউশন'],
+     ['Resolution']),
+
+    (['refresh rate', 'hz', 'panel'],
+     ['Refresh Rate', 'Panel', 'Response Time']),
+
+    # ── Battery ───────────────────────────────────────────────────────────────
+    (['battery', 'mah', 'ব্যাটারি', 'backup', 'talk time', 'stand by'],
+     ['Battery Capacity', 'Battery', 'Talk Time', 'Stand By']),
+
+    # ── Camera ────────────────────────────────────────────────────────────────
+    (['camera', 'mp', 'megapixel', 'ক্যামেরা', 'selfie', 'front camera'],
+     ['Camera', 'Main Camera', 'Rear Camera', 'Primary Camera', 'Front Camera']),
+
+    # ── GPU / Graphics ────────────────────────────────────────────────────────
+    (['gpu', 'graphics', 'gfx', 'গ্রাফিক্স', 'graphics card', 'vram'],
+     ['Graphics Card', 'GPU', 'Graphics', 'Capacity (MB)', 'Memory Type']),
+
+    # ── OS ────────────────────────────────────────────────────────────────────
+    (['os', 'operating system', 'windows', 'android', 'ios', 'software',
+      'অপারেটিং'],
+     ['OS', 'Operating System', 'Software']),
+
+    # ── Weight ────────────────────────────────────────────────────────────────
+    (['weight', 'ওজন', 'kg', 'heavy'],
+     ['Product Weight (Kg)', 'Weight']),
+
+    # ── Network / Connectivity ────────────────────────────────────────────────
+    (['network', '5g', '4g', 'lte', 'wifi', 'wi-fi', 'bluetooth',
+      'connectivity', 'networking'],
+     ['Network', 'Networking', 'Connectivity', 'WLAN', 'Bluetooth']),
+
+    (['sim', 'সিম'],
+     ['SIM']),
+
+    # ── AC specific ───────────────────────────────────────────────────────────
+    (['btu', 'ton', 'কত টন'],
+     ['BTU']),
+
+    (['coverage', 'square feet', 'room size', 'area'],
+     ['Coverage']),
+
+    (['inverter', 'energy efficient', 'energy saving', 'power consumption'],
+     ['Energy Efficient', 'Power Consumption']),
+
+    (['ac type', 'split', 'window ac'],
+     ['AC Type']),
+
+    (['cooling speed', 'fan speed', 'airflow'],
+     ['Cooling Speed', 'Fan Speed', 'Air Control']),
+
+    # ── Fridge / freezer specific ─────────────────────────────────────────────
+    (['capacity', 'liter', 'litre', 'ধারণ ক্ষমতা', 'freezer'],
+     ['Capacity', 'Freezer Type']),
+
+    # ── TV specific ───────────────────────────────────────────────────────────
+    (['smart', 'hdmi', 'usb port', 'tv tuner', 'technology'],
+     ['Technology', 'Connectivity', 'TV Tuner']),
+
+    # ── Dimensions ────────────────────────────────────────────────────────────
+    (['dimension', 'size', 'measure'],
+     ['Dimensions (W x D x H)', 'Dimension (L x W x H)', 'Dimension']),
+
+    # ── Warranty ─────────────────────────────────────────────────────────────
+    (['warranty', 'guarantee', 'ওয়ারেন্টি'],
+     ['Warranty']),
+
+    # ── Condition ────────────────────────────────────────────────────────────
+    (['condition', 'used', 'new', 'refurbished', 'কন্ডিশন'],
+     ['Condition']),
 ]
 
 
 def _match_spec_key(message: str, features: Dict) -> Optional[str]:
-    """Return the first feature value whose API key matches the user's question."""
+    """Return "FeatureName: value" for the best matching spec.
+
+    Two-pass strategy:
+      Pass 1 — explicit map: scan _SPEC_KEYWORD_MAP in order; first row whose
+               keywords hit the message AND has a non-empty API value wins.
+      Pass 2 — fuzzy scan: if no map hit, check every feature name directly
+               against the message words (handles rare/new field names without
+               needing a map update).
+    """
     msg = message.lower()
+
+    # Pass 1 — keyword map
     for keywords, api_keys in _SPEC_KEYWORD_MAP:
         if any(kw in msg for kw in keywords):
             for api_key in api_keys:
                 val = features.get(api_key, '')
                 if val:
                     return f"{api_key}: {val}"
+
+    # Pass 2 — fuzzy: split message into words, check if any word appears
+    # inside a feature name (or vice-versa). Avoids false positives from
+    # very short words by requiring length >= 4.
+    msg_words = [w for w in re.findall(r'[a-z0-9]+', msg) if len(w) >= 4]
+    for feat_name, feat_val in features.items():
+        if not feat_val:
+            continue
+        feat_lower = feat_name.lower()
+        if any(w in feat_lower or feat_lower in w for w in msg_words):
+            return f"{feat_name}: {feat_val}"
+
     return None
 
 
@@ -923,10 +1030,14 @@ def handle_product_spec_query(ctx: Dict, user_id: str, message: str,
         logger.info("handle_product_spec_query: Groq review-based answer returned")
         return _ok(groq_answer + LOOP_BACK, 'product_spec_query', ic)
 
-    # ── Nothing found — redirect to product page ──────────────────────────────
-    reply = (f"স্যার, এই তথ্যটি {title} এর পেজে বিস্তারিত দেওয়া আছে।"
-             if title else "স্যার, বিস্তারিত তথ্য প্রোডাক্ট পেজে পাবেন।")
-    return _ok(reply + LOOP_BACK, 'product_spec_query', ic)
+    # ── Nothing found — redirect to product page with link ───────────────────
+    reply = (f"স্যার, এই তথ্যটি আমাদের ডেটাবেজে পাওয়া যাচ্ছে না। "
+             f"বিস্তারিত জানতে প্রোডাক্ট পেজটি দেখুন।"
+             if title else
+             "স্যার, বিস্তারিত তথ্য প্রোডাক্ট পেজে পাবেন।")
+    buttons = [{'text': 'View Product', 'url': product_url,
+                'title': title}] if product_url else []
+    return _ok(reply + LOOP_BACK, 'product_spec_query', ic, link_buttons=buttons)
 
 
 def handle_fallback(ctx: Dict, user_id: str, message: str,
