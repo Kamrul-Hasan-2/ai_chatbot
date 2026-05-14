@@ -343,13 +343,27 @@ def _handle_condition_question(user_id: str, message: str) -> Optional[Dict]:
     return _ok(condition_text + LOOP_BACK, 'product_condition', ic, link_buttons=buttons)
 
 
-def handle_clarification_selection(user_id: str, message: str) -> Optional[Dict]:
-    """After product_clarification, detect numbered selection and call condition API."""
+def handle_clarification_selection(user_id: str, message: str,
+                                    pending_question: str = '',
+                                    groq_client=None,
+                                    groq_model: str = '') -> Optional[Dict]:
+    """After product_clarification, detect numbered selection and answer the pending question.
+
+    Steps:
+      1. Detect which product the user selected (number or title keyword).
+      2. Pin that product as the sole active product so future turns never re-ask.
+      3. Route to the correct handler based on what was originally asked:
+           - spec question  → handle_product_spec_query
+           - condition      → fetch_condition_template
+           - anything else  → handle_product_spec_query (safe default)
+    """
+    from repositories.state_repository import set_product_url as _set_url
     prev_products = get_product_context(user_id)
     if not prev_products:
         return None
+
     msg = message.strip()
-    # Match leading number: "1", "1.", "1)", "#1", or message starting with product title fragment
+    # Match leading number: "1", "1.", "1)", "#1"
     num_match = re.match(r'^[#\s]*([123])[.):\s]?$|^[#\s]*([123])[.):\s]', msg)
     if not num_match:
         # Try matching by product title keyword
@@ -360,21 +374,46 @@ def handle_clarification_selection(user_id: str, message: str) -> Optional[Dict]
                 break
     if not num_match:
         return None
+
     idx = int(num_match.group(1) or num_match.group(2)) - 1
     if idx < 0 or idx >= len(prev_products):
         return None
+
     selected = prev_products[idx]
     product_url_sel = selected.get('url', '')
-    product_id = _extract_product_id(product_url_sel)
-    logger.info("clarification_selection: idx=%d url=%r id=%r", idx, product_url_sel, product_id)
-    api_reply = fetch_condition_template(product_id) if product_id else None
-    logger.info("clarification_selection: api_reply=%r", api_reply)
     title = selected.get('title', '')
-    condition_text = (api_reply or
-                      f"স্যার, {title} এর কন্ডিশন জানতে প্রোডাক্ট পেজটি দেখুন।")
+    logger.info("clarification_selection: idx=%d url=%r title=%r", idx, product_url_sel, title)
+
+    # ── Pin selected product so every future turn knows exactly which one ──────
+    # Overwrite product context to just this one product so handlers never
+    # see "multiple products" and never ask the clarification question again.
+    set_product_context(user_id, [selected])
+    if product_url_sel:
+        _set_url(user_id, product_url_sel)
+
     ic = normalize_payload(load_context(user_id))
     buttons = [{'text': 'View Product', 'url': product_url_sel, 'title': title}] if product_url_sel else []
-    return _ok(condition_text + LOOP_BACK, 'product_condition', ic, link_buttons=buttons)
+
+    # ── Route based on what the user originally asked ─────────────────────────
+    _CONDITION_Q = {
+        'used', 'new', 'notun', 'purano', 'second hand', 'refurbished',
+        'condition', 'কন্ডিশন', 'fresh',
+    }
+    q = (pending_question or '').lower()
+
+    if any(w in q for w in _CONDITION_Q):
+        product_id = _extract_product_id(product_url_sel)
+        api_reply = fetch_condition_template(product_id) if product_id else None
+        logger.info("clarification_selection: condition route api_reply=%r", api_reply)
+        reply = (api_reply or
+                 f"স্যার, {title} এর কন্ডিশন জানতে প্রোডাক্ট পেজটি দেখুন।")
+        return _ok(reply + LOOP_BACK, 'product_condition', ic, link_buttons=buttons)
+
+    # Default: spec query — handles ram/display/battery/full-spec/any other detail
+    ctx = {'category': selected.get('category', ''), 'brand': '', 'title': title}
+    return handle_product_spec_query(ctx, user_id,
+                                     pending_question or message,
+                                     groq_client, groq_model)
 
 
 _MORE_WORDS = {

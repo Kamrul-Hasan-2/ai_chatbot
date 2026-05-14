@@ -36,10 +36,11 @@ logger = logging.getLogger(__name__)
 
 # ── Per-user in-session state ─────────────────────────────────────────────────
 
-_product_context:  Dict[str, List] = {}
-_product_url:      Dict[str, str]  = {}
-_last_intent:      Dict[str, str]  = {}
-_session_category: Dict[str, str]  = {}  # persisted so restarts don't lose category
+_product_context:   Dict[str, List] = {}
+_product_url:       Dict[str, str]  = {}
+_last_intent:       Dict[str, str]  = {}
+_session_category:  Dict[str, str]  = {}  # persisted so restarts don't lose category
+_pending_question:  Dict[str, str]  = {}  # message that triggered a clarification prompt
 _search_pool:      Dict[str, List] = {}  # full 15-product result pool per user
 _search_offset:    Dict[str, int]  = {}  # next-page offset into _search_pool
 _search_key:       Dict[str, str]  = {}  # cache key (keywords|min|max) for the pool
@@ -144,6 +145,16 @@ def save_last_intent(user_id: str, intent: str) -> None:
 
 def get_last_intent(user_id: str) -> str:
     return _last_intent.get(user_id, '')
+
+
+def set_pending_question(user_id: str, question: str) -> None:
+    """Save the message that triggered a product_clarification prompt."""
+    _pending_question[user_id] = question
+
+
+def get_pending_question(user_id: str) -> str:
+    """Return and clear the pending question (one-shot — consumed on read)."""
+    return _pending_question.pop(user_id, '')
 
 
 # ── In-session product state ──────────────────────────────────────────────────

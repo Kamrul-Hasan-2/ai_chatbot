@@ -34,6 +34,7 @@ from repositories.state_repository import (
     get_product_url, clear_product_state, load_faq_db,
     set_session_category, get_session_category,
     load_user_profile, save_user_profile,
+    set_pending_question, get_pending_question,
 )
 from services.humanizer_service import humanize_if_short
 from services.intent_service import (
@@ -238,9 +239,17 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                                        (datetime.now() - start_time).total_seconds(),
                                        user_message=message, profile=profile)
 
-        # Clarification selection — user picks a numbered product after clarification prompt
+        # Clarification selection — user picks a numbered product after clarification prompt.
+        # Pass the original pending question so the handler answers WHAT was asked,
+        # not just the condition (new/used) that was hardwired before.
         if get_last_intent(user_id) == 'product_clarification':
-            selected = handle_clarification_selection(user_id, message)
+            pending_q = get_pending_question(user_id)
+            selected = handle_clarification_selection(
+                user_id, message,
+                pending_question=pending_q,
+                groq_client=_groq_client,
+                groq_model=GROQ_ANSWER_MODEL,
+            )
             if selected:
                 _observe_and_save(user_id, profile, message, selected.get('intent', ''), {})
                 return _build_response(user_id, selected, ChatMode.AI, AI_ACTIVE_STATUS,
@@ -361,6 +370,12 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
 
         # ── STEP 4: handle_intent ────────────────────────────────────────────
         handler_result = _dispatch(groq_result['intent'], merged, user_id, message, prev_ctx)
+
+        # When a handler asks the user to pick a product by number, save the
+        # current message as the pending question so the selection turn can
+        # answer it correctly (spec / condition / whatever was originally asked).
+        if handler_result.get('intent') == 'product_clarification':
+            set_pending_question(user_id, message)
 
         # Update the rolling user profile from this turn's observations.
         # Use groq_result['entities'] (what the user actually said this turn),
