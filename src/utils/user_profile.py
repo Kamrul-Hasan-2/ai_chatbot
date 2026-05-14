@@ -56,7 +56,9 @@ _KNOWN_BRANDS = {
     'samsung', 'apple', 'walton', 'xiaomi', 'oppo', 'vivo', 'realme',
     'lg', 'sony', 'panasonic', 'hp', 'dell', 'lenovo', 'asus', 'acer',
     'msi', 'gigabyte', 'intel', 'amd', 'nvidia', 'toshiba', 'huawei',
-    'oneplus', 'nokia', 'iphone', 'redmi', 'pocophone', 'poco',
+    'oneplus', 'nokia', 'redmi', 'pocophone', 'poco',
+    # 'iphone' removed — it is a product model, not a brand name.
+    # "apple iphone" correctly resolves to 'apple' via the 'apple' entry.
 }
 
 

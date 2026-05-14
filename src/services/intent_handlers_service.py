@@ -133,25 +133,31 @@ def handle_greeting(ctx: Dict, user_id: str, message: str) -> Dict:
 
 
 def handle_goodbye(ctx: Dict, user_id: str, message: str) -> Dict:
-    ic = normalize_payload(load_context(user_id))
+    ic = intent_to_normalized(ctx)
     ic['exit'] = 1
     return _ok("ধন্যবাদ স্যার, ভালো থাকবেন। আবার প্রয়োজন হলে আমরা সর্বদা আছি। 😊", 'goodbye', ic)
 
 
 def handle_thanks(ctx: Dict, user_id: str, message: str) -> Dict:
-    ic = normalize_payload(load_context(user_id))
+    ic = intent_to_normalized(ctx)
     return _ok("Most welcome! 😊" + LOOP_BACK, 'thanks', ic)
 
 
 def handle_exit(ctx: Dict, user_id: str, message: str) -> Dict:
-    ic = normalize_payload(load_context(user_id))
+    ic = intent_to_normalized(ctx)
     ic['exit'] = 1
     return _ok("সাথে থাকার জন্য ধন্যবাদ। আবার প্রয়োজন হলে আমরা সর্বদা আছি। 😊", 'exit', ic)
 
 
 def handle_buy(ctx: Dict, user_id: str, message: str) -> Dict:
-    ic = normalize_payload(load_context(user_id))
+    ic = intent_to_normalized(ctx)
     prev_products = get_product_context(user_id)
+    if not prev_products and not ctx.get('category'):
+        return _ok(
+            "স্যার, আপনি কোন প্রোডাক্টটি অর্ডার করতে চান? "
+            "প্রোডাক্টের নাম বা ক্যাটাগরি বললে আমি এখনই দেখিয়ে দিতে পারি।",
+            'buy', ic
+        )
     buttons = []
     # Show Order Now only for the most recently viewed single product
     if prev_products:
@@ -183,17 +189,22 @@ def handle_comparison(ctx: Dict, user_id: str, message: str) -> Dict:
         title = top.get('title', '')
         price = top.get('price', '')
         url = top.get('url', '')
-        lines = [f"স্যার, দেখানো প্রোডাক্টগুলোর মধ্যে এটি সবচেয়ে ভালো হবে:", ""]
+        # Avoid asserting "this is the best" — we can't know that.
+        # Show the top result and let the user decide based on reviews.
+        lines = ["স্যার, দেখানো প্রোডাক্টগুলোর মধ্যে এটি একটি ভালো অপশন হতে পারে:", ""]
         if title:
             lines.append(f"📦 {title}")
         if price:
             lines.append(f"💰 মূল্য: {price}")
         lines.append("")
-        lines.append("রিভিউ ও বিস্তারিত দেখে পছন্দ হলে অর্ডার করতে পারেন।")
+        lines.append("রিভিউ ও রেটিং দেখে পছন্দ হলে অর্ডার করতে পারেন।")
         lines.append(LOOP_BACK)
         buttons = [{'text': 'View Product', 'url': url, 'title': title,
                     'price': price}] if url else _comparison_buttons(ctx)
         return _ok('\n'.join(lines), 'comparison', ic, link_buttons=buttons)
+    # No cached products — if we know the category, surface a real search result.
+    if ctx.get('category'):
+        return handle_product_search(ctx, user_id, message)
     return _ok(
         "স্যার, আমাদের সকল প্রোডাক্টেই ভালো রেটিং এবং রিভিউ আছে। "
         "রিভিউ দেখে পছন্দের প্রোডাক্টটি নিতে পারেন: 👉 www.bdstall.com"
@@ -274,6 +285,10 @@ def handle_technical_advice(ctx: Dict, user_id: str, message: str,
             resolved = resolve_category(word.strip(), categories)
             if resolved:
                 break
+    if not resolved:
+        ctx_cat = ctx.get('category', '')
+        if ctx_cat:
+            resolved = resolve_category(ctx_cat, categories)
     if not resolved:
         return _ok(
             "এই বিষয়ে আমি নিশ্চিত নই। আরও সাহায্যের জন্য আমাদের ওয়েবসাইট দেখুন অথবা সরাসরি কল করুন।"
@@ -429,6 +444,14 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
 
     # "More" rotation: if user asked for more AND we have a pool for the same query, slice next 3.
     current_key = f"{keywords}|{price_min or ''}|{price_max or ''}"
+
+    # If the query key changed (new brand, new title, new budget) reset the pool
+    # so stale results from a previous search aren't served as "more".
+    _, existing_key, _ = get_search_pool(user_id)
+    if existing_key and existing_key != current_key and not _is_more_request(message):
+        from repositories.state_repository import clear_product_state as _cps
+        _cps(user_id)
+
     if _is_more_request(message):
         pool, pool_key, offset = get_search_pool(user_id)
         if pool and pool_key == current_key:
@@ -526,9 +549,11 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
 def handle_price_query(ctx: Dict, user_id: str, message: str) -> Dict:
     has_budget = (ctx.get('price_max') is not None or ctx.get('price_min') is not None)
 
-    # If a budget filter is given, do a fresh search (ignore cache)
+    # If a budget filter is given, do a fresh search (ignore cache).
+    # Pass '' as message so _is_more_request never fires on a price query
+    # containing words like "aro" (e.g. "আরও কিছুর দাম কত?").
     if has_budget and ctx.get('category'):
-        return handle_product_search(ctx, user_id, message)
+        return handle_product_search(ctx, user_id, '')
 
     # If products already shown and no budget filter, list cached prices
     prev_products = get_product_context(user_id)
@@ -546,14 +571,14 @@ def handle_price_query(ctx: Dict, user_id: str, message: str) -> Dict:
             'need_product', ic
         )
 
-    return handle_product_search(ctx, user_id, message)
+    return handle_product_search(ctx, user_id, '')
 
 
 def handle_url_message(ctx: Dict, user_id: str, message: str, url: str) -> Dict:
     url_lower = url.lower()
     if re.search(r'bdstall\.com/(details|listing)/', url_lower):
         return handle_product_link(ctx, user_id, message, url)
-    ic = normalize_payload(load_context(user_id))
+    ic = normalize_payload(ctx)
     if re.search(r'(cdn\.bdstall\.com|bdstall\.com/.*\.(jpg|jpeg|png|webp|gif))', url_lower):
         return _ok("স্যার, কোন ক্যাটাগরি এবং মডেল সম্পর্কে জানতে চাচ্ছেন? একটু বলুন।" + LOOP_BACK, 'image_url', ic)
     if re.search(r'(www\.)?bdstall\.com', url_lower):
@@ -567,7 +592,7 @@ def handle_url_message(ctx: Dict, user_id: str, message: str, url: str) -> Dict:
 def handle_product_link(ctx: Dict, user_id: str, message: str, url: str) -> Dict:
     from services.intent_service import resolve_category_from_message
     keywords = _extract_keywords_from_url(url)
-    ic = normalize_payload(load_context(user_id))
+    ic = normalize_payload(ctx)
     if not keywords:
         return _ok(
             "স্যার, লিংকটি সঠিকভাবে পড়তে পারছি না। অনুগ্রহ করে আবার চেষ্টা করুন।" + LOOP_BACK,
@@ -599,11 +624,12 @@ def handle_product_link(ctx: Dict, user_id: str, message: str, url: str) -> Dict
     discount = top.get('discount', 0)
 
     # Extract category from URL slug and store in session
-    from services.chatbot_service import _categories, _session_category
+    from services.chatbot_service import _categories
+    from repositories.state_repository import set_session_category
     slug_text = url.replace('-', ' ')
     cat_from_url = resolve_category_from_message(slug_text, _categories)
     if cat_from_url:
-        _session_category[user_id] = cat_from_url
+        set_session_category(user_id, cat_from_url)
         ic['cat'] = cat_from_url
 
     ic['product_url'] = url
@@ -625,14 +651,24 @@ def handle_product_link(ctx: Dict, user_id: str, message: str, url: str) -> Dict
 def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
                                    product_url: str) -> Optional[Dict]:
     msg = message.lower()
+
+    # "more / aro / onno / dekhao" signals the user wants a NEW search, not a
+    # follow-up question about the current product. Let the full pipeline handle it.
+    _EXIT_SIGNALS = {
+        'more', 'aro', 'onno', 'dekhao', 'dekhan', 'notun', 'alada',
+        'অন্য', 'আরও', 'আরো', 'nতুন',
+    }
+    if any(s in msg for s in _EXIT_SIGNALS):
+        return None
+
     signals = [
         'stock', 'ache', 'available', 'color', 'colour', 'rong',
         'quality', 'maan', 'durable', 'valo', 'price', 'dam', 'koto',
         'warranty', 'warenty', 'guarantee', 'original', 'kena jabe', 'pabo',
         'স্টক', 'রং', 'মান', 'দাম', 'ওয়ারেন্টি', 'spec', 'feature',
         'detail', 'বিস্তারিত', 'কেমন', 'kemon', 'review', 'rating',
-        'used', 'new', 'nতুন', 'পুরনো', 'purano', 'second hand', 'refurbished',
-        'condition', 'কন্ডিশন', 'notun', 'fresh',
+        'used', 'new', 'পুরনো', 'purano', 'second hand', 'refurbished',
+        'condition', 'কন্ডিশন', 'fresh',
     ]
     if not any(s in msg for s in signals):
         return None
@@ -685,29 +721,39 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
 
 def handle_fallback(ctx: Dict, user_id: str, message: str,
                     faq_db: List = None) -> Dict:
-    if get_last_intent(user_id) == 'buy':
+    # Re-fire buy only when the current message also has buy-related words.
+    # Without this guard, any unknown message after a buy turn (e.g. "delivery
+    # charge koto?") would incorrectly return the order instructions again.
+    _BUY_CONTINUATION = {'kinbo', 'kinte', 'buy', 'order', 'কিনব', 'কিনতে',
+                         'অর্ডার', 'payment', 'cod', 'cash on delivery'}
+    if (get_last_intent(user_id) == 'buy'
+            and any(w in message.lower() for w in _BUY_CONTINUATION)):
         return handle_buy(ctx, user_id, message)
     msg_lower = message.lower()
     # Warranty questions always get the fixed website response
     if any(w in msg_lower for w in _WARRANTY_WORDS):
-        ic = normalize_payload(load_context(user_id))
+        ic = intent_to_normalized(ctx)
         return _ok(_WARRANTY_RESPONSE + LOOP_BACK, 'faq_warranty', ic)
     # Showroom / address / location questions get the fixed response
     if any(w in msg_lower for w in _SHOWROOM_WORDS):
-        ic = normalize_payload(load_context(user_id))
+        ic = intent_to_normalized(ctx)
         return _ok(_SHOWROOM_RESPONSE + LOOP_BACK, 'faq_showroom', ic)
     # If products were shown, handle product-specific questions
     prev_products = get_product_context(user_id)
     if prev_products:
         _price_signals = {'price', 'dam', 'দাম', 'koto', 'কত', 'cost', 'rate', 'মূল্য', 'taka', 'টাকা'}
-        if any(w in msg_lower for w in _price_signals):
+        _buy_signals_fallback = {'kinbo', 'kinte', 'buy', 'order', 'কিনব', 'কিনতে', 'অর্ডার'}
+        # Don't re-route to price_query when the message also has buy intent —
+        # "kinbo, dam koto?" should stay as buy, not become price_query.
+        is_buy_message = any(w in msg_lower for w in _buy_signals_fallback)
+        if not is_buy_message and any(w in msg_lower for w in _price_signals):
             return handle_price_query(ctx, user_id, message)
         condition_result = _handle_condition_question(user_id, message)
         if condition_result:
             return condition_result
     if ctx.get('category'):
         return handle_product_search(ctx, user_id, message)
-    ic = normalize_payload(load_context(user_id))
+    ic = intent_to_normalized(ctx)
     # Smart clarification: if we know the user's recent interests, ask a
     # targeted question instead of dumping the generic category prompt.
     return _ok(

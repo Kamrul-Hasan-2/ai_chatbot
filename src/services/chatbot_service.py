@@ -178,9 +178,13 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
     profile = load_user_profile(user_id)
 
     try:
+        # ── STEP 1: load_context (single DB round-trip for the whole request) ──
+        prev_ctx = load_context(user_id)
+
         # Blocked automated template
         if _is_automated(message):
-            ic = normalize_payload(load_context(user_id))
+            _observe_and_save(user_id, profile, message, 'ignored_automated_template', {})
+            ic = normalize_payload(prev_ctx)
             return _build_response(user_id,
                 {'response': '', 'intent': 'ignored_automated_template',
                  'intent_content': ic, 'products': []},
@@ -190,7 +194,8 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
 
         # Human mode check
         if check_responder_type(user_id) == 'agent':
-            ic = normalize_payload(load_context(user_id))
+            _observe_and_save(user_id, profile, message, 'human_mode_active', {})
+            ic = normalize_payload(prev_ctx)
             return _build_response(user_id,
                 {'response': '', 'intent': 'human_mode_active',
                  'intent_content': ic, 'products': []},
@@ -201,8 +206,7 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         # URL in message
         url_match = re.search(r'https?://[^\s]+', message)
         if url_match:
-            prev   = load_context(user_id)
-            ic_ctx = normalize_payload(prev)
+            ic_ctx = normalize_payload(prev_ctx)
             flat_ctx = {
                 'category':  ic_ctx.get('cat', ''),
                 'brand':     ic_ctx.get('brand', ''),
@@ -210,6 +214,14 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                 'price_max': ic_ctx.get('price_max'),
                 'price_min': ic_ctx.get('price_min'),
             }
+            # Extract any budget the user mentioned alongside the URL.
+            # extract_budget_range returns 'max_price'/'min_price' (not 'price_*').
+            from services.intent_service import extract_budget_range
+            url_budget = extract_budget_range(message)
+            if url_budget.get('max_price') is not None:
+                flat_ctx['price_max'] = url_budget['max_price']
+            if url_budget.get('min_price') is not None:
+                flat_ctx['price_min'] = url_budget['min_price']
             result = handle_url_message(flat_ctx, user_id, message, url_match.group(0))
             _observe_and_save(user_id, profile, message, result.get('intent', ''), flat_ctx)
             return _build_response(user_id, result, ChatMode.AI, AI_ACTIVE_STATUS,
@@ -217,14 +229,11 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                                    user_message=message, profile=profile)
 
         # Product detail follow-up
-        product_url = get_product_url(user_id)
-        if not product_url:
-            prev = load_context(user_id)
-            product_url = prev.get('product_url', '')
+        product_url = get_product_url(user_id) or prev_ctx.get('product_url', '')
         if product_url:
-            detail = handle_product_detail_followup({}, user_id, message, product_url)
+            detail = handle_product_detail_followup(prev_ctx, user_id, message, product_url)
             if detail:
-                _observe_and_save(user_id, profile, message, detail.get('intent', ''), {})
+                _observe_and_save(user_id, profile, message, detail.get('intent', ''), prev_ctx)
                 return _build_response(user_id, detail, ChatMode.AI, AI_ACTIVE_STATUS,
                                        (datetime.now() - start_time).total_seconds(),
                                        user_message=message, profile=profile)
@@ -237,9 +246,6 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                 return _build_response(user_id, selected, ChatMode.AI, AI_ACTIVE_STATUS,
                                        (datetime.now() - start_time).total_seconds(),
                                        user_message=message, profile=profile)
-
-        # ── STEP 1: load_context ─────────────────────────────────────────────
-        prev_ctx = load_context(user_id)
 
         # ── STEP 2: detect_intent ────────────────────────────────────────────
         history     = fetch_history(user_id)
@@ -264,10 +270,22 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
 
         # Apply deterministic post-Groq corrections (budget refinement,
         # over/under signals, search/comparison/buy overrides).
-        override_result = apply_post_groq_overrides(groq_result, message, prev_ctx)
+        override_result = apply_post_groq_overrides(groq_result, message, dict(prev_ctx))
         groq_result = override_result['groq_result']
         prev_ctx = override_result['prev_ctx']
         _is_pure_budget_msg = override_result['is_pure_budget_msg']
+
+        # Clear filler titles BEFORE merge so they never overwrite a real prev title.
+        _FILLER_WORDS = {
+            'khujtasi', 'khujchi', 'lagbe', 'chai', 'ase', 'nibo', 'dekhan',
+            'dekhao', 'bolun', 'jani', 'bolen', 'please', 'kindly',
+            'apnader', 'apnar', 'amader', 'amra', 'ami', 'apni',
+        }
+        _raw_title = (groq_result['entities'].get('title') or '').lower().strip()
+        if _raw_title:
+            _title_words = set(_raw_title.split())
+            if _title_words and _title_words.issubset(_FILLER_WORDS):
+                groq_result['entities']['title'] = ''
 
         logger.info("Intent=%s entities=%s followup=%s",
                     groq_result['intent'], groq_result['entities'],
@@ -277,46 +295,43 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         def _clear():
             clear_product_state(user_id)
 
+        # Greeting is an explicit session reset. Clear category from prev_ctx NOW
+        # so merge_context and the inheritance block below can't pull the old
+        # category back from the DB snapshot on this turn.
+        if groq_result['intent'] == 'greeting':
+            prev_ctx['category'] = ''
+            prev_ctx['cat'] = ''
+            prev_ctx['prev_cat'] = ''
+
         merged = merge_context(groq_result, prev_ctx, groq_result['intent'], _clear)
 
-        # Inherit category for non-product intents when still empty
-        if not merged.get('category'):
+        # Inherit category for non-product intents when still empty.
+        # Greeting resets the session, so never re-inherit on the turn after a greeting.
+        # FAQ doesn't benefit from an inherited category — it just pollutes intent_content.
+        _INHERIT_INTENTS = {
+            'comparison', 'technical_advice', 'price_query',
+            'unknown', 'seller_query', 'product_search',
+        }
+        if not merged.get('category') and groq_result['intent'] in _INHERIT_INTENTS:
             # Session memory is more reliable than DB (DB may have stale category)
             inherited = (get_session_category(user_id)
                          or prev_ctx.get('category') or prev_ctx.get('cat', ''))
-            if inherited and groq_result['intent'] in (
-                'comparison', 'technical_advice', 'price_query',
-                'faq', 'unknown', 'seller_query', 'product_search',
-            ):
+            if inherited:
                 merged['category'] = inherited
 
         # Promote unknown → product_search when category is now known
         if groq_result['intent'] == 'unknown' and merged.get('category'):
             groq_result['intent'] = 'product_search'
 
-        # Clear title if it IS a Banglish filler word (whole-word match only)
-        _FILLER_WORDS = {
-            'khujtasi', 'khujchi', 'lagbe', 'chai', 'ase', 'nibo', 'dekhan',
-            'dekhao', 'bolun', 'jani', 'bolen', 'please', 'kindly',
-            'apnader', 'apnar', 'amader', 'amra', 'ami', 'apni',
-        }
-        title_val = (merged.get('title') or '').lower().strip()
-        # Split title into words and check if ALL words are filler — not substring match
-        if title_val:
-            title_words = set(title_val.split())
-            if title_words and title_words.issubset(_FILLER_WORDS):
-                merged['title'] = ''
-
         # Save known category to session memory whenever we have one
         if merged.get('category'):
             set_session_category(user_id, merged['category'])
 
-        # Pure budget refinement: belt-and-suspenders clear of title in merged ctx
-        # (pre-merge clearing already happened above; this guards post-merge too).
+        # Pure budget refinement: clear any stale title the merge may have inherited.
         if _is_pure_budget_msg:
             stale = merged.get('title') or merged.get('prev_title')
             if stale:
-                logger.info("Pure budget refinement post-merge — clearing stale title %r", stale)
+                logger.info("Pure budget refinement — clearing stale merged title %r", stale)
             merged['title'] = ''
             merged['prev_title'] = ''
 
@@ -342,12 +357,14 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
             groq_result['intent'] = 'product_search'
 
         # ── STEP 4: handle_intent ────────────────────────────────────────────
-        handler_result = _dispatch(groq_result['intent'], merged, user_id, message)
+        handler_result = _dispatch(groq_result['intent'], merged, user_id, message, prev_ctx)
 
         # Update the rolling user profile from this turn's observations.
+        # Use groq_result['entities'] (what the user actually said this turn),
+        # not merged (which inherits previous-turn values and would corrupt the profile).
         _observe_and_save(user_id, profile, message,
                           handler_result.get('intent', groq_result['intent']),
-                          merged)
+                          groq_result['entities'])
 
         # ── STEP 5: build and return (persistence done by caller) ────────────
         return _build_response(user_id, handler_result, ChatMode.AI, AI_ACTIVE_STATUS,
@@ -383,7 +400,8 @@ _HANDOFF_MAP = {
 }
 
 
-def _dispatch(intent: str, ctx: Dict, user_id: str, message: str) -> Dict:
+def _dispatch(intent: str, ctx: Dict, user_id: str, message: str,
+              prev_ctx: Optional[Dict] = None) -> Dict:
     # Downgrade misclassified seller_query: a buyer asking "where is X sold" is
     # a location/marketplace question, not a seller-onboarding request.
     if intent == 'seller_query':
@@ -394,14 +412,14 @@ def _dispatch(intent: str, ctx: Dict, user_id: str, message: str) -> Dict:
         )
         if any(s in msg_l for s in _BUYER_LOCATION_SIGNALS):
             from services.intent_handlers_service import _SHOWROOM_RESPONSE
-            ic = normalize_payload(load_context(user_id))
+            ic = normalize_payload(prev_ctx or load_context(user_id))
             return {'response': _SHOWROOM_RESPONSE + LOOP_BACK,
                     'intent': 'faq_showroom', 'intent_content': ic, 'products': []}
 
     if intent in _HANDOFF_MAP:
         text, handoff_intent = _HANDOFF_MAP[intent]
         assign_agent(user_id, handoff_intent)
-        ic = normalize_payload(load_context(user_id))
+        ic = normalize_payload(prev_ctx or load_context(user_id))
         return {'response': text, 'intent': handoff_intent,
                 'intent_content': ic, 'products': []}
 
@@ -413,7 +431,7 @@ def _dispatch(intent: str, ctx: Dict, user_id: str, message: str) -> Dict:
         return handle_thanks(ctx, user_id, message)
     if intent == 'exit':
         return handle_exit(ctx, user_id, message)
-    if intent == 'buy':
+    if intent in ('buy', 'ordering'):
         return handle_buy(ctx, user_id, message)
     if intent == 'comparison':
         return handle_comparison(ctx, user_id, message)
@@ -427,6 +445,19 @@ def _dispatch(intent: str, ctx: Dict, user_id: str, message: str) -> Dict:
     if intent == 'price_query':
         return handle_price_query(ctx, user_id, message)
     if intent == 'product_search':
+        # Re-route to comparison when: products are already cached AND the message
+        # contains an explicit "which one is better" phrase. This catches follow-up
+        # comparison questions that Groq labels product_search (e.g. "samsung dekhao
+        # konti valo?") without affecting fresh first-time searches.
+        from repositories.state_repository import get_product_context as _gpc
+        _EXPLICIT_CMP = {
+            'konti valo', 'konta valo', 'konti bhalo', 'konta bhalo',
+            'কোনটা ভালো', 'কোনটি ভালো', 'valo hobe', 'bhalo hobe',
+            'ভালো হবে', 'which one is better', 'which is better',
+        }
+        msg_l = (message or '').lower()
+        if _gpc(user_id) and any(w in msg_l for w in _EXPLICIT_CMP):
+            return handle_comparison(ctx, user_id, message)
         return handle_product_search(ctx, user_id, message)
 
     return handle_fallback(ctx, user_id, message, _faq_db)

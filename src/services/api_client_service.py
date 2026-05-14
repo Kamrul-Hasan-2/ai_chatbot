@@ -36,7 +36,8 @@ logger = logging.getLogger(__name__)
 # ── Simple in-memory caches ───────────────────────────────────────────────────
 
 _search_cache:  Dict[str, tuple] = {}
-_history_cache: Dict[str, tuple] = {}
+_history_cache: Dict[str, tuple] = {}   # keyed by user_id → (timestamp, text)
+_intent_cache:  Dict[str, tuple] = {}   # keyed by user_id → (timestamp, dict)
 _SEARCH_TTL  = 300
 _HISTORY_TTL = 60
 _SEARCH_MAX  = 200
@@ -182,12 +183,15 @@ def _normalize_history(payload: Any) -> List[str]:
                    item.get('content') or item.get('body') or '').strip()
         if not text:
             continue
-        sender = str(item.get('sender_type') or '').strip()
+        # sender_type may arrive as int or str — normalise to str for comparison.
+        sender = str(item.get('sender_type') if item.get('sender_type') is not None else '').strip()
         role   = str(item.get('role') or '').strip().lower()
         if sender == '2' or role in {'assistant', 'bot', 'ai'}:
             lines.append(f"Bot: {text}")
         elif sender == '1' or role in {'agent', 'human'}:
             lines.append(f"Agent: {text}")
+        elif sender == '3' or role in {'user', 'visitor', 'customer'}:
+            lines.append(f"User: {text}")
         else:
             lines.append(f"User: {text}")
     return lines[-10:]
@@ -196,11 +200,21 @@ def _normalize_history(payload: Any) -> List[str]:
 # ── Intent content from history (Rule 14) ────────────────────────────────────
 
 def fetch_intent_from_history(user_id: str) -> Dict:
-    """Pull last saved intent_content from history — DB is source of truth."""
+    """Pull last saved intent_content from history — DB is source of truth.
+
+    Cached for _HISTORY_TTL seconds to avoid a second live HTTP call when
+    fetch_history already ran in the same request cycle.
+    """
+    now = time.time()
+    cached = _intent_cache.get(user_id)
+    if cached and (now - cached[0]) < _HISTORY_TTL:
+        return cached[1]
+
     url = f"{HISTORY_URL.rstrip('/')}?user_id={user_id}&limit=10&key={API_KEY}"
     try:
-        resp = requests.get(url, timeout=2)
+        resp = requests.get(url, timeout=8)
         if not (200 <= resp.status_code < 300):
+            _intent_cache[user_id] = (now, {})
             return {}
         data = resp.json() if resp.text else {}
         candidates: List = []
@@ -215,7 +229,7 @@ def fetch_intent_from_history(user_id: str) -> Dict:
         for item in reversed(candidates):
             if not isinstance(item, dict):
                 continue
-            if str(item.get('sender_type') or '').strip() != '2':
+            if str(item.get('sender_type') if item.get('sender_type') is not None else '').strip() != '2':
                 continue
             ic = item.get('intent_content')
             if isinstance(ic, str):
@@ -223,11 +237,14 @@ def fetch_intent_from_history(user_id: str) -> Dict:
                     ic = json.loads(ic)
                 except Exception:
                     continue
-            if isinstance(ic, dict) and (ic.get('cat') or ic.get('brand')
-                                         or ic.get('title') or ic.get('product_url')):
+            # Return the most recent bot intent_content dict — filtering by field
+            # presence is business logic that belongs in the repository, not here.
+            if isinstance(ic, dict):
+                _intent_cache[user_id] = (now, ic)
                 return ic
     except Exception as e:
         logger.warning("fetch_intent_from_history failed: %s", e)
+    _intent_cache[user_id] = (now, {})
     return {}
 
 
