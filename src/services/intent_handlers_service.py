@@ -757,6 +757,12 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
 
     if any(w in msg for w in ('price', 'dam', 'দাম', 'koto', 'কত', 'মূল্য')):
         price = str(top.get('price') or '').strip()
+        if not price:
+            # Search cache doesn't carry price — fetch from detail API
+            listing_id = _extract_product_id(product_url)
+            if listing_id:
+                spec_data = fetch_product_spec(listing_id)
+                price = str((spec_data or {}).get('price') or '').strip()
         if price:
             reply = f"💰 মূল্য\n━━━━━━━━━━━━━━━\n{price}"
         elif title:

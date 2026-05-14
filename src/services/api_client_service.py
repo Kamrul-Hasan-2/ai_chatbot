@@ -399,6 +399,7 @@ def fetch_product_spec(listing_id: str) -> Optional[Dict]:
 
         result = {
             'title':    str(item.get('ListingTitle') or '').strip(),
+            'price':    str(item.get('ListingPrice') or '').strip(),
             'features': features,
             'review':   plain_review,
         }
