@@ -757,30 +757,32 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
 
     if any(w in msg for w in ('price', 'dam', 'দাম', 'koto', 'কত', 'মূল্য')):
         price = top.get('price', 'N/A')
-        reply = f"স্যার, {title} এর মূল্য {price}।" if title else "স্যার, দাম জানতে লিংকটি দেখুন।"
+        if title:
+            reply = f"💰 মূল্য\n━━━━━━━━━━━━━━━\n{price}"
+        else:
+            reply = "স্যার, দাম জানতে প্রোডাক্ট পেজটি দেখুন।"
 
     elif any(w in msg for w in ('warranty', 'warenty', 'guarantee', 'ওয়ারেন্টি')):
-        reply = "স্যার, ওয়ারেন্টি সংক্রান্ত বিস্তারিত তথ্য প্রোডাক্ট পেজে দেওয়া আছে।"
+        reply = "🛡️ ওয়ারেন্টি\n━━━━━━━━━━━━━━━\nওয়ারেন্টি সংক্রান্ত বিস্তারিত তথ্য প্রোডাক্ট পেজে দেওয়া আছে।"
 
     elif any(w in msg for w in _STOCK_SIGNALS):
-        reply = (f"স্যার, {title} এর স্টক তথ্য প্রতিনিয়ত আপডেট হয়। "
-                 "সর্বশেষ স্টক জানতে প্রোডাক্ট পেজটি দেখুন।"
-                 if title else
-                 "স্যার, স্টক আপডেট জানতে প্রোডাক্ট পেজটি দেখুন।")
+        reply = ("📦 স্টক\n━━━━━━━━━━━━━━━\n"
+                 "স্টক তথ্য প্রতিনিয়ত আপডেট হয়। সর্বশেষ স্টক জানতে প্রোডাক্ট পেজটি দেখুন।")
 
     elif any(w in msg for w in _COLOR_SIZE_SIGNALS):
-        reply = (f"স্যার, {title} এর রং ও ভেরিয়েন্ট তথ্য প্রোডাক্ট পেজে দেওয়া আছে। "
-                 "স্টক ও রং প্রতিনিয়ত পরিবর্তন হয়, তাই সরাসরি পেজটি দেখুন।"
-                 if title else
-                 "স্যার, রং ও সাইজ সংক্রান্ত তথ্য প্রোডাক্ট পেজে পাবেন।")
+        reply = ("🎨 রং ও ভেরিয়েন্ট\n━━━━━━━━━━━━━━━\n"
+                 "রং ও স্টক প্রতিনিয়ত পরিবর্তন হয়। সর্বশেষ অপশন দেখতে প্রোডাক্ট পেজটি দেখুন।")
 
     elif any(w in msg for w in ('used', 'new', 'notun', 'purano', 'second hand',
                                 'refurbished', 'condition', 'কন্ডিশন', 'fresh')):
         product_id = _extract_product_id(product_url)
         api_reply = fetch_condition_template(product_id) if product_id else None
-        reply = (api_reply or
-                 (f"স্যার, {title} এর কন্ডিশন জানতে প্রোডাক্ট পেজটি দেখুন।"
-                  if title else "স্যার, প্রোডাক্টের কন্ডিশন জানতে পেজটি দেখুন।"))
+        if api_reply:
+            reply = f"🔍 কন্ডিশন\n━━━━━━━━━━━━━━━\n{api_reply}"
+        else:
+            reply = ("🔍 কন্ডিশন\n━━━━━━━━━━━━━━━\n"
+                     + (f"{title} এর কন্ডিশন জানতে প্রোডাক্ট পেজটি দেখুন।"
+                        if title else "প্রোডাক্টের কন্ডিশন জানতে পেজটি দেখুন।"))
 
     elif any(w in msg for w in _SPEC_SIGNALS):
         # Spec question — delegate to handle_product_spec_query for DB lookup.
@@ -789,8 +791,9 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
         return handle_product_spec_query(ctx_for_spec, user_id, message)
 
     else:
-        reply = (f"স্যার, {title} সম্পর্কে আরও বিস্তারিত জানতে প্রোডাক্ট পেজটি দেখুন।"
-                 if title else "স্যার, বিস্তারিত জানতে প্রোডাক্ট পেজটি দেখুন।")
+        reply = ("ℹ️ বিস্তারিত\n━━━━━━━━━━━━━━━\n"
+                 + (f"{title} সম্পর্কে আরও তথ্য প্রোডাক্ট পেজে পাবেন।"
+                    if title else "বিস্তারিত তথ্য প্রোডাক্ট পেজে পাবেন।"))
 
     return _ok(
         reply + LOOP_BACK,
