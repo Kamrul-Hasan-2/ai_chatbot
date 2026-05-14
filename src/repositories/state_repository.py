@@ -38,6 +38,9 @@ _product_context:  Dict[str, List] = {}
 _product_url:      Dict[str, str]  = {}
 _last_intent:      Dict[str, str]  = {}
 _session_category: Dict[str, str]  = {}  # persisted so restarts don't lose category
+_search_pool:      Dict[str, List] = {}  # full 15-product result pool per user
+_search_offset:    Dict[str, int]  = {}  # next-page offset into _search_pool
+_search_key:       Dict[str, str]  = {}  # cache key (keywords|min|max) for the pool
 _state_lock = threading.Lock()
 
 _PROJECT_ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
@@ -159,6 +162,31 @@ def get_product_url(user_id: str) -> str:
 def clear_product_state(user_id: str) -> None:
     _product_context.pop(user_id, None)
     _product_url.pop(user_id, None)
+    _search_pool.pop(user_id, None)
+    _search_offset.pop(user_id, None)
+    _search_key.pop(user_id, None)
+
+
+def set_search_pool(user_id: str, key: str, pool: List) -> None:
+    _search_pool[user_id] = pool
+    _search_key[user_id] = key
+    _search_offset[user_id] = 0
+
+
+def get_search_pool(user_id: str) -> tuple:
+    """Return (pool, key, offset). Empty pool=[] if none cached."""
+    return (
+        _search_pool.get(user_id, []),
+        _search_key.get(user_id, ''),
+        _search_offset.get(user_id, 0),
+    )
+
+
+def advance_search_offset(user_id: str, by: int = 3) -> int:
+    """Bump and return the new offset."""
+    new_off = _search_offset.get(user_id, 0) + by
+    _search_offset[user_id] = new_off
+    return new_off
 
 
 def set_session_category(user_id: str, category: str) -> None:

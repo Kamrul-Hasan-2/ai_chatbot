@@ -121,7 +121,7 @@ def _do_search(keywords: str, price_max: Optional[int],
             return {'products_found': 0, 'products': []}
         total = data['getListingItem'][0]
         raw   = data['getListingItem'][1] or []
-        top = raw[:5]
+        top = raw[:15]
         products = [{
             'title':          p.get('ListingTitle', 'N/A'),
             'price':          p.get('ListingPrice', 'N/A'),

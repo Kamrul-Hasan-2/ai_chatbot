@@ -21,6 +21,7 @@ from repositories.state_repository import (
     load_context, get_last_intent,
     set_product_context, get_product_context,
     set_product_url, search_faq,
+    set_search_pool, get_search_pool, advance_search_offset,
 )
 from services.intent_service import (
     normalize_payload, intent_to_normalized,
@@ -361,6 +362,26 @@ def handle_clarification_selection(user_id: str, message: str) -> Optional[Dict]
     return _ok(condition_text + LOOP_BACK, 'product_condition', ic, link_buttons=buttons)
 
 
+_MORE_WORDS = {
+    'more', 'next', 'others', 'another', 'aro', 'aaro', 'r kichu',
+    'r kichue', 'r kichui', 'r dekhao', 'r dekhan', 'arrro',
+    'আরও', 'আরো', 'অন্য', 'অন্যগুলো', 'আরও দেখান', 'আরো দেখান',
+    'আরও দেখাও', 'আরো দেখাও', 'next 3', 'show more',
+}
+
+
+def _is_more_request(message: str) -> bool:
+    msg = (message or '').lower().strip()
+    if not msg:
+        return False
+    # Whole-word / phrase match to avoid "more" inside other words
+    for w in _MORE_WORDS:
+        wl = w.lower()
+        if wl == msg or msg.startswith(wl + ' ') or msg.endswith(' ' + wl) or f' {wl} ' in f' {msg} ':
+            return True
+    return False
+
+
 def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
     logger.info("handle_product_search ctx=%s", {k: ctx.get(k) for k in ('category','brand','title','price_min','price_max')})
 
@@ -376,6 +397,32 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
     price_min = ctx.get('price_min')
     keywords  = _build_keywords(ctx)
     logger.info("handle_product_search keywords=%r price_min=%s price_max=%s", keywords, price_min, price_max)
+
+    # "More" rotation: if user asked for more AND we have a pool for the same query, slice next 3.
+    current_key = f"{keywords}|{price_min or ''}|{price_max or ''}"
+    if _is_more_request(message):
+        pool, pool_key, offset = get_search_pool(user_id)
+        if pool and pool_key == current_key:
+            next_off = advance_search_offset(user_id, by=3)
+            slice_ = pool[next_off:next_off + 3]
+            if slice_:
+                logger.info("More rotation: offset=%d showing %d items", next_off, len(slice_))
+                ic = intent_to_normalized(ctx)
+                set_product_context(user_id, slice_)
+                text, buttons = _format_listing(slice_)
+                header = "স্যার, আরও কিছু প্রোডাক্ট দেখুন:\n\n"
+                return _ok(header + text, 'product_search', ic, products=slice_, link_buttons=buttons)
+            # Pool exhausted — tell user, don't loop back to the same top-3
+            logger.info("More rotation: pool exhausted at offset=%d", next_off)
+            ic = intent_to_normalized(ctx)
+            return _ok(
+                "স্যার, এই বাজেট ও ক্যাটাগরিতে আর প্রোডাক্ট পাওয়া যাচ্ছে না। "
+                "বাজেট বা ক্যাটাগরি একটু পরিবর্তন করে দেখুন, "
+                "অথবা সরাসরি ভিজিট করুন: 👉 www.bdstall.com" + LOOP_BACK,
+                'no_more_products', ic,
+                link_buttons=_comparison_buttons(ctx),
+            )
+
     result    = search_products(keywords, price_max, price_min)
 
     if result['products_found'] == 0:
@@ -407,6 +454,7 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
                     result = {'products_found': len(filtered), 'products': filtered}
                     ic = intent_to_normalized(ctx)
                     products = filtered
+                    set_search_pool(user_id, current_key, products)
                     set_product_context(user_id, products[:5])
                     text, buttons = _format_listing(products[:3])
                     note = "স্যার, এই বাজেটে সরাসরি কোনো প্রোডাক্ট পাওয়া যায়নি। কাছাকাছি দামে এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
@@ -427,6 +475,8 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
         )
 
     products = result['products']
+    # Cache the full pool (up to 15) for "more" rotation
+    set_search_pool(user_id, current_key, products)
     set_product_context(user_id, products[:5])
     text, buttons = _format_listing(products[:3])
     title_kw = (ctx.get('title') or '').lower().strip()
