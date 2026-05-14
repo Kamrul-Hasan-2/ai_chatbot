@@ -363,10 +363,39 @@ def handle_clarification_selection(user_id: str, message: str) -> Optional[Dict]
 
 
 _MORE_WORDS = {
-    'more', 'next', 'others', 'another', 'aro', 'aaro', 'r kichu',
-    'r kichue', 'r kichui', 'r dekhao', 'r dekhan', 'arrro',
-    'আরও', 'আরো', 'অন্য', 'অন্যগুলো', 'আরও দেখান', 'আরো দেখান',
-    'আরও দেখাও', 'আরো দেখাও', 'next 3', 'show more',
+    # English
+    'more', 'next', 'others', 'another', 'other', 'show more', 'see more',
+    'next 3', 'next ones', 'next page', 'continue', 'go on', 'keep going',
+    'load more', 'show next', 'show others', 'more options', 'more products',
+    'more items', 'other options', 'other products', 'any other', 'anything else',
+    'something else', 'different', 'different ones', 'alternative', 'alternatives',
+
+    # Banglish (Bangla written in English letters)
+    'aro', 'aaro', 'aro dekhao', 'aro dekhan', 'aro dekhi', 'aro dekhao plz',
+    'arro', 'arrro', 'arroo', 'aroo',
+    'r kichu', 'r kichue', 'r kichui', 'r kichu dekhao', 'r kichu dekhan',
+    'r kichu ase', 'r ase ki', 'r ki ase', 'r ki ki ase',
+    'r dekhao', 'r dekhan', 'r dekhi', 'r dekhabe', 'r dekhaben',
+    'onno', 'onno gula', 'onno gulo', 'onnogulo', 'onno kichu', 'onno option',
+    'onno product', 'onno gula dekhao', 'onno gulo dekhao', 'onno kichu dekhao',
+    'baki', 'baki gula', 'baki gulo', 'baki kichu',
+    'aroo dekhao', 'aroo dekhan', 'aroo dekhi',
+    'aro option', 'aro product', 'aro item', 'aro model',
+    'next ta', 'next gula', 'next gulo', 'porer ta', 'porer gula', 'porer gulo',
+    'porer 3', 'porer tin', 'porer page',
+    'ekto onno', 'ekta onno', 'aro vlo',
+
+    # Bangla (Bengali script)
+    'আরও', 'আরো', 'অন্য', 'অন্যগুলো', 'অন্য কিছু', 'অন্যটি', 'অন্যটা',
+    'আরও দেখান', 'আরও দেখাও', 'আরও দেখি', 'আরও দেখতে চাই',
+    'আরো দেখান', 'আরো দেখাও', 'আরো দেখি', 'আরো দেখতে চাই',
+    'আরও কিছু', 'আরো কিছু', 'আরও কিছু দেখান', 'আরো কিছু দেখান',
+    'আর কিছু', 'আর কিছু আছে', 'আর কী আছে', 'আর কি আছে',
+    'আর দেখান', 'আর দেখাও', 'আর দেখি',
+    'বাকি', 'বাকিগুলো', 'বাকি গুলো', 'বাকি কিছু',
+    'পরের', 'পরেরটা', 'পরেরগুলো', 'পরের তিনটা', 'পরের ৩',
+    'অন্য কোনো', 'অন্য কোন', 'অন্য অপশন', 'অন্য প্রোডাক্ট',
+    'নতুন কিছু', 'ভিন্ন', 'অন্যরকম',
 }
 
 
