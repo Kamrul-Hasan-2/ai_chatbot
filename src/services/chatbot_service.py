@@ -199,6 +199,26 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
 
         msg_lower = message.lower().strip()
 
+        # Budget post-correction: Groq sometimes flips over→max. Re-run regex
+        # extraction and override when the message has explicit over/under signals.
+        from services.intent_service import extract_budget_range
+        _OVER_SIGNALS = ('upore', 'উপরে', 'beshi', 'বেশি', 'above', 'over',
+                         'more than', 'er upore', 'er beshi', 'minimum',
+                         'theke beshi', 'theke upore', 'avobe')
+        _UNDER_SIGNALS = ('under', 'within', 'modde', 'মধ্যে', 'এর মধ্যে',
+                          'below', 'less than', 'er modde', 'er vitor', 'vitor')
+        has_over = any(s in msg_lower for s in _OVER_SIGNALS)
+        has_under = any(s in msg_lower for s in _UNDER_SIGNALS)
+        if has_over or has_under:
+            regex_budget = extract_budget_range(message)
+            r_min, r_max = regex_budget.get('min_price'), regex_budget.get('max_price')
+            if has_over and r_min is not None:
+                groq_result['entities']['price_min'] = r_min
+                groq_result['entities']['price_max'] = None
+            elif has_under and r_max is not None:
+                groq_result['entities']['price_max'] = r_max
+                groq_result['entities']['price_min'] = None
+
         # Hard override: search words + brand/category = product_search, never greeting
         _SEARCH_OVERRIDE_WORDS = {
             'dekhan', 'dekhao', 'দেখান', 'দেখাও', 'lagbe', 'লাগবে',
@@ -331,6 +351,20 @@ _HANDOFF_MAP = {
 
 
 def _dispatch(intent: str, ctx: Dict, user_id: str, message: str) -> Dict:
+    # Downgrade misclassified seller_query: a buyer asking "where is X sold" is
+    # a location/marketplace question, not a seller-onboarding request.
+    if intent == 'seller_query':
+        msg_l = (message or '').lower()
+        _BUYER_LOCATION_SIGNALS = (
+            'কোথায়', 'kothay', 'kothai', 'where',
+            'কোন জায়গায়', 'kon jaygay', 'kon jayga',
+        )
+        if any(s in msg_l for s in _BUYER_LOCATION_SIGNALS):
+            from services.intent_handlers_service import _SHOWROOM_RESPONSE
+            ic = normalize_payload(load_context(user_id))
+            return {'response': _SHOWROOM_RESPONSE + LOOP_BACK,
+                    'intent': 'faq_showroom', 'intent_content': ic, 'products': []}
+
     if intent in _HANDOFF_MAP:
         text, handoff_intent = _HANDOFF_MAP[intent]
         assign_agent(user_id, handoff_intent)

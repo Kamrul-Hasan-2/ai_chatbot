@@ -34,14 +34,16 @@ def extract_budget_range(message: str) -> Dict[str, Optional[int]]:
         un = (u or '').strip().lower()
         if un in {'k', 'হাজার', 'hazar', 'thousand'}:
             return val * 1000
+        if un in {'lakh', 'lac', 'lacs', 'lakhs', 'লাখ', 'লক্ষ'}:
+            return val * 100_000
         if un in {'tk', 'taka', 'টাকা'}:
             return val
         return val * 1000 if val < 1000 else val
 
     rm = re.search(
-        r'(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা|hazar)?\s*'
+        r'(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা|hazar|lakh|lac|lacs|lakhs|লাখ|লক্ষ)?\s*'
         r'(?:-|to|theke|থেকে)\s*'
-        r'(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা|hazar)?', text)
+        r'(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা|hazar|lakh|lac|lacs|lakhs|লাখ|লক্ষ)?', text)
     if rm:
         mn = _to_taka(rm.group(1), rm.group(2) or rm.group(4) or '')
         mx = _to_taka(rm.group(3), rm.group(4) or rm.group(2) or '')
@@ -51,18 +53,34 @@ def extract_budget_range(message: str) -> Dict[str, Optional[int]]:
 
     um = re.search(
         r'(?:under|within|modde|budget|er modde|er vitor|vitor|এর মধ্যে|মধ্যে|below|less than)'
-        r'\s*(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা|hazar)?', text)
+        r'\s*(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা|hazar|lakh|lac|lacs|lakhs|লাখ|লক্ষ)?', text)
     if um:
         return {'min_price': None, 'max_price': _to_taka(um.group(1), um.group(2) or '')}
 
     om = re.search(
         r'(?:over|above|avobe|avobe|upore|উপরে|বেশি|beshi|more than|er upore|er beshi|minimum|theke beshi|theke upore)'
-        r'\s*(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা|hazar)?', text)
+        r'\s*(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা|hazar|lakh|lac|lacs|lakhs|লাখ|লক্ষ)?', text)
     if om:
         return {'min_price': _to_taka(om.group(1), om.group(2) or ''), 'max_price': None}
 
+    # Postfix "over": "<num> <unit> [takar] upore/beshi/উপরে/বেশি/above"
+    pm = re.search(
+        r'(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা|hazar|lakh|lac|lacs|lakhs|লাখ|লক্ষ)?'
+        r'\s*(?:tk|taka|takar|টাকা|টাকার)?\s*'
+        r'(?:upore|উপরে|beshi|বেশি|above|over|er upore|er beshi)', text)
+    if pm:
+        return {'min_price': _to_taka(pm.group(1), pm.group(2) or ''), 'max_price': None}
+
+    # Postfix "under": "<num> <unit> [takar] modde/vitor/মধ্যে/within/under"
+    pum = re.search(
+        r'(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা|hazar|lakh|lac|lacs|lakhs|লাখ|লক্ষ)?'
+        r'\s*(?:tk|taka|takar|টাকা|টাকার)?\s*'
+        r'(?:modde|vitor|মধ্যে|এর মধ্যে|er modde|er vitor|within|under|below)', text)
+    if pum:
+        return {'min_price': None, 'max_price': _to_taka(pum.group(1), pum.group(2) or '')}
+
     # Plain number with unit (e.g. "50k", "30 hazar") — treat as max budget
-    gm = re.search(r'\b(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা|hazar)\b', text)
+    gm = re.search(r'\b(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা|hazar|lakh|lac|lacs|lakhs|লাখ|লক্ষ)\b', text)
     if gm:
         return {'min_price': None, 'max_price': _to_taka(gm.group(1), gm.group(2) or '')}
 
