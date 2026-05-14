@@ -310,9 +310,12 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
             r'[\s\W]*$',
             re.IGNORECASE,
         )
-        if _budget_only_re.match(msg_lower) and merged.get('title'):
-            logger.info("Pure budget refinement — clearing stale title %r", merged['title'])
+        if _budget_only_re.match(msg_lower):
+            stale = merged.get('title') or merged.get('prev_title')
+            if stale:
+                logger.info("Pure budget refinement — clearing stale title %r", stale)
             merged['title'] = ''
+            merged['prev_title'] = ''
 
         # Budget follow-up: inherit prev category and force fresh product_search
         has_budget = (merged.get('price_max') is not None or merged.get('price_min') is not None)
