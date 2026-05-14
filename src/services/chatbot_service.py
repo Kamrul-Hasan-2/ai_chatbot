@@ -199,6 +199,32 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
 
         msg_lower = message.lower().strip()
 
+        # Pre-merge: pure budget refinement → strip any title Groq returned AND
+        # mark prev_ctx to drop its stale title. This is checked BEFORE merge so
+        # merge_context can't fall back to a stale prev_title.
+        _budget_only_pre_re = re.compile(
+            r'^[\s\W]*(?:'
+            r'(?:under|within|modde|budget|er modde|er vitor|vitor|মধ্যে|এর মধ্যে|below|less than|'
+            r'over|above|avobe|upore|উপরে|বেশি|beshi|more than|er upore|er beshi|minimum|'
+            r'amar budget|budget|দাম|price|taka|টাকা|takar|টাকার)'
+            r'[\s\W]*)*'
+            r'(?:\d+(?:\.\d+)?)\s*'
+            r'(?:k|tk|taka|হাজার|টাকা|hazar|lakh|lac|lacs|lakhs|লাখ|লক্ষ|takar|টাকার)?\s*'
+            r'(?:upore|উপরে|beshi|বেশি|above|over|er upore|er beshi|'
+            r'modde|vitor|মধ্যে|এর মধ্যে|er modde|er vitor|within|under|below|'
+            r'taka|টাকা|takar|টাকার)?'
+            r'[\s\W]*$',
+            re.IGNORECASE,
+        )
+        _is_pure_budget_msg = bool(_budget_only_pre_re.match(msg_lower))
+        if _is_pure_budget_msg:
+            groq_result['entities']['title'] = ''
+            # Mutate prev_ctx so merge_context doesn't inherit the stale title.
+            if isinstance(prev_ctx, dict):
+                prev_ctx['title'] = ''
+                prev_ctx['prev_title'] = ''
+            logger.info("Pure budget message detected — pre-clearing titles")
+
         # Budget post-correction: Groq sometimes flips over→max. Re-run regex
         # extraction and override when the message has explicit over/under signals.
         from services.intent_service import extract_budget_range
@@ -293,27 +319,12 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         if merged.get('category'):
             set_session_category(user_id, merged['category'])
 
-        # Pure budget refinement: if the current message is essentially just a
-        # budget phrase (no new product description), drop the stale inherited
-        # title so the search isn't locked to the previous turn's specifics.
-        _budget_only_re = re.compile(
-            r'^[\s\W]*(?:'
-            r'(?:under|within|modde|budget|er modde|er vitor|vitor|মধ্যে|এর মধ্যে|below|less than|'
-            r'over|above|avobe|upore|উপরে|বেশি|beshi|more than|er upore|er beshi|minimum|'
-            r'amar budget|budget|দাম|price|taka|টাকা|takar|টাকার)'
-            r'[\s\W]*)*'
-            r'(?:\d+(?:\.\d+)?)\s*'
-            r'(?:k|tk|taka|হাজার|টাকা|hazar|lakh|lac|lacs|lakhs|লাখ|লক্ষ|takar|টাকার)?\s*'
-            r'(?:upore|উপরে|beshi|বেশি|above|over|er upore|er beshi|'
-            r'modde|vitor|মধ্যে|এর মধ্যে|er modde|er vitor|within|under|below|'
-            r'taka|টাকা|takar|টাকার)?'
-            r'[\s\W]*$',
-            re.IGNORECASE,
-        )
-        if _budget_only_re.match(msg_lower):
+        # Pure budget refinement: belt-and-suspenders clear of title in merged ctx
+        # (pre-merge clearing already happened above; this guards post-merge too).
+        if _is_pure_budget_msg:
             stale = merged.get('title') or merged.get('prev_title')
             if stale:
-                logger.info("Pure budget refinement — clearing stale title %r", stale)
+                logger.info("Pure budget refinement post-merge — clearing stale title %r", stale)
             merged['title'] = ''
             merged['prev_title'] = ''
 
