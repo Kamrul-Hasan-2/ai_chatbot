@@ -420,7 +420,7 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
         return condition_result
 
     if not ctx.get('category'):
-        return _ask_category(ctx)
+        return _ask_category(ctx, user_id)
 
     price_max = ctx.get('price_max')
     price_min = ctx.get('price_min')
@@ -708,18 +708,69 @@ def handle_fallback(ctx: Dict, user_id: str, message: str,
     if ctx.get('category'):
         return handle_product_search(ctx, user_id, message)
     ic = normalize_payload(load_context(user_id))
+    # Smart clarification: if we know the user's recent interests, ask a
+    # targeted question instead of dumping the generic category prompt.
     return _ok(
-        "স্যার, কোন প্রোডাক্টটি খুঁজছেন? ক্যাটাগরি বা মডেলের নাম বলুন, আমি দেখাচ্ছি।"
-        + LOOP_BACK,
+        _smart_clarification_prompt(ctx, user_id) + LOOP_BACK,
         'unknown', ic
     )
 
 
 # ── Category prompt ───────────────────────────────────────────────────────────
 
-def _ask_category(ctx: Dict) -> Dict:
+def _ask_category(ctx: Dict, user_id: str = '') -> Dict:
     ic = intent_to_normalized(ctx)
-    return _ok(CATEGORY_PROMPT, 'need_category', ic)
+    return _ok(_smart_clarification_prompt(ctx, user_id), 'need_category', ic)
+
+
+def _smart_clarification_prompt(ctx: Dict, user_id: str = '') -> str:
+    """Build a clarification that uses user profile when available.
+
+    Falls back to CATEGORY_PROMPT when there's no profile signal worth
+    referencing — never produces a worse message than the default.
+    """
+    try:
+        from repositories.state_repository import load_user_profile
+        profile = load_user_profile(user_id) if user_id else None
+    except Exception:
+        profile = None
+
+    if not profile or profile.message_count == 0:
+        return CATEGORY_PROMPT
+
+    brand_hint = profile.preferred_brands[0] if profile.preferred_brands else ''
+    cat_hint = profile.interested_categories[0] if profile.interested_categories else ''
+    lang = profile.language
+
+    if cat_hint and brand_hint:
+        if lang == 'bangla':
+            return (f"স্যার, আগে আপনি {brand_hint.title()} {cat_hint} দেখছিলেন। "
+                    "এবার কী খুঁজছেন — একই ক্যাটাগরি, নাকি অন্য কিছু?")
+        if lang == 'english':
+            return (f"Earlier you were looking at {brand_hint.title()} {cat_hint}. "
+                    "Same category this time, or something different?")
+        # banglish (default)
+        return (f"স্যার, আগে {brand_hint.title()} {cat_hint} dekhcilen. "
+                "Ebar ki same category, naki onno kichu?")
+
+    if cat_hint:
+        if lang == 'bangla':
+            return f"স্যার, আবার {cat_hint} দেখাবো, নাকি অন্য কোনো ক্যাটাগরি?"
+        if lang == 'english':
+            return f"Want me to show you {cat_hint} again, or a different category?"
+        return f"স্যার, abar {cat_hint} dekhabo, naki onno category?"
+
+    if brand_hint:
+        if lang == 'bangla':
+            return (f"স্যার, {brand_hint.title()}-এর কী প্রোডাক্ট খুঁজছেন? "
+                    "phone, laptop, না অন্য কিছু?")
+        if lang == 'english':
+            return (f"Which {brand_hint.title()} product are you looking for — "
+                    "phone, laptop, or something else?")
+        return (f"স্যার, {brand_hint.title()}-er ki product khujchen — "
+                "phone, laptop, naki onno kichu?")
+
+    return CATEGORY_PROMPT
 
 
 # ── Price-from-context helper ─────────────────────────────────────────────────

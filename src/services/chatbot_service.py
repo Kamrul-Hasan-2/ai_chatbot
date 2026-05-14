@@ -33,7 +33,9 @@ from repositories.state_repository import (
     load_context, save_last_intent, get_last_intent,
     get_product_url, clear_product_state, load_faq_db,
     set_session_category, get_session_category,
+    load_user_profile, save_user_profile,
 )
+from services.humanizer_service import humanize_if_short
 from services.intent_service import (
     detect_intent, merge_context,
     resolve_category, normalize_payload,
@@ -85,14 +87,45 @@ def _is_automated(message: str) -> bool:
 
 # ── Response builder ──────────────────────────────────────────────────────────
 
+# Intents whose responses are short and conversational. Safe to humanize —
+# no URLs, no prices, no numbered product lists.
+_HUMANIZABLE_INTENTS = {
+    'greeting', 'goodbye', 'thanks', 'exit',
+    'unknown', 'need_category', 'need_product', 'faq_not_found',
+    'technical_advice_out_of_scope', 'image_url', 'bdstall_url',
+    'unsupported_url',
+}
+
+
 def _build_response(user_id: str, handler_result: Dict,
                     mode: ChatMode, conversation_status: str,
-                    processing_time: float) -> Dict[str, Any]:
+                    processing_time: float,
+                    user_message: str = '',
+                    profile=None) -> Dict[str, Any]:
     save_last_intent(user_id, handler_result.get('intent', 'unknown'))
+
+    response_text = handler_result.get('response', '')
+    intent = handler_result.get('intent', 'unknown')
+
+    # Humanize only short conversational replies — keeps structured
+    # product/price/link responses byte-for-byte unchanged.
+    if (profile is not None
+            and intent in _HUMANIZABLE_INTENTS
+            and response_text
+            and _groq_client):
+        response_text = humanize_if_short(
+            response_text,
+            language=profile.language,
+            style=profile.style,
+            user_message=user_message,
+            groq_client=_groq_client,
+            groq_model=GROQ_MODEL,
+        )
+
     result: Dict[str, Any] = {
-        'response':            handler_result.get('response', ''),
+        'response':            response_text,
         'mode':                mode.value,
-        'intent':              handler_result.get('intent', 'unknown'),
+        'intent':              intent,
         'intent_content':      handler_result.get('intent_content', {}),
         'conversation_status': conversation_status,
         'products':            handler_result.get('products', []),
@@ -115,11 +148,34 @@ def _handoff(user_id: str, intent_name: str, response_text: str,
                            (datetime.now() - start_time).total_seconds())
 
 
+def _observe_and_save(user_id: str, profile, message: str,
+                      intent: str, ctx: Dict) -> None:
+    """Update the rolling user profile from one turn and persist it.
+
+    Never raises — profile updates must not break the user-facing reply.
+    """
+    try:
+        profile.observe_message(
+            message=message,
+            intent=intent or None,
+            category=(ctx.get('category') or ctx.get('cat') or '') if ctx else '',
+            price_min=ctx.get('price_min') if ctx else None,
+            price_max=ctx.get('price_max') if ctx else None,
+        )
+        save_user_profile(user_id, profile)
+    except Exception as e:
+        logger.warning("profile observe/save failed: %s", e)
+
+
 # ── Main entry ────────────────────────────────────────────────────────────────
 
 def process_message(user_id: str, message: str) -> Dict[str, Any]:
     start_time = datetime.now()
     logger.info("user=%s msg=%r", user_id, message)
+
+    # Load profile up-front — every code path below benefits from it
+    # (humanization, prompt injection, observation update on the way out).
+    profile = load_user_profile(user_id)
 
     try:
         # Blocked automated template
@@ -129,7 +185,8 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                 {'response': '', 'intent': 'ignored_automated_template',
                  'intent_content': ic, 'products': []},
                 ChatMode.AI, AI_ACTIVE_STATUS,
-                (datetime.now() - start_time).total_seconds())
+                (datetime.now() - start_time).total_seconds(),
+                user_message=message, profile=profile)
 
         # Human mode check
         if check_responder_type(user_id) == 'agent':
@@ -138,7 +195,8 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                 {'response': '', 'intent': 'human_mode_active',
                  'intent_content': ic, 'products': []},
                 ChatMode.HUMAN, HUMAN_SUPPORT_REQUIRED_STATUS,
-                (datetime.now() - start_time).total_seconds())
+                (datetime.now() - start_time).total_seconds(),
+                user_message=message, profile=profile)
 
         # URL in message
         url_match = re.search(r'https?://[^\s]+', message)
@@ -153,8 +211,10 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                 'price_min': ic_ctx.get('price_min'),
             }
             result = handle_url_message(flat_ctx, user_id, message, url_match.group(0))
+            _observe_and_save(user_id, profile, message, result.get('intent', ''), flat_ctx)
             return _build_response(user_id, result, ChatMode.AI, AI_ACTIVE_STATUS,
-                                   (datetime.now() - start_time).total_seconds())
+                                   (datetime.now() - start_time).total_seconds(),
+                                   user_message=message, profile=profile)
 
         # Product detail follow-up
         product_url = get_product_url(user_id)
@@ -164,15 +224,19 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         if product_url:
             detail = handle_product_detail_followup({}, user_id, message, product_url)
             if detail:
+                _observe_and_save(user_id, profile, message, detail.get('intent', ''), {})
                 return _build_response(user_id, detail, ChatMode.AI, AI_ACTIVE_STATUS,
-                                       (datetime.now() - start_time).total_seconds())
+                                       (datetime.now() - start_time).total_seconds(),
+                                       user_message=message, profile=profile)
 
         # Clarification selection — user picks a numbered product after clarification prompt
         if get_last_intent(user_id) == 'product_clarification':
             selected = handle_clarification_selection(user_id, message)
             if selected:
+                _observe_and_save(user_id, profile, message, selected.get('intent', ''), {})
                 return _build_response(user_id, selected, ChatMode.AI, AI_ACTIVE_STATUS,
-                                       (datetime.now() - start_time).total_seconds())
+                                       (datetime.now() - start_time).total_seconds(),
+                                       user_message=message, profile=profile)
 
         # ── STEP 1: load_context ─────────────────────────────────────────────
         prev_ctx = load_context(user_id)
@@ -181,7 +245,8 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         history     = fetch_history(user_id)
         cat_names   = [c['category_name'] for c in _categories]
         groq_result = detect_intent(message, history, prev_ctx,
-                                    cat_names, _groq_client, GROQ_MODEL)
+                                    cat_names, _groq_client, GROQ_MODEL,
+                                    user_profile_block=profile.to_prompt_block())
 
         # Resolve extracted category against canonical list
         raw_cat = groq_result['entities'].get('category', '')
@@ -279,9 +344,15 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         # ── STEP 4: handle_intent ────────────────────────────────────────────
         handler_result = _dispatch(groq_result['intent'], merged, user_id, message)
 
+        # Update the rolling user profile from this turn's observations.
+        _observe_and_save(user_id, profile, message,
+                          handler_result.get('intent', groq_result['intent']),
+                          merged)
+
         # ── STEP 5: build and return (persistence done by caller) ────────────
         return _build_response(user_id, handler_result, ChatMode.AI, AI_ACTIVE_STATUS,
-                               (datetime.now() - start_time).total_seconds())
+                               (datetime.now() - start_time).total_seconds(),
+                               user_message=message, profile=profile)
 
     except Exception as e:
         logger.error("process_message error: %s", e, exc_info=True)
