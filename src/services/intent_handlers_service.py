@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 from models.chatbot_config import CATEGORY_PROMPT, LOOP_BACK
-from services.api_client_service import search_products, fetch_delivery_template, fetch_condition_template
+from services.api_client_service import search_products, fetch_delivery_template, fetch_condition_template, fetch_product_spec
 from repositories.state_repository import (
     load_context, get_last_intent,
     set_product_context, get_product_context,
@@ -669,6 +669,10 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
         'detail', 'বিস্তারিত', 'কেমন', 'kemon', 'review', 'rating',
         'used', 'new', 'পুরনো', 'purano', 'second hand', 'refurbished',
         'condition', 'কন্ডিশন', 'fresh',
+        # spec query signals — caught here so they don't fall to technical_advice
+        'ram', 'gb', 'storage', 'memory', 'processor', 'cpu', 'battery', 'mah',
+        'display', 'screen', 'camera', 'mp', 'os', 'weight', 'configuration',
+        'র‍্যাম', 'প্রসেসর', 'ব্যাটারি', 'ডিসপ্লে', 'ক্যামেরা',
     ]
     if not any(s in msg for s in signals):
         return None
@@ -716,6 +720,189 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
         reply + LOOP_BACK,
         'product_detail_followup', ic,
         link_buttons=[{'text': 'View Product', 'url': product_url, 'title': title}]
+    )
+
+
+# ── Spec keyword → ListingFeatures key mapping ────────────────────────────────
+# Maps user message keywords to the exact ItemFeatureName values the API returns.
+# Add more rows here if you discover new feature names in the API response.
+
+_SPEC_KEYWORD_MAP = [
+    # (message_keywords,                  api_feature_names)
+    (['ram', 'র‍্যাম'],                   ['RAM']),
+    (['storage', 'memory', 'built in',
+      'internal', 'হার্ড', 'hard'],       ['Built In Memory', 'Storage', 'Internal Memory']),
+    (['processor', 'cpu', 'chipset',
+      'প্রসেসর', 'chip'],                 ['Processor', 'CPU', 'Chipset']),
+    (['display', 'screen', 'inch',
+      'ডিসপ্লে', 'স্ক্রিন'],             ['Display', 'Screen Size', 'Display Size']),
+    (['battery', 'mah', 'ব্যাটারি'],      ['Battery', 'Battery Capacity']),
+    (['camera', 'mp', 'megapixel',
+      'ক্যামেরা'],                        ['Camera', 'Main Camera', 'Rear Camera',
+                                           'Primary Camera']),
+    (['os', 'operating system',
+      'windows', 'android', 'ios'],       ['Operating System', 'OS']),
+    (['weight', 'ওজন'],                   ['Weight']),
+    (['sim', 'সিম'],                      ['SIM']),
+    (['network', 'connectivity',
+      '5g', '4g', 'lte'],                 ['Network', 'Connectivity']),
+    (['gpu', 'graphics', 'gfx',
+      'গ্রাফিক্স'],                       ['GPU', 'Graphics', 'Graphics Card']),
+    (['color', 'colour', 'rong',
+      'রং', 'রঙ'],                        ['Color', 'Colour']),
+]
+
+
+def _match_spec_key(message: str, features: Dict) -> Optional[str]:
+    """Return the first feature value whose API key matches the user's question."""
+    msg = message.lower()
+    for keywords, api_keys in _SPEC_KEYWORD_MAP:
+        if any(kw in msg for kw in keywords):
+            for api_key in api_keys:
+                val = features.get(api_key, '')
+                if val:
+                    return f"{api_key}: {val}"
+    return None
+
+
+def _get_technical_answer_from_review(message: str, review: str,
+                                      groq_client, groq_model: str) -> Optional[str]:
+    """Ask Groq to extract a specific spec from the product's own description.
+
+    Groq is constrained to only use the provided text — it cannot fall back to
+    its training knowledge about other products.
+    """
+    if not groq_client or not review:
+        return None
+    system = (
+        "You are a product spec extractor for BDStall.com.\n"
+        "Answer the user's question using ONLY the product description text provided.\n"
+        "Give a short, direct answer in the same language the user used (Bangla/Banglish/English).\n"
+        "If the answer is not found in the description, reply with exactly: NOT_FOUND"
+    )
+    user_prompt = f"Product description:\n{review}\n\nQuestion: {message}"
+    try:
+        resp = groq_client.chat.completions.create(
+            model=groq_model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user",   "content": user_prompt},
+            ],
+            temperature=0.0,
+            max_tokens=150,
+        )
+        answer = resp.choices[0].message.content.strip()
+        return None if answer == 'NOT_FOUND' else answer
+    except Exception as e:
+        logger.warning("_get_technical_answer_from_review failed: %s", e)
+        return None
+
+
+def handle_product_spec_query(ctx: Dict, user_id: str, message: str,
+                               groq_client=None, groq_model: str = '') -> Dict:
+    """Answer a spec question (RAM, display, battery…) about the product on screen.
+
+    Flow:
+      1. Get listing_id from cached product URL
+      2. Call fetch_product_spec(listing_id) → structured features + plain review
+      3. Keyword-match the user's question to a feature key → direct answer
+      4. If no structured match, ask Groq constrained to the product's own review text
+      5. If nothing → redirect to product page
+    """
+    ic = intent_to_normalized(ctx)
+    msg = message.lower()
+
+    # Resolve the product URL — prefer the dedicated product_url store,
+    # fall back to the first cached search result.
+    prev_products = get_product_context(user_id)
+    from repositories.state_repository import get_product_url
+    product_url = get_product_url(user_id) or (prev_products[0].get('url', '') if prev_products else '')
+
+    # When there are multiple products and the question is ambiguous, ask which one
+    if len(prev_products) > 1 and not get_product_url(user_id):
+        product_list = '\n'.join(
+            f"{i+1}. {p.get('title', '')[:50]}"
+            for i, p in enumerate(prev_products[:3])
+        )
+        return _ok(
+            f"স্যার, কোন প্রোডাক্টটি সম্পর্কে জানতে চাইছেন?\n\n{product_list}" + LOOP_BACK,
+            'product_clarification', ic
+        )
+
+    listing_id = _extract_product_id(product_url)
+    logger.info("handle_product_spec_query: url=%r id=%r msg=%r", product_url, listing_id, message)
+
+    if not listing_id:
+        return _ok(
+            "স্যার, কোন প্রোডাক্টটি সম্পর্কে জানতে চাইছেন? প্রোডাক্টের লিংক দিন বা নাম বলুন।"
+            + LOOP_BACK,
+            'product_spec_query', ic
+        )
+
+    spec_data = fetch_product_spec(listing_id)
+    logger.info("handle_product_spec_query: spec_data keys=%s",
+                list(spec_data['features'].keys()) if spec_data else 'None')
+
+    if not spec_data:
+        return _ok(
+            "স্যার, এই মুহূর্তে প্রোডাক্টের তথ্য লোড করা যাচ্ছে না। "
+            "সরাসরি প্রোডাক্ট পেজটি দেখুন।" + LOOP_BACK,
+            'product_spec_query', ic,
+            link_buttons=[{'text': 'View Product', 'url': product_url}] if product_url else []
+        )
+
+    features = spec_data['features']
+    title    = spec_data.get('title', '')
+    review   = spec_data.get('review', '')
+
+    # ── Check if user wants full spec sheet ───────────────────────────────────
+    _FULL_SPEC_WORDS = {'full spec', 'specs', 'specification', 'configuration',
+                        'সব স্পেক', 'full specification', 'বিস্তারিত স্পেক'}
+    wants_full = any(w in msg for w in _FULL_SPEC_WORDS)
+
+    if wants_full or not features:
+        if features:
+            lines = [f"স্যার, **{title}** এর স্পেসিফিকেশন:", ""]
+            for feat_name, feat_val in list(features.items())[:15]:
+                lines.append(f"• {feat_name}: {feat_val}")
+            lines.append(LOOP_BACK)
+            return _ok('\n'.join(lines), 'product_spec_query', ic,
+                       link_buttons=[{'text': 'View Product', 'url': product_url,
+                                      'title': title}] if product_url else [])
+        # No features at all — fall through to review-based Groq answer
+
+    # ── Try structured feature match first ────────────────────────────────────
+    matched = _match_spec_key(msg, features)
+    if matched:
+        feat_name, feat_val = matched.split(': ', 1)
+        reply = f"স্যার, {title} এর {feat_name} হলো: **{feat_val}**।"
+        logger.info("handle_product_spec_query: structured match %r → %r", feat_name, feat_val)
+        return _ok(
+            reply + LOOP_BACK,
+            'product_spec_query', ic,
+            link_buttons=[{'text': 'View Product', 'url': product_url,
+                           'title': title}] if product_url else []
+        )
+
+    # ── Groq constrained to this product's own review text ────────────────────
+    groq_answer = _get_technical_answer_from_review(message, review, groq_client, groq_model)
+    if groq_answer:
+        logger.info("handle_product_spec_query: Groq review-based answer returned")
+        return _ok(
+            groq_answer + LOOP_BACK,
+            'product_spec_query', ic,
+            link_buttons=[{'text': 'View Product', 'url': product_url,
+                           'title': title}] if product_url else []
+        )
+
+    # ── Nothing found — redirect to product page ──────────────────────────────
+    reply = (f"স্যার, এই তথ্যটি {title} এর পেজে বিস্তারিত দেওয়া আছে।"
+             if title else "স্যার, বিস্তারিত তথ্য প্রোডাক্ট পেজে পাবেন।")
+    return _ok(
+        reply + LOOP_BACK,
+        'product_spec_query', ic,
+        link_buttons=[{'text': 'View Product', 'url': product_url,
+                       'title': title}] if product_url else []
     )
 
 

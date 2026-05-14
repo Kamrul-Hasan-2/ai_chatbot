@@ -27,7 +27,7 @@ from models.chatbot_config import (
     ASSIGN_BOT_URL, RESPONDER_URL, RESPONDER_KEY,
     HISTORY_URL, HISTORY_LIMIT,
     SAVE_MESSAGE_URL, SAVE_MESSAGE_KEY,
-    CAT_LIST_URL,
+    CAT_LIST_URL, SPEC_URL,
     _log_api_call,
 )
 
@@ -338,6 +338,75 @@ def save_message(user_id: str, sender_type: int, message: str,
         except Exception as e:
             logger.warning("save_message[%s] failed: %s", mode, e)
     return False
+
+
+# ── Product spec (list_details) ───────────────────────────────────────────────
+
+_spec_cache: Dict[str, tuple] = {}   # keyed by listing_id → (timestamp, dict)
+_SPEC_TTL = 600                      # 10 min — specs rarely change
+
+
+def fetch_product_spec(listing_id: str) -> Optional[Dict]:
+    """Fetch structured specs for a single listing from list_details API.
+
+    Returns:
+        {
+          'title':    str,
+          'features': {'RAM': '2 GB', 'Display': '5 Inch', ...},
+          'review':   str   ← plain text, HTML stripped — fallback for Groq
+        }
+        or None on failure.
+    """
+    if not listing_id:
+        return None
+    now = time.time()
+    cached = _spec_cache.get(listing_id)
+    if cached and (now - cached[0]) < _SPEC_TTL:
+        return cached[1]
+
+    try:
+        started = datetime.now()
+        resp = requests.get(SPEC_URL, params={'lid': listing_id, 'key': API_KEY}, timeout=10)
+        duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+        _log_api_call('fetch_product_spec', 'GET', SPEC_URL,
+                      {'lid': listing_id}, resp.status_code, duration_ms,
+                      'PASS' if resp.status_code == 200 else 'FAIL', resp.text[:400])
+        if resp.status_code != 200:
+            return None
+        data = resp.json() if resp.text else {}
+        details = data.get('list_details') or []
+        if not details or not isinstance(details[0], dict):
+            return None
+        item = details[0]
+
+        # Build {ItemFeatureName: best_value} — prefer ItemFeatureValueName,
+        # fall back to ItemFeatureDescription when the short value is missing.
+        features: Dict[str, str] = {}
+        for feat in (item.get('ListingFeatures') or []):
+            if not isinstance(feat, dict):
+                continue
+            name = str(feat.get('ItemFeatureName') or '').strip()
+            val  = str(feat.get('ItemFeatureValueName') or '').strip()
+            desc = str(feat.get('ItemFeatureDescription') or '').strip()
+            if name:
+                features[name] = val or desc
+
+        # Strip HTML tags from Review for the Groq fallback
+        import re as _re
+        raw_review = str(item.get('Review') or item.get('ListingDescription') or '').strip()
+        plain_review = _re.sub(r'<[^>]+>', ' ', raw_review).strip()
+        plain_review = _re.sub(r'\s+', ' ', plain_review)
+
+        result = {
+            'title':    str(item.get('ListingTitle') or '').strip(),
+            'features': features,
+            'review':   plain_review,
+        }
+        _spec_cache[listing_id] = (now, result)
+        return result
+    except Exception as e:
+        logger.error("fetch_product_spec failed: %s", e)
+        return None
 
 
 # ── Category list ─────────────────────────────────────────────────────────────

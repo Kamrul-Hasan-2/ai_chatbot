@@ -46,7 +46,7 @@ from services.intent_handlers_service import (
     handle_buy, handle_comparison, handle_delivery, handle_faq,
     handle_technical_advice, handle_product_search, handle_price_query,
     handle_url_message, handle_product_detail_followup, handle_fallback,
-    handle_clarification_selection,
+    handle_clarification_selection, handle_product_spec_query,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -442,6 +442,9 @@ def _dispatch(intent: str, ctx: Dict, user_id: str, message: str,
         return handle_delivery(ctx, user_id, message, _faq_db)
     if intent == 'faq':
         return handle_faq(ctx, user_id, message, _faq_db)
+    if intent == 'product_spec_query':
+        return handle_product_spec_query(ctx, user_id, message,
+                                         _groq_client, GROQ_ANSWER_MODEL)
     if intent == 'technical_advice':
         return handle_technical_advice(ctx, user_id, message,
                                        _categories, _groq_client, GROQ_ANSWER_MODEL)

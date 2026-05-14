@@ -25,7 +25,7 @@ VALID_INTENTS = {
     'product_search', 'price_query', 'comparison', 'ordering', 'delivery',
     'greeting', 'goodbye', 'thanks', 'complaint', 'faq', 'human_request',
     'buy', 'exit', 'technical_advice', 'hate_speech', 'product_link',
-    'seller_query', 'unknown',
+    'seller_query', 'product_spec_query', 'unknown',
 }
 
 PRODUCT_RELATED_INTENTS = {'product_search', 'price_query', 'comparison', 'ordering'}
@@ -60,6 +60,7 @@ HISTORY_URL       = os.getenv('CHATBOT_HISTORY_API_URL', 'https://www.bdstall.co
 SAVE_MESSAGE_URL  = os.getenv('SAVE_MESSAGE_API_URL',    'https://www.bdstall.com/api/chatbot/chatbot_save_message/')
 SAVE_MESSAGE_KEY  = os.getenv('SAVE_MESSAGE_API_KEY',    os.getenv('BDSTALL_API_KEY', 'mkh677ddd2sxxkkdjff'))
 CAT_LIST_URL      = os.getenv('CATLIST_API_URL',         'https://www.bdstall.com/api/chatbot/cat_list/')
+SPEC_URL          = os.getenv('SPEC_API_URL',            'https://www.bdstall.com/api/item/list_details/')
 
 try:
     HISTORY_LIMIT = max(1, min(int(os.getenv('CHATBOT_HISTORY_LIMIT', '5')), 20))
@@ -117,7 +118,8 @@ INTENT DEFINITIONS:
 - complaint         : refund, scam, broken product, bad experience
 - faq               : general questions about the site or policies
 - human_request     : user wants to speak to a human agent
-- technical_advice  : user asks about a product CAPABILITY, COMPATIBILITY, UPGRADE potential, or PERFORMANCE.
+- technical_advice  : user asks about a product CAPABILITY, COMPATIBILITY, UPGRADE potential, or PERFORMANCE. e.g. "ram upgrade kora jabe ki", "i7 vs i5 difference", "gaming er jonno valo ki".
+- product_spec_query: user asks about a SPECIFIC TECHNICAL SPEC of the product currently on screen. Key signals: "koto gb ram", "ram koto", "display koto", "battery koto mah", "processor ki", "storage koto", "camera koto mp", "weight koto", "specs ki", "full spec", "configuration ki", "কত জিবি র‍্যাম", "ডিসপ্লে কত ইঞ্চি". is_followup=true always. ONLY use this when a product is already on screen — if no product context, use technical_advice instead.
 - seller_query      : user wants to SELL products, list items, open a shop, register as vendor
 - hate_speech       : abusive language, insults, threats
 - unknown           : truly cannot determine
@@ -174,6 +176,15 @@ Example 11 — "Galaxy A55 ase ki?" → product_search with title
 
 Example 12 — "khujchi" alone (filler, no product) → unknown
 {{"intent":"unknown","entities":{{"category":"","brand":"","title":"","price_max":null,"price_min":null}},"missing":["product"],"is_followup":false,"confidence":0.5}}
+
+Example 13 — "eita te koto gb ram ase" (product on screen, asking spec) → product_spec_query
+{{"intent":"product_spec_query","entities":{{"category":"","brand":"","title":"","price_max":null,"price_min":null}},"missing":[],"is_followup":true,"confidence":0.95}}
+
+Example 14 — "display size koto" (product on screen) → product_spec_query
+{{"intent":"product_spec_query","entities":{{"category":"","brand":"","title":"","price_max":null,"price_min":null}},"missing":[],"is_followup":true,"confidence":0.95}}
+
+Example 15 — "ram upgrade kora jabe ki" → technical_advice (capability question, not a spec lookup)
+{{"intent":"technical_advice","entities":{{"category":"","brand":"","title":"","price_max":null,"price_min":null}},"missing":[],"is_followup":true,"confidence":0.9}}
 
 USER PROFILE (use ONLY to disambiguate vague follow-ups — never copy into entities):
 {user_profile_block}
