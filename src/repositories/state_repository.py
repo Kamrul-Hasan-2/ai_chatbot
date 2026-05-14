@@ -15,6 +15,8 @@ Public functions:
   clear_product_state(user_id)        → None
   set_session_category(user_id, cat)  → None
   get_session_category(user_id)       → str
+  load_user_profile(user_id)          → UserProfile
+  save_user_profile(user_id, profile) → None
   load_faq_db()                       → list[dict]
   search_faq(message, db)             → str | None
 """
@@ -41,6 +43,7 @@ _session_category: Dict[str, str]  = {}  # persisted so restarts don't lose cate
 _search_pool:      Dict[str, List] = {}  # full 15-product result pool per user
 _search_offset:    Dict[str, int]  = {}  # next-page offset into _search_pool
 _search_key:       Dict[str, str]  = {}  # cache key (keywords|min|max) for the pool
+_user_profile:     Dict[str, Dict] = {}  # per-user behavioural profile (JSON dict form)
 _state_lock = threading.Lock()
 
 _PROJECT_ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
@@ -56,6 +59,7 @@ def _load_local_state() -> None:
         _product_context.update(state.get('user_product_context') or {})
         _last_intent.update(state.get('user_last_intent') or {})
         _session_category.update(state.get('user_session_category') or {})
+        _user_profile.update(state.get('user_profile') or {})
     except Exception as e:
         logger.warning("_load_local_state failed: %s", e)
 
@@ -68,6 +72,7 @@ def _save_local_state() -> None:
                 'user_product_context':  _product_context,
                 'user_last_intent':      _last_intent,
                 'user_session_category': _session_category,
+                'user_profile':          _user_profile,
             }
             fd, tmp = tempfile.mkstemp(dir=os.path.dirname(_STATE_FILE), suffix='.tmp')
             try:
@@ -196,6 +201,22 @@ def set_session_category(user_id: str, category: str) -> None:
 
 def get_session_category(user_id: str) -> str:
     return _session_category.get(user_id, '')
+
+
+# ── User profile ──────────────────────────────────────────────────────────────
+
+def load_user_profile(user_id: str):
+    """Return a UserProfile (always — empty for a new user)."""
+    from utils.user_profile import UserProfile
+    return UserProfile.from_dict(_user_profile.get(user_id))
+
+
+def save_user_profile(user_id: str, profile) -> None:
+    """Persist a UserProfile to the JSON state file."""
+    if profile is None:
+        return
+    _user_profile[user_id] = profile.to_dict()
+    _save_local_state()
 
 
 # ── FAQ database ──────────────────────────────────────────────────────────────

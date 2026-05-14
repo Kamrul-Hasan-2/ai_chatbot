@@ -137,6 +137,47 @@ is_followup: true ONLY when message has NO product type word AND depends entirel
 
 BUDGET PARSING: "50k"=50000, "30 hazar"=30000, "under 20k"→price_max=20000. null if absent.
 
+FEW-SHOT EXAMPLES (treat as ground truth — match these patterns):
+
+Example 1 — "kibhabe kinbo" → buy (asking the purchase process, never product_search)
+{{"intent":"buy","entities":{{"category":"","brand":"","title":"","price_max":null,"price_min":null}},"missing":[],"is_followup":false,"confidence":0.95}}
+
+Example 2 — "konti valo hobe" → comparison (asking which is better, not greeting)
+{{"intent":"comparison","entities":{{"category":"","brand":"","title":"","price_max":null,"price_min":null}},"missing":[],"is_followup":true,"confidence":0.92}}
+
+Example 3 — "samsung phone dekhao 20k modde" → product_search with budget
+{{"intent":"product_search","entities":{{"category":"mobile","brand":"samsung","title":"","price_max":20000,"price_min":null}},"missing":[],"is_followup":false,"confidence":0.95}}
+
+Example 4 — "20k upore" (pure budget refinement) → product_search, NO title
+{{"intent":"product_search","entities":{{"category":"","brand":"","title":"","price_max":null,"price_min":20000}},"missing":[],"is_followup":true,"confidence":0.9}}
+
+Example 5 — "30k er modde laptop chai" → product_search under budget
+{{"intent":"product_search","entities":{{"category":"laptop","brand":"","title":"","price_max":30000,"price_min":null}},"missing":[],"is_followup":false,"confidence":0.95}}
+
+Example 6 — "hello phone dekhao" → product_search (NOT greeting — has search words + product)
+{{"intent":"product_search","entities":{{"category":"mobile","brand":"","title":"","price_max":null,"price_min":null}},"missing":[],"is_followup":false,"confidence":0.9}}
+
+Example 7 — "amar budget 25000" (just a number, no product type) → product_search, is_followup=true
+{{"intent":"product_search","entities":{{"category":"","brand":"","title":"","price_max":25000,"price_min":null}},"missing":[],"is_followup":true,"confidence":0.85}}
+
+Example 8 — "order korbo kivabe" → buy
+{{"intent":"buy","entities":{{"category":"","brand":"","title":"","price_max":null,"price_min":null}},"missing":[],"is_followup":false,"confidence":0.95}}
+
+Example 9 — "shera konta" (which is the best) → comparison
+{{"intent":"comparison","entities":{{"category":"","brand":"","title":"","price_max":null,"price_min":null}},"missing":[],"is_followup":true,"confidence":0.9}}
+
+Example 10 — "ami sell korte chai" → seller_query
+{{"intent":"seller_query","entities":{{"category":"","brand":"","title":"","price_max":null,"price_min":null}},"missing":[],"is_followup":false,"confidence":0.95}}
+
+Example 11 — "Galaxy A55 ase ki?" → product_search with title
+{{"intent":"product_search","entities":{{"category":"mobile","brand":"samsung","title":"Galaxy A55","price_max":null,"price_min":null}},"missing":[],"is_followup":false,"confidence":0.95}}
+
+Example 12 — "khujchi" alone (filler, no product) → unknown
+{{"intent":"unknown","entities":{{"category":"","brand":"","title":"","price_max":null,"price_min":null}},"missing":["product"],"is_followup":false,"confidence":0.5}}
+
+USER PROFILE (use ONLY to disambiguate vague follow-ups — never copy into entities):
+{user_profile_block}
+
 PREVIOUS CONTEXT (is_followup detection only — do NOT copy into entities):
 {previous_intent}
 """

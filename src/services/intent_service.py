@@ -197,7 +197,8 @@ def resolve_category_from_message(message: str, categories: List[Dict]) -> str:
 # ── Groq intent extraction ────────────────────────────────────────────────────
 
 def detect_intent(message: str, history: str, prev_ctx: Dict,
-                  category_names: List[str], groq_client, groq_model: str) -> Dict[str, Any]:
+                  category_names: List[str], groq_client, groq_model: str,
+                  user_profile_block: str = "") -> Dict[str, Any]:
     if not groq_client:
         return _fallback_intent(message)
 
@@ -205,6 +206,7 @@ def detect_intent(message: str, history: str, prev_ctx: Dict,
     system_prompt = GROQ_SYSTEM_PROMPT_TEMPLATE.format(
         sample_str=sample_str,
         previous_intent=json.dumps(prev_ctx or {}, ensure_ascii=False),
+        user_profile_block=user_profile_block or "(no profile yet)",
     )
     user_prompt = (
         f"Recent conversation:\n{history or 'N/A'}\n\n"
