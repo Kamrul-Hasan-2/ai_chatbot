@@ -420,9 +420,14 @@ _BUDGET_ONLY_PRE_RE = re.compile(
     r'[\s\W]*)*'
     r'(?:\d+(?:\.\d+)?)\s*'
     r'(?:k|tk|taka|হাজার|টাকা|hazar|lakh|lac|lacs|lakhs|লাখ|লক্ষ|takar|টাকার)?\s*'
-    r'(?:upore|উপরে|beshi|বেশি|above|over|er upore|er beshi|'
+    # Allow any combination of budget/connector/postfix words after the number+unit.
+    # "1 lakh taka r modde ase" → taka, r, modde, ase all need to be consumed.
+    # After number+unit, consume any combination of budget/connector/postfix words.
+    # Covers "taka r modde ase", "takar modde ase", "r modde", "er modde ase", etc.
+    r'(?:(?:taka|takar|টাকা|টাকার|r|er|ta|te|ar|'
+    r'upore|উপরে|beshi|বেশি|above|over|er upore|er beshi|'
     r'modde|vitor|মধ্যে|এর মধ্যে|er modde|er vitor|within|under|below|'
-    r'taka|টাকা|takar|টাকার)?'
+    r'ase|ache|আছে)\s*)*'
     r'[\s\W]*$',
     re.IGNORECASE,
 )

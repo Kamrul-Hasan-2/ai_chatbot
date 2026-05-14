@@ -254,12 +254,22 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                                     cat_names, _groq_client, GROQ_MODEL,
                                     user_profile_block=profile.to_prompt_block())
 
-        # Resolve extracted category against canonical list
+        # Apply deterministic post-Groq corrections (budget refinement,
+        # over/under signals, search/comparison/buy overrides).
+        # Must run BEFORE the category scan so _is_pure_budget_msg is known.
+        override_result = apply_post_groq_overrides(groq_result, message, dict(prev_ctx))
+        groq_result = override_result['groq_result']
+        prev_ctx = override_result['prev_ctx']
+        _is_pure_budget_msg = override_result['is_pure_budget_msg']
+
+        # Resolve extracted category against canonical list.
+        # Skip the message-scan fallback for pure budget messages — words like
+        # "modde" (meaning "within") would otherwise fuzzy-match modem/WiFi categories.
         raw_cat = groq_result['entities'].get('category', '')
         if raw_cat:
             resolved = resolve_category(raw_cat, _categories)
             groq_result['entities']['category'] = resolved
-        else:
+        elif not _is_pure_budget_msg:
             # Groq missed category — scan message directly
             scanned = resolve_category_from_message(message, _categories)
             if scanned:
@@ -267,13 +277,6 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                 # Promote unknown → product_search when we found a category
                 if groq_result['intent'] == 'unknown':
                     groq_result['intent'] = 'product_search'
-
-        # Apply deterministic post-Groq corrections (budget refinement,
-        # over/under signals, search/comparison/buy overrides).
-        override_result = apply_post_groq_overrides(groq_result, message, dict(prev_ctx))
-        groq_result = override_result['groq_result']
-        prev_ctx = override_result['prev_ctx']
-        _is_pure_budget_msg = override_result['is_pure_budget_msg']
 
         # Clear filler titles BEFORE merge so they never overwrite a real prev title.
         _FILLER_WORDS = {
