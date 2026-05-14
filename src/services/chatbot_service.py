@@ -293,6 +293,27 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         if merged.get('category'):
             set_session_category(user_id, merged['category'])
 
+        # Pure budget refinement: if the current message is essentially just a
+        # budget phrase (no new product description), drop the stale inherited
+        # title so the search isn't locked to the previous turn's specifics.
+        _budget_only_re = re.compile(
+            r'^[\s\W]*(?:'
+            r'(?:under|within|modde|budget|er modde|er vitor|vitor|মধ্যে|এর মধ্যে|below|less than|'
+            r'over|above|avobe|upore|উপরে|বেশি|beshi|more than|er upore|er beshi|minimum|'
+            r'amar budget|budget|দাম|price|taka|টাকা|takar|টাকার)'
+            r'[\s\W]*)*'
+            r'(?:\d+(?:\.\d+)?)\s*'
+            r'(?:k|tk|taka|হাজার|টাকা|hazar|lakh|lac|lacs|lakhs|লাখ|লক্ষ|takar|টাকার)?\s*'
+            r'(?:upore|উপরে|beshi|বেশি|above|over|er upore|er beshi|'
+            r'modde|vitor|মধ্যে|এর মধ্যে|er modde|er vitor|within|under|below|'
+            r'taka|টাকা|takar|টাকার)?'
+            r'[\s\W]*$',
+            re.IGNORECASE,
+        )
+        if _budget_only_re.match(msg_lower) and merged.get('title'):
+            logger.info("Pure budget refinement — clearing stale title %r", merged['title'])
+            merged['title'] = ''
+
         # Budget follow-up: inherit prev category and force fresh product_search
         has_budget = (merged.get('price_max') is not None or merged.get('price_min') is not None)
         if has_budget and not merged.get('category'):
