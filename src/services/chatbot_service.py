@@ -448,6 +448,31 @@ def _dispatch(intent: str, ctx: Dict, user_id: str, message: str,
             return {'response': _SHOWROOM_RESPONSE + LOOP_BACK,
                     'intent': 'faq_showroom', 'intent_content': ic, 'products': []}
 
+    # Return / refund complaint — answer with policy link, no agent handoff needed
+    if intent == 'complaint':
+        msg_l = (message or '').lower()
+        _RETURN_SIGNALS = (
+            'return', 'ফেরত', 'ferot', 'ferat', 'refund',
+            'bhanga', 'ভাঙা', 'nosto', 'নষ্ট', 'broken', 'damaged', 'problem',
+            'call dore na', 'call dhore na', 'call dhorena', 'seller nai',
+            'pathaise', 'পাঠাইছে', 'wrong product', 'wrong item',
+        )
+        if any(s in msg_l for s in _RETURN_SIGNALS):
+            ic = normalize_payload(prev_ctx or load_context(user_id))
+            _RETURN_URL = 'https://www.bdstall.com/buyers-ecommerce-terms-conditions/bn/'
+            reply = (
+                "স্যার, অসুবিধার জন্য আন্তরিকভাবে দুঃখিত। 😔\n\n"
+                "প্রোডাক্ট রিটার্ন বা সমস্যার ক্ষেত্রে আমাদের রিটার্ন পলিসি অনুযায়ী পদক্ষেপ নিন।\n\n"
+                "নিচের লিংকে রিটার্ন প্রক্রিয়ার বিস্তারিত পাবেন:"
+            )
+            return {
+                'response':       reply + LOOP_BACK,
+                'intent':         'complaint_return',
+                'intent_content': ic,
+                'products':       [],
+                'link_buttons':   [{'text': 'Return Policy', 'url': _RETURN_URL}],
+            }
+
     if intent in _HANDOFF_MAP:
         text, handoff_intent = _HANDOFF_MAP[intent]
         assign_agent(user_id, handoff_intent)

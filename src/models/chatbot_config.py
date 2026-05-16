@@ -115,7 +115,7 @@ INTENT DEFINITIONS:
 - greeting          : hello / hi / salam with no product intent
 - goodbye           : farewell with no product intent
 - thanks            : thank you messages
-- complaint         : refund, scam, broken product, bad experience
+- complaint         : refund, return, broken/damaged product, seller not responding, wrong item received, bad experience. Key signals: "return korbo", "ফেরত দেবো", "bhanga", "nosto", "seller call dore na", "pathaise", "refund chai"
 - faq               : general questions about the site or policies
 - human_request     : user wants to speak to a human agent
 - technical_advice  : user asks about a product CAPABILITY, COMPATIBILITY, UPGRADE potential, or PERFORMANCE. e.g. "ram upgrade kora jabe ki", "i7 vs i5 difference", "gaming er jonno valo ki".
