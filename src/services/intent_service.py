@@ -503,7 +503,11 @@ def apply_post_groq_overrides(
         regex_budget = extract_budget_range(message)
         r_min = regex_budget.get('min_price')
         r_max = regex_budget.get('max_price')
-        if has_over and r_min is not None:
+        if r_min is not None and r_max is not None:
+            # Full range (e.g. "50000 - 70000 er modde") — keep both ends
+            groq_result['entities']['price_min'] = r_min
+            groq_result['entities']['price_max'] = r_max
+        elif has_over and r_min is not None:
             groq_result['entities']['price_min'] = r_min
             groq_result['entities']['price_max'] = None
         elif has_under and r_max is not None:
