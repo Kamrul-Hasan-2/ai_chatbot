@@ -253,18 +253,26 @@ def load_faq_db() -> List[Dict]:
 
 def search_faq(message: str, db: List[Dict]) -> Optional[str]:
     msg = message.lower().strip()
-    if not msg:
+    if not msg or not db:
         return None
+
+    msg_words = [w for w in msg.split() if len(w) >= 3]
+
     for item in db:
-        q = item['question'].lower()
-        if msg in q or q in msg:
-            return item['answer']
-    if any(w in msg for w in ['order', 'অর্ডার', 'kibabe', 'kivabe', 'কিভাবে']):
-        for item in db:
-            if 'অর্ডার' in item['question'] and 'কিভাবে' in item['question']:
-                return item['answer']
-    if any(w in msg for w in ['delivery', 'ডেলিভারি', 'koto din']):
-        for item in db:
-            if 'ডেলিভারি' in item['question'] or 'কত দিন' in item['question']:
-                return item['answer']
+        # API format: question_bn / answer_bn
+        if 'question_bn' in item:
+            q_bn = (item.get('question_bn') or '').lower()
+            q_en = (item.get('question_en') or '').lower()
+            score = 0
+            for w in msg_words:
+                if w in q_bn or w in q_en:
+                    score += 1
+            if score >= max(1, len(msg_words) // 2):
+                return item.get('answer_bn') or item.get('answer_en') or ''
+        else:
+            # Legacy CSV format: question / answer
+            q = (item.get('question') or '').lower()
+            if msg in q or q in msg:
+                return item.get('answer', '')
+
     return None

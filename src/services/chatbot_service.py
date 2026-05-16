@@ -27,7 +27,7 @@ from models.chatbot_config import (
 )
 from services.api_client_service import (
     check_responder_type, assign_agent, assign_bot,
-    fetch_history, fetch_categories,
+    fetch_history, fetch_categories, fetch_return_policy, fetch_faq_db,
 )
 from repositories.state_repository import (
     load_context, save_last_intent, get_last_intent,
@@ -66,7 +66,7 @@ _faq_db:     List[Dict] = []
 def _boot() -> None:
     global _categories, _faq_db
     _categories = fetch_categories()
-    _faq_db     = load_faq_db()
+    _faq_db     = fetch_faq_db()   # live from API, falls back to [] on failure
     logger.info("Booted — %d categories, %d FAQ rows", len(_categories), len(_faq_db))
 
 
@@ -448,7 +448,7 @@ def _dispatch(intent: str, ctx: Dict, user_id: str, message: str,
             return {'response': _SHOWROOM_RESPONSE + LOOP_BACK,
                     'intent': 'faq_showroom', 'intent_content': ic, 'products': []}
 
-    # Return / refund complaint — answer with policy link, no agent handoff needed
+    # Return / refund complaint — fetch policy from API, no agent handoff needed
     if intent == 'complaint':
         msg_l = (message or '').lower()
         _RETURN_SIGNALS = (
@@ -459,18 +459,22 @@ def _dispatch(intent: str, ctx: Dict, user_id: str, message: str,
         )
         if any(s in msg_l for s in _RETURN_SIGNALS):
             ic = normalize_payload(prev_ctx or load_context(user_id))
-            _RETURN_URL = 'https://www.bdstall.com/buyers-ecommerce-terms-conditions/bn/'
-            reply = (
-                "স্যার, অসুবিধার জন্য আন্তরিকভাবে দুঃখিত। 😔\n\n"
-                "প্রোডাক্ট রিটার্ন বা সমস্যার ক্ষেত্রে আমাদের রিটার্ন পলিসি অনুযায়ী পদক্ষেপ নিন।\n\n"
-                "নিচের লিংকে রিটার্ন প্রক্রিয়ার বিস্তারিত পাবেন:"
-            )
+            policy_text = fetch_return_policy()
+            if policy_text:
+                # Trim to a readable length for Messenger
+                trimmed = policy_text[:1200].rsplit(' ', 1)[0] + '…' if len(policy_text) > 1200 else policy_text
+                reply = "স্যার, অসুবিধার জন্য আন্তরিকভাবে দুঃখিত। 😔\n\n" + trimmed
+            else:
+                reply = (
+                    "স্যার, অসুবিধার জন্য আন্তরিকভাবে দুঃখিত। 😔\n\n"
+                    "প্রোডাক্ট রিটার্ন বা সমস্যার ক্ষেত্রে আমাদের রিটার্ন পলিসি অনুযায়ী পদক্ষেপ নিন।"
+                )
             return {
                 'response':       reply + LOOP_BACK,
                 'intent':         'complaint_return',
                 'intent_content': ic,
                 'products':       [],
-                'link_buttons':   [{'text': 'Return Policy', 'url': _RETURN_URL}],
+                'link_buttons':   [],
             }
 
     if intent in _HANDOFF_MAP:
@@ -493,9 +497,9 @@ def _dispatch(intent: str, ctx: Dict, user_id: str, message: str,
     if intent == 'comparison':
         return handle_comparison(ctx, user_id, message)
     if intent == 'delivery':
-        return handle_delivery(ctx, user_id, message, _faq_db)
+        return handle_delivery(ctx, user_id, message, fetch_faq_db())
     if intent == 'faq':
-        return handle_faq(ctx, user_id, message, _faq_db)
+        return handle_faq(ctx, user_id, message, fetch_faq_db())
     if intent == 'product_spec_query':
         return handle_product_spec_query(ctx, user_id, message,
                                          _groq_client, GROQ_ANSWER_MODEL)

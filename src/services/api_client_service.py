@@ -12,6 +12,8 @@ Public functions:
   fetch_delivery_template()                   → str | None
   save_message(user_id, sender, text, ...)    → bool
   fetch_categories()                          → list[dict]
+  fetch_faq_db()                              → list[dict]
+  fetch_return_policy()                       → str | None
 """
 import json
 import logging
@@ -27,7 +29,7 @@ from models.chatbot_config import (
     ASSIGN_BOT_URL, RESPONDER_URL, RESPONDER_KEY,
     HISTORY_URL, HISTORY_LIMIT,
     SAVE_MESSAGE_URL, SAVE_MESSAGE_KEY,
-    CAT_LIST_URL, SPEC_URL,
+    CAT_LIST_URL, SPEC_URL, KNOWLEDGE_URL,
     _log_api_call,
 )
 
@@ -432,3 +434,84 @@ def fetch_categories() -> List[Dict]:
     except Exception as e:
         logger.warning("fetch_categories failed: %s", e)
         return []
+
+
+# ── FAQ from API ──────────────────────────────────────────────────────────────
+
+_faq_api_cache: Optional[tuple] = None
+_FAQ_API_TTL = 3600  # 1 hour
+
+
+def fetch_faq_db() -> List[Dict]:
+    """Fetch FAQ list from knowledge API (?intent=faqs).
+
+    Returns list of dicts with keys: question_bn, answer_bn, question_en, answer_en.
+    Cached for 1 hour. Falls back to empty list on failure.
+    """
+    global _faq_api_cache
+    now = time.time()
+    if _faq_api_cache and (now - _faq_api_cache[0]) < _FAQ_API_TTL:
+        return _faq_api_cache[1]
+    try:
+        resp = requests.get(KNOWLEDGE_URL, params={'intent': 'faqs', 'key': API_KEY}, timeout=10)
+        if resp.status_code != 200:
+            logger.warning("fetch_faq_db HTTP %s", resp.status_code)
+            return _faq_api_cache[1] if _faq_api_cache else []
+        data = resp.json()
+        items = [
+            {
+                'question_bn': str(d.get('question_bn') or '').strip(),
+                'answer_bn':   str(d.get('answer_bn')   or '').strip(),
+                'question_en': str(d.get('question_en') or '').strip(),
+                'answer_en':   str(d.get('answer_en')   or '').strip(),
+            }
+            for d in (data.get('data') or [])
+            if d.get('question_bn') or d.get('question_en')
+        ]
+        _faq_api_cache = (now, items)
+        logger.info("fetch_faq_db: loaded %d FAQ items from API", len(items))
+        return items
+    except Exception as e:
+        logger.error("fetch_faq_db failed: %s", e)
+        return _faq_api_cache[1] if _faq_api_cache else []
+
+
+# ── Knowledge / Return policy ─────────────────────────────────────────────────
+
+_knowledge_cache: Dict[str, tuple] = {}
+_KNOWLEDGE_TTL = 3600  # 1 hour — policy text rarely changes
+
+
+def fetch_return_policy() -> Optional[str]:
+    """Fetch the Buying Terms & Refund Policy section from the knowledge API.
+
+    Returns plain text (HTML stripped) of the Bangla return/refund policy,
+    or None on failure.
+    """
+    import re as _re
+    now = time.time()
+    cached = _knowledge_cache.get('return_policy')
+    if cached and (now - cached[0]) < _KNOWLEDGE_TTL:
+        return cached[1]
+
+    try:
+        resp = requests.get(KNOWLEDGE_URL, params={'intent': 'terms', 'key': API_KEY}, timeout=10)
+        if resp.status_code != 200:
+            logger.warning("fetch_return_policy HTTP %s", resp.status_code)
+            return None
+        data = resp.json()
+        items = data.get('data') or []
+        text = None
+        for item in items:
+            name = item.get('term_type_name', '')
+            if 'Buying' in name or 'Refund' in name or 'Return' in name:
+                raw = item.get('term_bn') or item.get('term_en') or ''
+                plain = _re.sub(r'<[^>]+>', ' ', raw)
+                plain = _re.sub(r'\s+', ' ', plain).strip()
+                text = plain
+                break
+        _knowledge_cache['return_policy'] = (now, text)
+        return text
+    except Exception as e:
+        logger.error("fetch_return_policy failed: %s", e)
+        return None
