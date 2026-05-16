@@ -110,7 +110,7 @@ INTENT DEFINITIONS:
 - price_query       : user is asking about price or cost of a product/category
 - comparison        : user asks WHICH product is better or compares options. Key signals: "konti valo", "konta valo", "konti bhalo", "konta bhalo", "which is better", "কোনটা ভালো", "কোনটি ভালো", "সেরা কোনটা", "best konti", "suggest korben"
 - buy               : user wants to know HOW to buy or place an order (process question). CRITICAL: "kibabe kinbo", "kivabe kinbo", "kibhabe kinbo", "kinte chai", "order korbo kivabe", "payment method", "cash on delivery", "cod", "কিভাবে কিনবো", "কিনতে চাই" → ALWAYS "buy". Never "product_search" for these phrases.
-- exit              : user is leaving, says later / not now / will come back
+- exit              : user is leaving or deferring — will buy/check later. CRITICAL signals: "pore kinbo", "pore janabo", "pore nibo", "পরে কিনবো", "পরে জানাবো", "ekhon na", "এখন না", "later", "not now", "abar ashbo". Even if "kinbo" appears, if "pore" precedes it → ALWAYS "exit", never "buy".
 - delivery          : user asks about delivery time, charge, or process
 - greeting          : hello / hi / salam with no product intent
 - goodbye           : farewell with no product intent

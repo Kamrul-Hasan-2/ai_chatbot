@@ -287,6 +287,12 @@ def _fallback_intent(message: str) -> Dict[str, Any]:
         'kinbo', 'kinte', 'kibabe', 'kivabe', 'kiভাবে', 'কিভাবে',
         'kibhabe', 'payment', 'cash on delivery', 'cod',
     }
+    _EXIT_WORDS = {
+        'pore kinbo', 'pore janabo', 'pore nibo', 'pore dekhbo', 'pore ashbo',
+        'পরে কিনবো', 'পরে জানাবো', 'পরে নেবো', 'পরে দেখবো',
+        'later', 'not now', 'ekhon na', 'এখন না', 'পরে', 'abar ashbo',
+        'will come back', 'come back later', 'think about it', 'let me think',
+    }
     _COMPARISON_WORDS = {
         'konti', 'konta', 'কোনটা', 'কোনটি', 'bhalo', 'ভালো', 'valo',
         'better', 'best', 'compare', 'which', 'কোনটা ভালো', 'সেরা',
@@ -313,6 +319,8 @@ def _fallback_intent(message: str) -> Dict[str, Any]:
         intent = 'goodbye'
     elif any(w in msg for w in _THANKS_WORDS):
         intent = 'thanks'
+    elif any(w in msg for w in _EXIT_WORDS):
+        intent = 'exit'
     elif any(w in msg for w in _DELIVERY_WORDS):
         intent = 'delivery'
     elif any(w in msg for w in _BUY_WORDS):
@@ -524,8 +532,20 @@ def apply_post_groq_overrides(
             and any(w in msg_lower for w in _COMPARISON_OVERRIDE_WORDS)):
         groq_result['intent'] = 'comparison'
 
+    # Rule 5a — exit phrases always → exit, regardless of Groq (must be before buy check
+    # because phrases like "pore kinbo" contain "kinbo" which looks like buy)
+    _EXIT_PHRASES = {
+        'pore kinbo', 'pore janabo', 'pore nibo', 'pore dekhbo', 'pore ashbo',
+        'পরে কিনবো', 'পরে জানাবো', 'পরে নেবো', 'পরে দেখবো',
+        'ekhon na', 'এখন না', 'not now', 'later', 'abar ashbo',
+        'will come back', 'let me think',
+    }
+    if any(p in msg_lower for p in _EXIT_PHRASES):
+        groq_result['intent'] = 'exit'
+
     # Rule 5 — buy-process keywords always → buy, regardless of Groq
-    if any(sig in msg_lower for sig in _BUY_SIGNALS):
+    # (only when not already overridden to exit above)
+    if groq_result['intent'] != 'exit' and any(sig in msg_lower for sig in _BUY_SIGNALS):
         groq_result['intent'] = 'buy'
 
     return {
