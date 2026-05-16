@@ -688,7 +688,9 @@ def handle_product_link(ctx: Dict, user_id: str, message: str, url: str) -> Dict
 
 
 def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
-                                   product_url: str) -> Optional[Dict]:
+                                   product_url: str,
+                                   groq_client=None,
+                                   groq_model: str = '') -> Optional[Dict]:
     msg = message.lower()
 
     # "more / aro / onno / dekhao" signals the user wants a NEW search, not a
@@ -796,7 +798,7 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
         # Spec question — delegate to handle_product_spec_query for DB lookup.
         # Defined later in this file; forward reference is fine at call time.
         ctx_for_spec = {'category': '', 'brand': '', 'title': title}
-        return handle_product_spec_query(ctx_for_spec, user_id, message)
+        return handle_product_spec_query(ctx_for_spec, user_id, message, groq_client, groq_model)
 
     else:
         reply = ("ℹ️ বিস্তারিত\n━━━━━━━━━━━━━━━\n"

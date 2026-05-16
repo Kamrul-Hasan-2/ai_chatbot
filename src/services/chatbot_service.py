@@ -241,8 +241,13 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                        or (_cached_products_early[0].get('url', '')
                            if _cached_products_early else ''))
         if product_url:
-            detail = handle_product_detail_followup(prev_ctx, user_id, message, product_url)
+            detail = handle_product_detail_followup(prev_ctx, user_id, message, product_url,
+                                                     _groq_client, GROQ_ANSWER_MODEL)
             if detail:
+                # When the followup handler asks the user to pick a product by number,
+                # save the original message so the selection turn can answer WHAT was asked.
+                if detail.get('intent') == 'product_clarification':
+                    set_pending_question(user_id, message)
                 _observe_and_save(user_id, profile, message, detail.get('intent', ''), prev_ctx)
                 return _build_response(user_id, detail, ChatMode.AI, AI_ACTIVE_STATUS,
                                        (datetime.now() - start_time).total_seconds(),
