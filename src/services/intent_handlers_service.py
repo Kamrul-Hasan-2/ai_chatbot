@@ -146,22 +146,8 @@ def handle_thanks(ctx: Dict, user_id: str, message: str) -> Dict:
 def handle_exit(ctx: Dict, user_id: str, message: str) -> Dict:
     ic = intent_to_normalized(ctx)
     ic['exit'] = 1
-    prev_products = get_product_context(user_id)
-    if prev_products:
-        top = prev_products[0]
-        title = top.get('title', '')
-        url   = top.get('url', '')
-        reply = (
-            "ঠিক আছে স্যার, কোনো সমস্যা নেই! 😊\n\n"
-            "যখনই কিনতে চাইবেন, আমরা এখানেই আছি। "
-            + (f"'{title[:40]}' প্রোডাক্টটি আমাদের সাইটে পেয়ে যাবেন।" if title else
-               "প্রোডাক্টগুলো আমাদের সাইটে পেয়ে যাবেন।")
-        )
-        buttons = [{'text': 'BDStall.com দেখুন', 'url': url or 'https://www.bdstall.com/', 'title': title}]
-        return _ok(reply, 'exit', ic, link_buttons=buttons)
     return _ok(
-        "ঠিক আছে স্যার, কোনো সমস্যা নেই! 😊\n\n"
-        "যখনই প্রয়োজন হবে, আমরা এখানেই আছি। ভালো থাকবেন!",
+        "ঠিক আছে স্যার! BDStall.com Ltd-এর সাথেই থাকবেন। ধন্যবাদ। 😊",
         'exit', ic
     )
 
