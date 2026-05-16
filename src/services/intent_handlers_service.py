@@ -228,14 +228,37 @@ _DELIVERY_INFO = (
 )
 
 
+_TRACK_SIGNALS = {
+    'track', 'ট্র্যাক', 'trak', 'tracking', 'status', 'কোথায়',
+    'order status', 'order track', 'order koi', 'order kothay',
+    'shipment', 'parcel', 'courier status', 'delivery status',
+}
+
+
 def handle_delivery(ctx: Dict, user_id: str, message: str, faq_db: List) -> Dict:
     ic = intent_to_normalized(ctx)
-    tmpl = fetch_delivery_template()
-    if tmpl:
-        return _ok(tmpl + LOOP_BACK, 'delivery', ic)
+    msg_lower = message.lower()
+
+    # Tracking / order-status questions go straight to FAQ — the delivery
+    # template only has charge/time info and would be the wrong answer.
+    is_tracking_query = any(s in msg_lower for s in _TRACK_SIGNALS)
+
+    if not is_tracking_query:
+        tmpl = fetch_delivery_template()
+        if tmpl:
+            return _ok(tmpl + LOOP_BACK, 'delivery', ic)
+
     faq = search_faq(message, faq_db)
     if faq:
         return _ok(faq + LOOP_BACK, 'delivery', ic)
+
+    if is_tracking_query:
+        return _ok(
+            "স্যার, অর্ডার ট্র্যাক করতে BDStall-এ লগইন করুন এবং 'My Orders' সেকশনে যান। "
+            "সেখানে আপনার অর্ডারের সর্বশেষ স্ট্যাটাস দেখতে পাবেন।"
+            + LOOP_BACK,
+            'delivery', ic
+        )
     return _ok(_DELIVERY_INFO + LOOP_BACK, 'delivery', ic)
 
 

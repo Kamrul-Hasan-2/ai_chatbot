@@ -251,28 +251,47 @@ def load_faq_db() -> List[Dict]:
         return []
 
 
+_BN_TO_EN = {
+    'ট্র্যাক': 'track', 'ট্র্যাকিং': 'tracking', 'ট্র্যাক করবো': 'track',
+    'অর্ডার': 'order', 'পেমেন্ট': 'payment', 'ডেলিভারি': 'delivery',
+    'রিটার্ন': 'return', 'রিফান্ড': 'refund', 'ক্যান্সেল': 'cancel',
+    'রেজিস্ট্রেশন': 'registration', 'অ্যাকাউন্ট': 'account',
+    'পাসওয়ার্ড': 'password', 'লগইন': 'login', 'বিল': 'bill',
+    'ইনভয়েস': 'invoice', 'ওয়ারেন্টি': 'warranty', 'গ্যারান্টি': 'guarantee',
+}
+
+
 def search_faq(message: str, db: List[Dict]) -> Optional[str]:
     msg = message.lower().strip()
     if not msg or not db:
         return None
 
-    msg_words = [w for w in msg.split() if len(w) >= 3]
+    # Expand Bangla terms to their English equivalents so they score against
+    # question_en fields (e.g. "ট্র্যাক" → "track").
+    expanded = msg
+    for bn, en in _BN_TO_EN.items():
+        if bn in expanded:
+            expanded = expanded + ' ' + en
+
+    msg_words = [w for w in expanded.split() if len(w) >= 3]
+
+    best_score = 0
+    best_answer = None
 
     for item in db:
         # API format: question_bn / answer_bn
         if 'question_bn' in item:
             q_bn = (item.get('question_bn') or '').lower()
             q_en = (item.get('question_en') or '').lower()
-            score = 0
-            for w in msg_words:
-                if w in q_bn or w in q_en:
-                    score += 1
-            if score >= max(1, len(msg_words) // 2):
-                return item.get('answer_bn') or item.get('answer_en') or ''
+            score = sum(1 for w in msg_words if w in q_bn or w in q_en)
+            threshold = max(1, len([w for w in msg.split() if len(w) >= 3]) // 2)
+            if score >= threshold and score > best_score:
+                best_score = score
+                best_answer = item.get('answer_bn') or item.get('answer_en') or ''
         else:
             # Legacy CSV format: question / answer
             q = (item.get('question') or '').lower()
             if msg in q or q in msg:
                 return item.get('answer', '')
 
-    return None
+    return best_answer

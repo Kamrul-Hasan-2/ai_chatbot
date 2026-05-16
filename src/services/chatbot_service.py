@@ -460,15 +460,32 @@ def _dispatch(intent: str, ctx: Dict, user_id: str, message: str,
         if any(s in msg_l for s in _RETURN_SIGNALS):
             ic = normalize_payload(prev_ctx or load_context(user_id))
             policy_text = fetch_return_policy()
-            if policy_text:
-                # Trim to a readable length for Messenger
-                trimmed = policy_text[:1200].rsplit(' ', 1)[0] + '…' if len(policy_text) > 1200 else policy_text
-                reply = "স্যার, অসুবিধার জন্য আন্তরিকভাবে দুঃখিত। 😔\n\n" + trimmed
+            if policy_text and _groq_client:
+                try:
+                    groq_resp = _groq_client.chat.completions.create(
+                        model=GROQ_ANSWER_MODEL,
+                        messages=[
+                            {"role": "system", "content": (
+                                "You are a helpful Bangladeshi e-commerce support agent for BDStall.com. "
+                                "The user asked about returning a product. "
+                                "Summarize the following return policy in 3-5 short Bangla sentences. "
+                                "Be warm, concise, and practical. No bullet lists. No headers. "
+                                "Do NOT include the apology line — that is added separately."
+                            )},
+                            {"role": "user", "content": policy_text[:3000]},
+                        ],
+                        temperature=0.3,
+                        max_tokens=200,
+                    )
+                    summary = groq_resp.choices[0].message.content.strip()
+                except Exception as e:
+                    logger.warning("return policy summarize failed: %s", e)
+                    summary = policy_text[:400].rsplit(' ', 1)[0] + '…'
+            elif policy_text:
+                summary = policy_text[:400].rsplit(' ', 1)[0] + '…'
             else:
-                reply = (
-                    "স্যার, অসুবিধার জন্য আন্তরিকভাবে দুঃখিত। 😔\n\n"
-                    "প্রোডাক্ট রিটার্ন বা সমস্যার ক্ষেত্রে আমাদের রিটার্ন পলিসি অনুযায়ী পদক্ষেপ নিন।"
-                )
+                summary = "প্রোডাক্ট রিটার্ন বা সমস্যার ক্ষেত্রে আমাদের রিটার্ন পলিসি অনুযায়ী পদক্ষেপ নিন।"
+            reply = "স্যার, অসুবিধার জন্য আন্তরিকভাবে দুঃখিত। 😔\n\n" + summary
             return {
                 'response':       reply + LOOP_BACK,
                 'intent':         'complaint_return',
