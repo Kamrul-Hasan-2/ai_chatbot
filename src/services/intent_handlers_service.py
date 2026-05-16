@@ -89,8 +89,7 @@ def _format_listing(products: List[Dict]) -> Tuple[str, List[Dict]]:
         url   = p.get('url', '')
         lines.append(f"{i}. {title}\n   মূল্য: {price}")
         if url:
-            btn_label = f"{i}. Call Now" if _is_classified_url(url) else f"{i}. View"
-            buttons.append({'text': btn_label, 'url': url,
+            buttons.append({'text': f"{i}. View", 'url': url,
                             'title': title, 'price': price})
     lines.append("\nআরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।" + LOOP_BACK)
     return '\n'.join(lines), buttons
@@ -150,11 +149,6 @@ def handle_exit(ctx: Dict, user_id: str, message: str) -> Dict:
     return _ok("সাথে থাকার জন্য ধন্যবাদ। আবার প্রয়োজন হলে আমরা সর্বদা আছি। 😊", 'exit', ic)
 
 
-def _is_classified_url(url: str) -> bool:
-    """Return True when the listing URL is a classified ad (Call Now), not a shop product."""
-    return '/listingDetail/' in str(url or '')
-
-
 def handle_buy(ctx: Dict, user_id: str, message: str) -> Dict:
     ic = intent_to_normalized(ctx)
     prev_products = get_product_context(user_id)
@@ -166,34 +160,23 @@ def handle_buy(ctx: Dict, user_id: str, message: str) -> Dict:
         )
 
     buttons = []
-    is_classified = False
     if prev_products:
-        p = prev_products[0]
+        p     = prev_products[0]
         url   = p.get('url', '')
         title = (p.get('title') or 'প্রোডাক্ট দেখুন')[:40]
         if url:
-            is_classified = _is_classified_url(url)
-            btn_label = 'Call Now' if is_classified else 'Order Now'
-            buttons.append({'text': btn_label, 'url': url, 'title': title})
+            buttons.append({'text': 'View Product', 'url': url, 'title': title})
 
     if not buttons:
         buttons = [{'text': 'BDStall.com দেখুন', 'url': 'https://www.bdstall.com/'}]
 
-    if is_classified:
-        reply = (
-            "স্যার, এই প্রোডাক্টটি কিনতে নিচের 'Call Now' বাটনে ক্লিক করে "
-            "সরাসরি বিক্রেতার সাথে যোগাযোগ করুন।\n\n"
-            "📞 কল করলে দাম, ডেলিভারি ও অন্যান্য বিষয়ে বিস্তারিত জানতে পারবেন।"
-        )
-    else:
-        reply = (
-            "স্যার, অর্ডার করার নিয়ম:\n\n"
-            "১. নিচের 'Order Now' বাটনে ক্লিক করুন\n"
-            "২. আপনার নাম, ঠিকানা ও ফোন নম্বর দিন\n"
-            "৩. অর্ডার সাবমিট করুন\n\n"
-            "✅ ক্যাশ অন ডেলিভারি সুবিধা পাওয়া যায়। "
-            "আমাদের টিম আপনাকে কল করে অর্ডার কনফার্ম করবে।"
-        )
+    reply = (
+        "স্যার, এই প্রোডাক্টটি কিনতে:\n\n"
+        "১. নিচের 'View Product' বাটনে ক্লিক করুন\n"
+        "২. প্রোডাক্ট পেজে গিয়ে বিক্রেতাকে Call বা WhatsApp করুন\n"
+        "৩. দাম, কন্ডিশন ও ডেলিভারি নিশ্চিত করুন\n\n"
+        "📞 বিক্রেতা সরাসরি আপনার সাথে যোগাযোগ করে ডেলিভারি দেবেন।"
+    )
 
     return _ok(reply + LOOP_BACK, 'buy', ic, link_buttons=buttons)
 
@@ -1270,7 +1253,6 @@ def _reply_price_from_context(user_id: str) -> Optional[Tuple[str, List[Dict]]]:
             pr = 'দাম পাওয়া যায়নি'
         lines.append(f"{i}. {t} - {pr}")
         if url:
-            btn_label = f"{i}. Call Now" if _is_classified_url(url) else f"{i}. View"
-            buttons.append({'text': btn_label, 'url': url, 'title': t, 'price': pr})
+            buttons.append({'text': f"{i}. View", 'url': url, 'title': t, 'price': pr})
     lines.append("যেটা নিতে চান, নম্বর বলুন স্যার।" + LOOP_BACK)
     return '\n'.join(lines), buttons
