@@ -758,15 +758,18 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
     buttons = [{'text': 'View Product', 'url': product_url, 'title': title}] if product_url else []
 
     if any(w in msg for w in ('price', 'dam', 'দাম', 'মূল্য')) and not any(w in msg for w in _SPEC_SIGNALS):
-        price = str(top.get('price') or '').strip()
+        _raw_price = str(top.get('price') or '').strip()
+        # 'N/A' or '0' are not real prices — fetch from detail API instead
+        price = _raw_price if (_raw_price and _raw_price not in ('N/A', '0', '0.00')) else ''
         if not price:
-            # Search cache doesn't carry price — fetch from detail API
             listing_id = _extract_product_id(product_url)
             if listing_id:
                 spec_data = fetch_product_spec(listing_id)
                 price = str((spec_data or {}).get('price') or '').strip()
+                if price in ('N/A', '0', '0.00'):
+                    price = ''
         if price:
-            reply = f"💰 মূল্য\n━━━━━━━━━━━━━━━\n{price}"
+            reply = f"💰 মূল্য\n━━━━━━━━━━━━━━━\n৳ {price}"
         elif title:
             reply = f"💰 মূল্য\n━━━━━━━━━━━━━━━\n{title} এর সর্বশেষ মূল্য জানতে প্রোডাক্ট পেজটি দেখুন।"
         else:

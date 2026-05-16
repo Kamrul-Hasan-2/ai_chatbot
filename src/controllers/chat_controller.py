@@ -482,12 +482,22 @@ def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Op
     plain_text = str(message_text or '').strip()
     intro_text = ''
     closing_text = ''
+    _LOOP_BACK_MARKER = 'আর কোনো প্রোডাক্ট বা বিষয়ে সাহায্য করতে পারি?'
     if plain_text:
-        lines = [line.strip() for line in plain_text.splitlines() if line.strip()]
+        # Strip the LOOP_BACK footer before splitting, so it doesn't become intro
+        body = plain_text
+        lb_idx = body.find(_LOOP_BACK_MARKER)
+        if lb_idx != -1:
+            body = body[:lb_idx].strip()
+        # Keep all non-separator content lines as intro (header + value lines)
+        lines = [
+            line.strip() for line in body.splitlines()
+            if line.strip() and not set(line.strip()).issubset({'━', '─', '-', '=', ' '})
+        ]
         if lines:
-            intro_text = lines[0]
-            if 'আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।' in plain_text:
-                closing_text = 'আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।'
+            intro_text = '\n'.join(lines)
+        if 'আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।' in plain_text:
+            closing_text = 'আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।'
 
     if intro_text:
         if not _send_facebook_text_message(recipient_id, intro_text):
