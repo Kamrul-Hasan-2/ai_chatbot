@@ -710,6 +710,7 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
         'detail', 'বিস্তারিত', 'কেমন', 'kemon', 'review', 'rating',
         'used', 'new', 'পুরনো', 'purano', 'second hand', 'refurbished',
         'condition', 'কন্ডিশন', 'fresh',
+        'discount', 'ছাড়', 'offer', 'fixed', 'negotiate', 'কমানো', 'কমবে',
         # spec query signals — caught here so they don't fall to technical_advice
         'ram', 'gb', 'storage', 'memory', 'processor', 'cpu', 'battery', 'mah',
         'display', 'screen', 'camera', 'mp', 'os', 'weight', 'configuration',
@@ -777,6 +778,26 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
 
     elif any(w in msg for w in ('warranty', 'warenty', 'guarantee', 'ওয়ারেন্টি')):
         reply = "🛡️ ওয়ারেন্টি\n━━━━━━━━━━━━━━━\nওয়ারেন্টি সংক্রান্ত বিস্তারিত তথ্য প্রোডাক্ট পেজে দেওয়া আছে।"
+
+    elif any(w in msg for w in ('discount', 'ছাড়', 'offer', 'fixed', 'negotiate', 'কমানো', 'কমবে')):
+        discount = int(top.get('discount') or 0)
+        _raw_price = str(top.get('price') or '').strip()
+        price = _raw_price if (_raw_price and _raw_price not in ('N/A', '0', '0.00')) else ''
+        orig   = str(top.get('original_price') or '').strip()
+        if discount and price:
+            reply = (
+                f"🏷️ মূল্য ও ছাড়\n━━━━━━━━━━━━━━━\n"
+                f"বর্তমান মূল্য: ৳ {price}\n"
+                f"আগের মূল্য: ৳ {orig} ({discount}% ছাড়)\n\n"
+                f"এই মূল্যটি ইতোমধ্যে ডিসকাউন্টেড — আরও বেশি সাশ্রয়ের সুযোগ থাকলে আমরা অবশ্যই জানাবো!"
+            )
+        else:
+            reply = (
+                f"🏷️ মূল্য ও অফার\n━━━━━━━━━━━━━━━\n"
+                f"আমাদের ওয়েবসাইটে প্রোডাক্টের মূল্য সাধারণত ফিক্সড থাকে, "
+                f"তবে সময়ে সময়ে বিশেষ অফার ও ডিসকাউন্ট দেওয়া হয়। "
+                f"সর্বশেষ অফার দেখতে প্রোডাক্ট পেজটি চেক করুন।"
+            )
 
     elif any(w in msg for w in _STOCK_SIGNALS):
         reply = ("📦 স্টক\n━━━━━━━━━━━━━━━\n"
