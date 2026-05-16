@@ -489,13 +489,24 @@ def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Op
         lb_idx = body.find(_LOOP_BACK_MARKER)
         if lb_idx != -1:
             body = body[:lb_idx].strip()
-        # Keep all non-separator content lines as intro (header + value lines)
+        # When buttons follow, only send the first (header) line as intro.
+        # The numbered product list is redundant — cards already show title + price.
         lines = [
             line.strip() for line in body.splitlines()
             if line.strip() and not set(line.strip()).issubset({'━', '─', '-', '=', ' '})
         ]
         if lines:
-            intro_text = '\n'.join(lines)
+            # Product listing: lines after the header are "N. Title\n   মূল্য: ৳ X" pairs.
+            # Detect by checking if any line starts with a digit followed by ". "
+            has_product_list = any(re.match(r'^\d+\.', l) for l in lines)
+            if has_product_list:
+                # Only keep the header line (before the numbered items)
+                header_lines = [l for l in lines if not re.match(r'^\d+\.', l)
+                                and 'মূল্য' not in l
+                                and 'আরও প্রোডাক্ট' not in l]
+                intro_text = header_lines[0] if header_lines else ''
+            else:
+                intro_text = '\n'.join(lines)
         if 'আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।' in plain_text:
             closing_text = 'আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।'
 
