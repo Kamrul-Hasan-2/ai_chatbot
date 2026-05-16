@@ -755,7 +755,7 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
 
     buttons = [{'text': 'View Product', 'url': product_url, 'title': title}] if product_url else []
 
-    if any(w in msg for w in ('price', 'dam', 'দাম', 'koto', 'কত', 'মূল্য')):
+    if any(w in msg for w in ('price', 'dam', 'দাম', 'মূল্য')) and not any(w in msg for w in _SPEC_SIGNALS):
         price = str(top.get('price') or '').strip()
         if not price:
             # Search cache doesn't carry price — fetch from detail API
