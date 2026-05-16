@@ -468,14 +468,15 @@ def _dispatch(intent: str, ctx: Dict, user_id: str, message: str,
                             {"role": "system", "content": (
                                 "You are a helpful Bangladeshi e-commerce support agent for BDStall.com. "
                                 "The user asked about returning a product. "
-                                "Summarize the following return policy in 3-5 short Bangla sentences. "
+                                "Summarize the following return policy in 2-3 short Bangla sentences. "
                                 "Be warm, concise, and practical. No bullet lists. No headers. "
+                                "Always finish complete sentences — never cut off mid-sentence. "
                                 "Do NOT include the apology line — that is added separately."
                             )},
                             {"role": "user", "content": policy_text[:3000]},
                         ],
                         temperature=0.3,
-                        max_tokens=200,
+                        max_tokens=300,
                     )
                     summary = groq_resp.choices[0].message.content.strip()
                 except Exception as e:
