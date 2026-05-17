@@ -45,6 +45,10 @@ _HISTORY_TTL = 60
 _SEARCH_MAX  = 200
 
 
+_responder_cache: Dict[str, tuple] = {}  # user_id → (timestamp, label)
+_RESPONDER_TTL = 10  # seconds — short enough to catch agent assignment quickly
+
+
 def invalidate_user_cache(user_id: str) -> None:
     """Drop all per-user caches — called when the user switches category."""
     _history_cache.pop(user_id, None)
@@ -54,6 +58,10 @@ def invalidate_user_cache(user_id: str) -> None:
 # ── Responder / mode ──────────────────────────────────────────────────────────
 
 def check_responder_type(user_id: str) -> Optional[str]:
+    now = time.time()
+    cached = _responder_cache.get(user_id)
+    if cached and (now - cached[0]) < _RESPONDER_TTL:
+        return cached[1]
     try:
         started = time.time()
         url = f"{RESPONDER_URL}?key={RESPONDER_KEY}&user_id={user_id}"
@@ -66,11 +74,15 @@ def check_responder_type(user_id: str) -> Optional[str]:
                 _log_api_call('responder_type_check', 'GET', url, {'user_id': user_id},
                               resp.status_code, duration_ms, 'PASS',
                               str(data.get('data', {}))[:200])
+                _responder_cache[user_id] = (now, label)
                 return label
-        return None
+        # On failure, default to 'bot' so the AI never goes silent unexpectedly
+        _responder_cache[user_id] = (now, 'bot')
+        return 'bot'
     except Exception as e:
         logger.warning("check_responder_type failed: %s", e)
-        return None
+        _responder_cache[user_id] = (now, 'bot')
+        return 'bot'
 
 
 def assign_agent(user_id: str, intent: str) -> None:
@@ -89,6 +101,7 @@ def assign_agent(user_id: str, intent: str) -> None:
 def assign_bot(user_id: str) -> None:
     try:
         requests.post(ASSIGN_BOT_URL, json={'key': API_KEY, 'user_id': user_id}, timeout=5)
+        _responder_cache.pop(user_id, None)  # force fresh check next message
     except Exception as e:
         logger.warning("assign_bot failed: %s", e)
 
