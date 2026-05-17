@@ -482,6 +482,7 @@ def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Op
     plain_text = str(message_text or '').strip()
     intro_text = ''
     closing_text = ''
+    has_product_list = False
     _LOOP_BACK_MARKER = 'আর কোনো প্রোডাক্ট বা বিষয়ে সাহায্য করতে পারি?'
     if plain_text:
         # Strip the LOOP_BACK footer before splitting, so it doesn't become intro
@@ -510,6 +511,16 @@ def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Op
         if 'আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।' in plain_text:
             closing_text = 'আরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।'
 
+    # Single-button non-product responses (e.g. "বিস্তারিত", warranty, stock):
+    # put the message body into the card text instead of sending a separate intro.
+    single_info_card = (len(buttons) == 1 and not has_product_list and intro_text)
+    if single_info_card:
+        # card will carry the full message — no separate text bubble needed
+        card_body = intro_text
+        intro_text = ''
+    else:
+        card_body = ''
+
     if intro_text:
         if not _send_facebook_text_message(recipient_id, intro_text):
             return False
@@ -527,7 +538,11 @@ def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Op
         if not title and len(buttons) == 1 and intro_text and display_title == intro_text:
             display_title = label
         money_text = f"\nমূল্য: {price}" if price else ''
-        card_text = f"{index}️⃣ {display_title}{money_text}"
+        # For single info cards, show the message body as card text
+        if card_body:
+            card_text = card_body[:640]
+        else:
+            card_text = f"{index}️⃣ {display_title}{money_text}"
 
         template_payload = {
             "recipient": {"id": recipient_id},

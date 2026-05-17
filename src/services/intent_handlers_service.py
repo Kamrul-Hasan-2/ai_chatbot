@@ -866,9 +866,8 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
         return handle_product_spec_query(ctx_for_spec, user_id, message, groq_client, groq_model)
 
     else:
-        reply = ("ℹ️ বিস্তারিত\n━━━━━━━━━━━━━━━\n"
-                 + (f"{title} সম্পর্কে আরও তথ্য প্রোডাক্ট পেজে পাবেন।"
-                    if title else "বিস্তারিত তথ্য প্রোডাক্ট পেজে পাবেন।"))
+        reply = (f"{title} সম্পর্কে আরও তথ্য প্রোডাক্ট পেজে পাবেন।"
+                 if title else "বিস্তারিত তথ্য প্রোডাক্ট পেজে পাবেন।")
 
     return _ok(
         reply + LOOP_BACK,
