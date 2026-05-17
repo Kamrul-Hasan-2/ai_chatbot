@@ -1279,22 +1279,23 @@ def messenger_webhook():
 
                 _send_typing_indicator(sender_id, on=False)
 
-                # In HUMAN handoff mode, chatbot intentionally returns empty response.
+                # Human mode — bot must stay completely silent.
                 if not response_text:
-                    fallback_text = ''
-                    if result.get('mode') == 'human':
-                        fallback_text = "স্যার, আপনার মেসেজ আমাদের প্রতিনিধির কাছে পাঠানো হয়েছে। তিনি দ্রুত উত্তর দিবেন।"
-                    elif result.get('mode') == 'ai':
-                        fallback_text = "দুঃখিত স্যার, উত্তর তৈরি করতে সমস্যা হয়েছে। আবার প্রশ্নটি লিখে দিন।"
-
                     logger.info(
-                        "[WEBHOOK] Empty reply for sender_id=%s (mode=%s, status=%s)",
+                        "[WEBHOOK] Empty reply for sender_id=%s (mode=%s, intent=%s) — silent",
                         sender_id,
                         result.get('mode'),
-                        result.get('conversation_status')
+                        result.get('intent'),
                     )
-                    if fallback_text and send_facebook_message(sender_id, fallback_text):
-                        replied_count += 1
+                    # Only send a fallback for genuine AI errors, never for human mode
+                    if (result.get('mode') == 'ai'
+                            and result.get('intent') not in (
+                                'human_mode_active', 'ignored_automated_template')):
+                        if send_facebook_message(
+                            sender_id,
+                            "দুঃখিত স্য়ার, উত্তর তৈরি করতে সমস্যা হয়েছে। আবার প্রশ্নটি লিখে দিন।"
+                        ):
+                            replied_count += 1
                     continue
 
                 logger.info("[WEBHOOK] Sending reply to sender_id=%s", sender_id)
