@@ -94,11 +94,33 @@ def _tokenize(text: str) -> List[str]:
     return re.findall(r'[a-z0-9]+', text.lower())
 
 
+_CATEGORY_ALIASES = {
+    'tv': 'television',
+    'টিভি': 'television',
+    'tivi': 'television',
+    'telebision': 'television',
+    'fridge': 'refrigerator',
+    'ফ্রিজ': 'refrigerator',
+    'friz': 'refrigerator',
+    'phone': 'mobile',
+    'মোবাইল': 'mobile',
+    'mobail': 'mobile',
+    'moble': 'mobile',
+    'ac': 'air conditioner',
+    'এসি': 'air conditioner',
+    'air conditioner': 'air conditioner',
+}
+
+
 def resolve_category(text: str, categories: List[Dict]) -> str:
     """Resolve a single word/phrase to a canonical category name."""
     if not text or not categories:
         return ''
     tl = text.strip().lower()
+
+    # Expand known aliases before attempting any lookup
+    tl = _CATEGORY_ALIASES.get(tl, tl)
+
     by_name = {c['category_name'].lower(): c for c in categories}
     by_bn   = {c['bn_category_name'].lower(): c for c in categories if c.get('bn_category_name')}
 
@@ -146,6 +168,15 @@ def resolve_category_from_message(message: str, categories: List[Dict]) -> str:
     if not message or not categories:
         return ''
     tl = message.lower()
+
+    # Check aliases first — handles short tokens like "tv", "ac", "fridge"
+    for tok in tl.split():
+        alias = _CATEGORY_ALIASES.get(tok.strip())
+        if alias:
+            result = resolve_category(alias, categories)
+            if result:
+                return result
+
     by_name = {c['category_name'].lower(): c for c in categories}
     by_bn   = {(c['bn_category_name'] or ''): c for c in categories if c.get('bn_category_name')}
 
