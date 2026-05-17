@@ -46,7 +46,8 @@ _SEARCH_MAX  = 200
 
 
 _responder_cache: Dict[str, tuple] = {}  # user_id → (timestamp, label)
-_RESPONDER_TTL = 10  # seconds — short enough to catch agent assignment quickly
+_RESPONDER_TTL_BOT   = 30   # cache 'bot' result — safe to reuse briefly
+_RESPONDER_TTL_AGENT = 0    # never cache 'agent' — always do a live check
 
 
 def invalidate_user_cache(user_id: str) -> None:
@@ -60,8 +61,9 @@ def invalidate_user_cache(user_id: str) -> None:
 def check_responder_type(user_id: str) -> Optional[str]:
     now = time.time()
     cached = _responder_cache.get(user_id)
-    if cached and (now - cached[0]) < _RESPONDER_TTL:
-        return cached[1]
+    # Only use cache for 'bot' results — never cache 'agent' to avoid stale silencing
+    if cached and cached[1] == 'bot' and (now - cached[0]) < _RESPONDER_TTL_BOT:
+        return 'bot'
     try:
         started = time.time()
         url = f"{RESPONDER_URL}?key={RESPONDER_KEY}&user_id={user_id}"
@@ -74,9 +76,13 @@ def check_responder_type(user_id: str) -> Optional[str]:
                 _log_api_call('responder_type_check', 'GET', url, {'user_id': user_id},
                               resp.status_code, duration_ms, 'PASS',
                               str(data.get('data', {}))[:200])
-                _responder_cache[user_id] = (now, label)
+                if label == 'bot':
+                    _responder_cache[user_id] = (now, 'bot')
+                else:
+                    # Don't cache agent status — always re-check live
+                    _responder_cache.pop(user_id, None)
                 return label
-        # On failure, default to 'bot' so the AI never goes silent unexpectedly
+        # On API failure default to 'bot' — never silently drop messages
         _responder_cache[user_id] = (now, 'bot')
         return 'bot'
     except Exception as e:
