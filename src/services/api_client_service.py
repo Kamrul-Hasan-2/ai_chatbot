@@ -45,6 +45,12 @@ _HISTORY_TTL = 60
 _SEARCH_MAX  = 200
 
 
+def invalidate_user_cache(user_id: str) -> None:
+    """Drop all per-user caches — called when the user switches category."""
+    _history_cache.pop(user_id, None)
+    _intent_cache.pop(user_id, None)
+
+
 # ── Responder / mode ──────────────────────────────────────────────────────────
 
 def check_responder_type(user_id: str) -> Optional[str]:

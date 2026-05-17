@@ -28,6 +28,7 @@ from models.chatbot_config import (
 from services.api_client_service import (
     check_responder_type, assign_agent, assign_bot,
     fetch_history, fetch_categories, fetch_return_policy, fetch_faq_db,
+    invalidate_user_cache,
 )
 from repositories.state_repository import (
     load_context, save_last_intent, get_last_intent,
@@ -330,6 +331,14 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
             prev_ctx['prev_cat'] = ''
 
         merged = merge_context(groq_result, prev_ctx, groq_result['intent'], _clear)
+
+        # When Groq extracted a fresh explicit category this turn, update session
+        # immediately and clear ALL stale state from the previous category.
+        _fresh_cat = groq_result['entities'].get('category', '')
+        if _fresh_cat and _fresh_cat != get_session_category(user_id):
+            set_session_category(user_id, _fresh_cat)
+            clear_product_state(user_id)
+            invalidate_user_cache(user_id)
 
         # Inherit category for non-product intents when still empty.
         # Greeting resets the session, so never re-inherit on the turn after a greeting.

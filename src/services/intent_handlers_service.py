@@ -728,9 +728,21 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
     if any(s in msg for s in _EXIT_SIGNALS):
         return None
 
+    # Technical/advice questions that span multiple products or are general
+    # knowledge ("kon motherboard valo", "upgrade kora jabe ki") must NOT be
+    # intercepted here — they belong to technical_advice.
+    _TECHNICAL_ADVICE_SIGNALS = {
+        'motherboard', 'upgrade', 'compatible', 'compatibility', 'difference',
+        'better for', 'good for', 'gaming er jonno', 'er jonno kon', 'jonno valo',
+        'jonno bhalo', 'suggest', 'recommend', 'konta nibo', 'konta kinbo',
+        'which is better', 'konti valo', 'konta valo',
+    }
+    if any(s in msg for s in _TECHNICAL_ADVICE_SIGNALS):
+        return None
+
     signals = [
         'stock', 'ache', 'available', 'color', 'colour', 'rong',
-        'quality', 'maan', 'durable', 'valo', 'price', 'dam', 'koto',
+        'quality', 'maan', 'durable', 'price', 'dam', 'koto',
         'warranty', 'warenty', 'guarantee', 'original', 'kena jabe', 'pabo',
         'স্টক', 'রং', 'মান', 'দাম', 'ওয়ারেন্টি', 'spec', 'feature',
         'detail', 'বিস্তারিত', 'কেমন', 'kemon', 'review', 'rating',
