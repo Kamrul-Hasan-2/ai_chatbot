@@ -330,15 +330,19 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
             prev_ctx['cat'] = ''
             prev_ctx['prev_cat'] = ''
 
-        merged = merge_context(groq_result, prev_ctx, groq_result['intent'], _clear)
-
-        # When Groq extracted a fresh explicit category this turn, update session
-        # immediately and clear ALL stale state from the previous category.
+        # Category switch: when the user explicitly names a different category,
+        # clear ALL stale state BEFORE merge_context so the old category can't
+        # bleed in through prev_ctx inheritance.
         _fresh_cat = groq_result['entities'].get('category', '')
         if _fresh_cat and _fresh_cat != get_session_category(user_id):
-            set_session_category(user_id, _fresh_cat)
             clear_product_state(user_id)
             invalidate_user_cache(user_id)
+            set_session_category(user_id, _fresh_cat)
+            # Wipe the old category from prev_ctx so merge can't inherit it
+            for _k in ('category', 'cat', 'prev_cat'):
+                prev_ctx[_k] = ''
+
+        merged = merge_context(groq_result, prev_ctx, groq_result['intent'], _clear)
 
         # Inherit category for non-product intents when still empty.
         # Greeting resets the session, so never re-inherit on the turn after a greeting.
