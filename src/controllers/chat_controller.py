@@ -625,9 +625,10 @@ def get_responder_user_name(user_id: str) -> Optional[str]:
         return None
 
     try:
-        url = "https://www.bdstall.com/api/item/chatbot_responder/"
+        from models.chatbot_config import RESPONDER_URL, RESPONDER_KEY
+        url = RESPONDER_URL
         params = {
-            "key": SAVE_MESSAGE_API_KEY,
+            "key": RESPONDER_KEY,
             "user_id": str(user_id)
         }
         response = requests.get(url, params=params, timeout=8)
