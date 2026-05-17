@@ -161,6 +161,9 @@ def handle_buy(ctx: Dict, user_id: str, message: str) -> Dict:
             "প্রোডাক্টের নাম বা ক্যাটাগরি বললে আমি এখনই দেখিয়ে দিতে পারি।",
             'buy', ic
         )
+    # Category known but no cached products — search first, then show buy instructions
+    if not prev_products and ctx.get('category'):
+        return handle_product_search(ctx, user_id, message)
 
     buttons = []
     if prev_products:
@@ -1224,16 +1227,23 @@ def _smart_clarification_prompt(ctx: Dict, user_id: str = '') -> str:
     referencing — never produces a worse message than the default.
     """
     try:
-        from repositories.state_repository import load_user_profile
+        from repositories.state_repository import load_user_profile, get_session_category
         profile = load_user_profile(user_id) if user_id else None
+        session_cat = get_session_category(user_id) if user_id else ''
     except Exception:
         profile = None
+        session_cat = ''
 
     if not profile or profile.message_count == 0:
         return CATEGORY_PROMPT
 
     brand_hint = profile.preferred_brands[0] if profile.preferred_brands else ''
     cat_hint = profile.interested_categories[0] if profile.interested_categories else ''
+
+    # Don't reference the profile category if the session already switched to a new one
+    if session_cat and cat_hint and session_cat.lower() != cat_hint.lower():
+        cat_hint = ''
+        brand_hint = ''
     lang = profile.language
 
     if cat_hint and brand_hint:
