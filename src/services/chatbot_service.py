@@ -270,6 +270,42 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                 return _build_response(user_id, selected, ChatMode.AI, AI_ACTIVE_STATUS,
                                        (datetime.now() - start_time).total_seconds(),
                                        user_message=message, profile=profile)
+            # User typed a product name instead of a number — do a fresh search
+            # for that product, then answer the pending condition/spec question.
+            if pending_q:
+                from services.api_client_service import search_products as _sp
+                from repositories.state_repository import set_product_context as _spc
+                from services.intent_handlers_service import _handle_condition_question, handle_product_spec_query
+                _CONDITION_Q2 = {
+                    'used', 'new', 'notun', 'purano', 'second hand', 'refurbished',
+                    'condition', 'কন্ডিশন', 'fresh',
+                    'intake', 'original intake', 'non intake', 'ইনটেক', 'নন ইনটেক',
+                }
+                pq_lower = pending_q.lower()
+                has_condition_q = any(w in pq_lower for w in _CONDITION_Q2)
+                has_spec_q = any(w in pq_lower for w in ('ram', 'gb', 'processor', 'display', 'battery', 'camera', 'storage', 'spec'))
+                if has_condition_q or has_spec_q:
+                    fresh = _sp(message)
+                    if fresh['products_found'] > 0:
+                        _spc(user_id, fresh['products'][:5])
+                        # Now re-route to condition or spec handler with new cache
+                        if has_condition_q:
+                            from services.intent_handlers_service import _handle_condition_question
+                            cond = _handle_condition_question(user_id, pending_q)
+                            if cond:
+                                _observe_and_save(user_id, profile, message, cond.get('intent', ''), {})
+                                return _build_response(user_id, cond, ChatMode.AI, AI_ACTIVE_STATUS,
+                                                       (datetime.now() - start_time).total_seconds(),
+                                                       user_message=message, profile=profile)
+                        if has_spec_q:
+                            from repositories.state_repository import get_product_context as _gpc2
+                            _fresh_prods = _gpc2(user_id)
+                            _spec_ctx = {'category': '', 'brand': '', 'title': (_fresh_prods[0].get('title', '') if _fresh_prods else '')}
+                            spec_r = handle_product_spec_query(_spec_ctx, user_id, pending_q, _groq_client, GROQ_ANSWER_MODEL)
+                            _observe_and_save(user_id, profile, message, spec_r.get('intent', ''), {})
+                            return _build_response(user_id, spec_r, ChatMode.AI, AI_ACTIVE_STATUS,
+                                                   (datetime.now() - start_time).total_seconds(),
+                                                   user_message=message, profile=profile)
 
         # ── STEP 2: detect_intent ────────────────────────────────────────────
         history     = fetch_history(user_id)

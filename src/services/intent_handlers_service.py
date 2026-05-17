@@ -337,6 +337,7 @@ _CONDITION_WORDS = {
     'used', 'new', 'notun', 'purano', 'second hand', 'refurbished',
     'condition', 'কন্ডিশন', 'fresh', 'is it used', 'is it new',
     'nতুন', 'পুরনো', 'পুরাতন', 'naki purano', 'notun naki',
+    'intake', 'original intake', 'non intake', 'ইনটেক', 'নন ইনটেক',
 }
 
 
@@ -395,12 +396,27 @@ def handle_clarification_selection(user_id: str, message: str,
     # Match leading number: "1", "1.", "1)", "#1"
     num_match = re.match(r'^[#\s]*([123])[.):\s]?$|^[#\s]*([123])[.):\s]', msg)
     if not num_match:
-        # Try matching by product title keyword
+        # Try matching by product title keyword — require at least 2 words to match,
+        # or a unique non-brand word (model number) to avoid brand-only false matches.
+        msg_lower = msg.lower()
+        msg_words = set(w for w in re.findall(r'[a-z0-9]+', msg_lower) if len(w) > 3)
+        best_idx = -1
+        best_score = 0
         for i, p in enumerate(prev_products[:3]):
-            title_words = (p.get('title') or '').lower().split()[:3]
-            if any(w in msg.lower() for w in title_words if len(w) > 3):
-                num_match = type('m', (), {'group': lambda self, x: str(i+1)})()
-                break
+            title_words = set(w for w in re.findall(r'[a-z0-9]+', (p.get('title') or '').lower()) if len(w) > 2)
+            score = len(msg_words & title_words)
+            if score > best_score:
+                best_score = score
+                best_idx = i
+        # Require at least 2 matching words, OR 1 match that isn't a generic brand
+        # (i.e. the matching word is a model number like "3310", "a55", etc.)
+        if best_score >= 2:
+            num_match = type('m', (), {'group': lambda self, x: str(best_idx+1)})()
+        elif best_score == 1:
+            # Check if the single match is a model-number-like token (has digits)
+            matching_words = msg_words & set(w for w in re.findall(r'[a-z0-9]+', (prev_products[best_idx].get('title') or '').lower()) if len(w) > 2)
+            if any(re.search(r'\d', w) for w in matching_words):
+                num_match = type('m', (), {'group': lambda self, x: str(best_idx+1)})()
     if not num_match:
         return None
 
@@ -427,6 +443,7 @@ def handle_clarification_selection(user_id: str, message: str,
     _CONDITION_Q = {
         'used', 'new', 'notun', 'purano', 'second hand', 'refurbished',
         'condition', 'কন্ডিশন', 'fresh',
+        'intake', 'original intake', 'non intake', 'ইনটেক', 'নন ইনটেক',
     }
     q = (pending_question or '').lower()
 
@@ -747,6 +764,7 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
         'stock', 'ache', 'available', 'color', 'colour', 'rong',
         'quality', 'maan', 'durable', 'price', 'dam', 'koto',
         'warranty', 'warenty', 'guarantee', 'original', 'kena jabe', 'pabo',
+        'intake', 'original intake', 'non intake', 'নন ইনটেক', 'ইনটেক',
         'স্টক', 'রং', 'মান', 'দাম', 'ওয়ারেন্টি', 'spec', 'feature',
         'detail', 'বিস্তারিত', 'কেমন', 'kemon', 'review', 'rating',
         'used', 'new', 'পুরনো', 'purano', 'second hand', 'refurbished',
@@ -767,6 +785,7 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
     _AMBIGUOUS_SIGNALS = {
         'used', 'new', 'notun', 'purano', 'second hand', 'refurbished',
         'condition', 'কন্ডিশন', 'fresh',
+        'intake', 'original intake', 'non intake', 'ইনটেক', 'নন ইনটেক',
     }
     if len(prev_products) > 1 and any(s in msg for s in _AMBIGUOUS_SIGNALS):
         product_list = '\n'.join(
@@ -1093,6 +1112,15 @@ def handle_product_spec_query(ctx: Dict, user_id: str, message: str,
     logger.info("handle_product_spec_query: url=%r id=%r msg=%r", product_url, listing_id, message)
 
     if not listing_id:
+        # No product on screen — treat as general technical advice instead
+        from services.intent_service import get_technical_advice
+        from services.api_client_service import fetch_categories as _fetch_cats
+        answer = get_technical_advice(message, groq_client, groq_model)
+        if answer:
+            return _ok(
+                answer + "\n\nতবে স্যার, কেনার আগে অবশ্যই আরেকবার যাচাই করে নিন।" + LOOP_BACK,
+                'technical_advice', ic
+            )
         return _ok(
             "স্যার, কোন প্রোডাক্টটি সম্পর্কে জানতে চাইছেন? প্রোডাক্টের লিংক দিন বা নাম বলুন।"
             + LOOP_BACK,

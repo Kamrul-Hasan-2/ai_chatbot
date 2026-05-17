@@ -109,6 +109,16 @@ _CATEGORY_ALIASES = {
     'ac': 'air conditioner',
     'এসি': 'air conditioner',
     'air conditioner': 'air conditioner',
+    'pc build': 'pc builder',
+    'pc builder': 'pc builder',
+    'build pc': 'pc builder',
+    'custom pc': 'pc builder',
+    'gaming pc': 'pc builder',
+    'desktop': 'desktop pc',
+    'desktop pc': 'desktop pc',
+    'পিসি': 'desktop pc',
+    'computer': 'desktop pc',
+    'কম্পিউটার': 'desktop pc',
 }
 
 

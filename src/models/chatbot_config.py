@@ -119,7 +119,7 @@ INTENT DEFINITIONS:
 - complaint         : refund, return, broken/damaged product, seller not responding, wrong item received, bad experience. Key signals: "return korbo", "ফেরত দেবো", "bhanga", "nosto", "seller call dore na", "pathaise", "refund chai"
 - faq               : general questions about the site or policies
 - human_request     : user wants to speak to a human agent
-- technical_advice  : user asks about a product CAPABILITY, COMPATIBILITY, UPGRADE potential, or PERFORMANCE. e.g. "ram upgrade kora jabe ki", "i7 vs i5 difference", "gaming er jonno valo ki".
+- technical_advice  : user asks about a product CAPABILITY, COMPATIBILITY, UPGRADE potential, or PERFORMANCE. e.g. "ram upgrade kora jabe ki", "i7 vs i5 difference", "gaming er jonno valo ki". ALSO use this when user sends a PC build spec list (Processor/Motherboard/RAM/Storage/PSU components) asking for advice or confirmation.
 - product_spec_query: user asks about a SPECIFIC TECHNICAL SPEC of the product currently on screen. Key signals: "koto gb ram", "ram koto", "display koto", "battery koto mah", "processor ki", "storage koto", "camera koto mp", "weight koto", "specs ki", "full spec", "configuration ki", "কত জিবি র‍্যাম", "ডিসপ্লে কত ইঞ্চি". is_followup=true always. ONLY use this when a product is already on screen — if no product context, use technical_advice instead.
 - seller_query      : user wants to SELL products, list items, open a shop, register as vendor
 - hate_speech       : abusive language, insults, threats
