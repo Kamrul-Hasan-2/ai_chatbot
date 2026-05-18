@@ -295,10 +295,44 @@ _PROPERTY_WORDS = {
     'room rent', 'বাসা ভাড়া', 'basa vara', 'to let',
 }
 
-_PROPERTY_RESPONSE = (
-    "স্যার, BDStall-এ বাড়ি, ফ্ল্যাট, প্লট ও জমি সংক্রান্ত বিজ্ঞাপনও পাওয়া যায়। "
-    "বিস্তারিত দেখতে আমাদের ওয়েবসাইট ভিজিট করুন অথবা সরাসরি যোগাযোগ করুন।"
-)
+# Map user words → BDStall category name
+_PROPERTY_CATEGORY_MAP = {
+    'flat':       'Apartment',
+    'ফ্ল্যাট':   'Apartment',
+    'apartment':  'Apartment',
+    'অ্যাপার্টমেন্ট': 'Apartment',
+    'land':       'Land',
+    'জমি':        'Land',
+    'plot':       'Land',
+    'প্লট':       'Land',
+    'bari':       'Apartment',
+    'বাড়ি':       'Apartment',
+    'house':      'Apartment',
+}
+
+
+def _handle_property_query(user_id: str, message: str, ic: dict) -> Dict:
+    msg_lower = message.lower()
+    # Pick best matching category
+    category = 'Apartment'
+    for word, cat in _PROPERTY_CATEGORY_MAP.items():
+        if word in msg_lower:
+            category = cat
+            break
+
+    result = search_products(category)
+    if result['products_found'] > 0:
+        products = result['products']
+        set_product_context(user_id, products[:5])
+        text, buttons = _format_listing(products[:3])
+        header = f"স্যার, BDStall-এ {category} বিজ্ঞাপন পেয়েছি:\n\n"
+        return _ok(header + text, 'property_search', ic, products=products, link_buttons=buttons)
+
+    return _ok(
+        "স্যার, BDStall-এ বাড়ি, ফ্ল্যাট, প্লট ও জমি সংক্রান্ত বিজ্ঞাপনও পাওয়া যায়। "
+        "বিস্তারিত দেখতে আমাদের ওয়েবসাইট ভিজিট করুন: 👉 www.bdstall.com" + LOOP_BACK,
+        'faq_property', ic
+    )
 
 _AI_IDENTITY_WORDS = {
     'are you ai', 'are you a bot', 'are you robot', 'are you human',
@@ -321,7 +355,7 @@ def handle_faq(ctx: Dict, user_id: str, message: str, faq_db: List) -> Dict:
     if any(w in msg_lower for w in _AI_IDENTITY_WORDS):
         return _ok(_AI_IDENTITY_RESPONSE + LOOP_BACK, 'faq_identity', ic)
     if any(w in msg_lower for w in _PROPERTY_WORDS):
-        return _ok(_PROPERTY_RESPONSE + LOOP_BACK, 'faq_property', ic)
+        return _handle_property_query(user_id, message, ic)
     if any(w in msg_lower for w in _WARRANTY_WORDS):
         return _ok(_WARRANTY_RESPONSE + LOOP_BACK, 'faq_warranty', ic)
     if any(w in msg_lower for w in _SHOWROOM_WORDS):
@@ -1245,7 +1279,7 @@ def handle_fallback(ctx: Dict, user_id: str, message: str,
         return _ok(_AI_IDENTITY_RESPONSE + LOOP_BACK, 'faq_identity', ic)
     if any(w in msg_lower for w in _PROPERTY_WORDS):
         ic = intent_to_normalized(ctx)
-        return _ok(_PROPERTY_RESPONSE + LOOP_BACK, 'faq_property', ic)
+        return _handle_property_query(user_id, message, ic)
     # Warranty questions always get the fixed website response
     if any(w in msg_lower for w in _WARRANTY_WORDS):
         ic = intent_to_normalized(ctx)
