@@ -287,6 +287,22 @@ _SHOWROOM_RESPONSE = (
 )
 
 
+_OUT_OF_SCOPE_WORDS = {
+    'bari', 'বাড়ি', 'flat', 'ফ্ল্যাট', 'apartment', 'অ্যাপার্টমেন্ট',
+    'plot', 'প্লট', 'land', 'জমি', 'real estate', 'property',
+    'bari kinte', 'flat kinte', 'bari bikri', 'flat bikri',
+    'bari chai', 'flat chai', 'bari lagbe', 'flat lagbe',
+    'room rent', 'বাসা ভাড়া', 'basa vara', 'to let',
+    'chাকরি', 'chakri', 'job', 'career', 'নিয়োগ', 'niyog',
+    'loan', 'লোন', 'ঋণ', 'bank', 'insurance', 'বীমা',
+}
+
+_OUT_OF_SCOPE_RESPONSE = (
+    "দুঃখিত স্যার, BDStall একটি ইলেকট্রনিক্স ও প্রযুক্তিপণ্যের অনলাইন মার্কেটপ্লেস। "
+    "বাড়ি, জমি বা রিয়েল এস্টেট সংক্রান্ত বিষয়ে আমরা সাহায্য করতে পারব না। "
+    "তবে যেকোনো ইলেকট্রনিক্স প্রোডাক্টে সাহায্য করতে পারি। 😊"
+)
+
 _AI_IDENTITY_WORDS = {
     'are you ai', 'are you a bot', 'are you robot', 'are you human',
     'tumi ki ai', 'tumi ki bot', 'tumi ki robot', 'tumi ki human',
@@ -307,6 +323,8 @@ def handle_faq(ctx: Dict, user_id: str, message: str, faq_db: List) -> Dict:
     msg_lower = message.lower()
     if any(w in msg_lower for w in _AI_IDENTITY_WORDS):
         return _ok(_AI_IDENTITY_RESPONSE + LOOP_BACK, 'faq_identity', ic)
+    if any(w in msg_lower for w in _OUT_OF_SCOPE_WORDS):
+        return _ok(_OUT_OF_SCOPE_RESPONSE + LOOP_BACK, 'out_of_scope', ic)
     if any(w in msg_lower for w in _WARRANTY_WORDS):
         return _ok(_WARRANTY_RESPONSE + LOOP_BACK, 'faq_warranty', ic)
     if any(w in msg_lower for w in _SHOWROOM_WORDS):
@@ -1228,6 +1246,9 @@ def handle_fallback(ctx: Dict, user_id: str, message: str,
     if any(w in msg_lower for w in _AI_IDENTITY_WORDS):
         ic = intent_to_normalized(ctx)
         return _ok(_AI_IDENTITY_RESPONSE + LOOP_BACK, 'faq_identity', ic)
+    if any(w in msg_lower for w in _OUT_OF_SCOPE_WORDS):
+        ic = intent_to_normalized(ctx)
+        return _ok(_OUT_OF_SCOPE_RESPONSE + LOOP_BACK, 'out_of_scope', ic)
     # Warranty questions always get the fixed website response
     if any(w in msg_lower for w in _WARRANTY_WORDS):
         ic = intent_to_normalized(ctx)
