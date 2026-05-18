@@ -290,6 +290,8 @@ _SHOWROOM_RESPONSE = (
 _PROPERTY_WORDS = {
     'bari', 'বাড়ি', 'flat', 'ফ্ল্যাট', 'apartment', 'অ্যাপার্টমেন্ট',
     'plot', 'প্লট', 'land', 'জমি', 'real estate', 'property',
+    'jomi', 'jomi ase', 'jomi chai', 'jomi lagbe', 'jomi kinte',
+    'জমি আছে', 'জমি চাই', 'জমি লাগবে',
     'bari kinte', 'flat kinte', 'bari bikri', 'flat bikri',
     'bari chai', 'flat chai', 'bari lagbe', 'flat lagbe',
     'room rent', 'বাসা ভাড়া', 'basa vara', 'to let',
@@ -303,6 +305,7 @@ _PROPERTY_CATEGORY_MAP = {
     'অ্যাপার্টমেন্ট': 'Apartment',
     'land':       'Land',
     'জমি':        'Land',
+    'jomi':       'Land',
     'plot':       'Land',
     'প্লট':       'Land',
     'bari':       'Apartment',
@@ -579,6 +582,11 @@ def _is_more_request(message: str) -> bool:
 
 def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
     logger.info("handle_product_search ctx=%s", {k: ctx.get(k) for k in ('category','brand','title','price_min','price_max')})
+
+    # Intercept property/real-estate queries — route to dedicated handler
+    if any(w in (message or '').lower() for w in _PROPERTY_WORDS):
+        ic = intent_to_normalized(ctx)
+        return _handle_property_query(user_id, message, ic)
 
     # Intercept condition questions — don't re-search, answer about cached products
     condition_result = _handle_condition_question(user_id, message)
