@@ -287,9 +287,26 @@ _SHOWROOM_RESPONSE = (
 )
 
 
+_AI_IDENTITY_WORDS = {
+    'are you ai', 'are you a bot', 'are you robot', 'are you human',
+    'tumi ki ai', 'tumi ki bot', 'tumi ki robot', 'tumi ki human',
+    'apni ki ai', 'apni ki bot', 'apni ki robot', 'apni ki manush',
+    'তুমি কি ai', 'তুমি কি বট', 'আপনি কি ai', 'আপনি কি বট',
+    'তুমি কি রোবট', 'আপনি কি রোবট', 'তুমি কি মানুষ', 'আপনি কি মানুষ',
+    'ki tumi ai', 'ki apni ai', 'bot naki', 'ai naki', 'robot naki',
+}
+
+_AI_IDENTITY_RESPONSE = (
+    "স্যার, আমি BDStall-এর Virtual Assistant। "
+    "যেকোনো প্রোডাক্ট বা কেনাকাটা সংক্রান্ত প্রশ্নে সাহায্য করতে পারি। 😊"
+)
+
+
 def handle_faq(ctx: Dict, user_id: str, message: str, faq_db: List) -> Dict:
     ic = intent_to_normalized(ctx)
     msg_lower = message.lower()
+    if any(w in msg_lower for w in _AI_IDENTITY_WORDS):
+        return _ok(_AI_IDENTITY_RESPONSE + LOOP_BACK, 'faq_identity', ic)
     if any(w in msg_lower for w in _WARRANTY_WORDS):
         return _ok(_WARRANTY_RESPONSE + LOOP_BACK, 'faq_warranty', ic)
     if any(w in msg_lower for w in _SHOWROOM_WORDS):
@@ -1208,6 +1225,9 @@ def handle_fallback(ctx: Dict, user_id: str, message: str,
             and any(w in message.lower() for w in _BUY_CONTINUATION)):
         return handle_buy(ctx, user_id, message)
     msg_lower = message.lower()
+    if any(w in msg_lower for w in _AI_IDENTITY_WORDS):
+        ic = intent_to_normalized(ctx)
+        return _ok(_AI_IDENTITY_RESPONSE + LOOP_BACK, 'faq_identity', ic)
     # Warranty questions always get the fixed website response
     if any(w in msg_lower for w in _WARRANTY_WORDS):
         ic = intent_to_normalized(ctx)
