@@ -659,7 +659,9 @@ def _process_user_message(
     resolved_user_name = (
         (user_name or '').strip()
         or get_known_user_name(str(user_id))
+        or get_messenger_user_name(str(user_id))
         or get_responder_user_name(str(user_id))
+        or f"User {str(user_id)[-6:]}"
     )
     remember_user_name(str(user_id), resolved_user_name)
     if not clean_message:
@@ -1236,6 +1238,8 @@ def messenger_webhook():
                     sender_name = get_known_user_name(sender_id)
                 if not sender_name and sender_id:
                     sender_name = get_responder_user_name(sender_id)
+                if not sender_name and sender_id:
+                    sender_name = f"User {str(sender_id)[-6:]}"
                 remember_user_name(sender_id, sender_name)
                 message_text = (message_obj.get('text') or '').strip()
 
