@@ -595,11 +595,11 @@ def get_messenger_user_name(sender_id: str) -> Optional[str]:
         }
         response = requests.get(profile_url, params=params, timeout=10)
         if not (200 <= response.status_code < 300):
-            logger.info(
-                "[WEBHOOK] Could not fetch sender name for %s (status=%s): %s",
+            logger.warning(
+                "[GRAPH_API] name fetch failed user_id=%s status=%s body=%s",
                 sender_id,
                 response.status_code,
-                (response.text or '')[:300]
+                (response.text or '')[:500]
             )
             return None
 
