@@ -580,6 +580,13 @@ def _is_more_request(message: str) -> bool:
     return False
 
 
+_REJECTION_PHRASES = {
+    'হবে না', 'হবেনা', 'na hobe', 'hobe na', 'na hoi', 'hoi na',
+    'পাওয়া যাবে না', 'পাবো না', 'paoa jabe na', 'pabo na',
+    'এটা না', 'এগুলো না', 'এগুলো হবে না', 'এটা চাই না',
+}
+
+
 def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
     logger.info("handle_product_search ctx=%s", {k: ctx.get(k) for k in ('category','brand','title','price_min','price_max')})
 
@@ -587,6 +594,30 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
     if any(w in (message or '').lower() for w in _PROPERTY_WORDS):
         ic = intent_to_normalized(ctx)
         return _handle_property_query(user_id, message, ic)
+
+    # Rejection message: user says previous products won't work (e.g. "৪০ এম্পিয়ারের হবে না").
+    # Search for the specific spec they mentioned instead of re-showing the same list.
+    msg_lower = (message or '').lower()
+    if any(p in msg_lower for p in _REJECTION_PHRASES):
+        # Extract the spec/keyword they mentioned (everything before "হবে না" etc.)
+        spec_text = re.sub(r'(হবে না|হবেনা|na hobe|hobe na|na hoi|hoi na|পাওয়া যাবে না|পাবো না|paoa jabe na|pabo na|এটা না|এগুলো না|এগুলো হবে না|এটা চাই না)', '', msg_lower).strip().rstrip('র ের এর').strip()
+        category = ctx.get('category', '')
+        search_kw = f"{spec_text} {category}".strip() if spec_text else category
+        ic = intent_to_normalized(ctx)
+        if search_kw:
+            result = search_products(search_kw)
+            if result['products_found'] > 0:
+                products = result['products']
+                set_search_pool(user_id, search_kw, products)
+                set_product_context(user_id, products[:5])
+                text, buttons = _format_listing(products[:3])
+                return _ok(f"স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:\n\n" + text,
+                           'product_search', ic, products=products, link_buttons=buttons)
+        return _ok(
+            "দুঃখিত স্যার, এই স্পেসিফিকেশনে এই মুহূর্তে কোনো প্রোডাক্ট পাওয়া যাচ্ছে না। "
+            "বাজেট বা স্পেসিফিকেশন পরিবর্তন করে আবার খুঁজুন।" + LOOP_BACK,
+            'no_products_found', ic
+        )
 
     # Intercept condition questions — don't re-search, answer about cached products
     condition_result = _handle_condition_question(user_id, message)
@@ -812,6 +843,51 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
                                    groq_client=None,
                                    groq_model: str = '') -> Optional[Dict]:
     msg = message.lower()
+
+    # User is rejecting the shown products (e.g. "৪০ এম্পিয়ারের হবে না",
+    # "এটা হবে না", "na hobe", "pabo na"). Let the full pipeline re-search.
+    _REJECTION_SIGNALS = {
+        'হবে না', 'হবেনা', 'na hobe', 'hobe na', 'na hoi', 'hoi na',
+        'পাওয়া যাবে না', 'পাবো না', 'paoa jabe na', 'pabo na',
+        'এটা না', 'এগুলো না', 'এগুলো হবে না', 'এটা চাই না',
+        'different', 'alada', 'অন্যরকম',
+    }
+    if any(s in msg for s in _REJECTION_SIGNALS):
+        return None
+
+    # "let me see / okay show me" — user wants to view the currently shown products.
+    # Re-show cached list with buttons instead of triggering a new search.
+    _VIEW_CURRENT_SIGNALS = {
+        'দেখি', 'dekhi', 'dekhbo', 'theek ache', 'thik ache', 'ok', 'okay',
+        'ঠিক আছে', 'আচ্ছা', 'acha', 'accha', 'sure', 'haan', 'হ্যাঁ', 'ha',
+    }
+    prev_products_vc = get_product_context(user_id)
+    if msg.strip() in _VIEW_CURRENT_SIGNALS and prev_products_vc:
+        ic_vc = normalize_payload(load_context(user_id))
+        text_vc, buttons_vc = _format_listing(prev_products_vc[:3])
+        return _ok("স্যার, এই প্রোডাক্টগুলো দেখুন:\n\n" + text_vc,
+                   'product_search', ic_vc, products=prev_products_vc, link_buttons=buttons_vc)
+
+    # Quantity / bulk order question (e.g. "চার সেট", "৩টা নেবো", "5 pieces").
+    # Answer about bulk ordering via the seller — don't re-search.
+    _QUANTITY_PATTERN = re.compile(
+        r'(\d+|এক|দুই|তিন|চার|পাঁচ|ছয়|সাত|আট|নয়|দশ|'
+        r'one|two|three|four|five|six|seven|eight|nine|ten)'
+        r'\s*(সেট|set|টা|টি|পিছ|পিস|pcs|piece|pieces|নগ|nos|copy|copies)',
+        re.IGNORECASE
+    )
+    prev_products_qty = get_product_context(user_id)
+    if _QUANTITY_PATTERN.search(msg) and prev_products_qty:
+        ic_qty = normalize_payload(load_context(user_id))
+        top_qty = prev_products_qty[0]
+        url_qty = top_qty.get('url', '')
+        title_qty = top_qty.get('title', '')
+        buttons_qty = [{'text': 'View Product', 'url': url_qty, 'title': title_qty}] if url_qty else []
+        return _ok(
+            "স্যার, একাধিক পিস বা বাল্ক অর্ডারের জন্য সরাসরি বিক্রেতার সাথে যোগাযোগ করুন। "
+            "প্রোডাক্ট পেজে বিক্রেতার নম্বর ও WhatsApp পাবেন।" + LOOP_BACK,
+            'bulk_order_query', ic_qty, link_buttons=buttons_qty
+        )
 
     # "more / aro / onno / dekhao" signals the user wants a NEW search, not a
     # follow-up question about the current product. Let the full pipeline handle it.

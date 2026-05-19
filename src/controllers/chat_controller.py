@@ -66,6 +66,10 @@ PAGE_ACCESS_TOKEN = os.getenv('PAGE_ACCESS_TOKEN', '')
 VERIFY_TOKEN = os.getenv('VERIFY_TOKEN', 'my_verify_token_12345')
 FACEBOOK_GRAPH_API_VERSION = os.getenv('FACEBOOK_GRAPH_API_VERSION', 'v25.0')
 MESSENGER_USER_NAME_CACHE = {}
+# Sender IDs confirmed as FB Lite (button template failed at least once).
+# Persisted to a JSON file so restarts don't forget Lite users.
+_LITE_CLIENTS: set = set()
+_LITE_CLIENTS_FILE = os.path.join(PROJECT_ROOT, 'data', 'lite_clients.json')
 USER_NAME_MAP_FILE = os.getenv(
     'USER_NAME_MAP_FILE',
     os.path.join(PROJECT_ROOT, 'data', 'user_names.json')
@@ -141,6 +145,43 @@ def _save_user_name_map(name_map: dict) -> None:
             json.dump(name_map, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logger.info("[NAME_MAP] save failed: %s", e)
+
+
+def _load_lite_clients() -> None:
+    """Load persisted FB Lite sender IDs into the in-memory set on startup."""
+    global _LITE_CLIENTS
+    try:
+        if os.path.exists(_LITE_CLIENTS_FILE):
+            with open(_LITE_CLIENTS_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                _LITE_CLIENTS = set(data)
+    except Exception as e:
+        logger.info("[LITE] load failed: %s", e)
+
+
+def _save_lite_clients() -> None:
+    try:
+        os.makedirs(os.path.dirname(_LITE_CLIENTS_FILE), exist_ok=True)
+        with open(_LITE_CLIENTS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(list(_LITE_CLIENTS), f)
+    except Exception as e:
+        logger.info("[LITE] save failed: %s", e)
+
+
+def is_lite_client(sender_id: str) -> bool:
+    return str(sender_id) in _LITE_CLIENTS
+
+
+def mark_lite_client(sender_id: str) -> None:
+    sid = str(sender_id)
+    if sid not in _LITE_CLIENTS:
+        _LITE_CLIENTS.add(sid)
+        logger.warning("[LITE] sender_id=%s marked as FB Lite — will use plain-text links going forward", sid)
+        _save_lite_clients()
+
+
+_load_lite_clients()
 
 
 def get_known_user_name(user_id: str) -> Optional[str]:
@@ -459,6 +500,36 @@ def _send_facebook_text_message(recipient_id: str, message_text: str) -> bool:
     return True
 
 
+def _send_plain_with_links(recipient_id: str, message_text: str, buttons: list) -> bool:
+    """Send message as plain text with URLs inline (for FB Lite clients)."""
+    plain = str(message_text or '').strip()
+    _LOOP_BACK_MARKER = 'আর কোনো প্রোডাক্ট বা বিষয়ে সাহায্য করতে পারি?'
+    body = plain[:plain.find(_LOOP_BACK_MARKER)].strip() if _LOOP_BACK_MARKER in plain else plain
+
+    # Remove raw URLs already in text so we don't duplicate them
+    body = URL_PATTERN.sub('', body).strip()
+
+    lines = [body] if body else []
+    for i, btn in enumerate(buttons, 1):
+        url = str(btn.get('url') or '').strip()
+        title = str(btn.get('title') or '').strip()
+        price = str(btn.get('price') or '').strip()
+        parts = []
+        if title:
+            parts.append(f"{i}. {title}")
+        if price:
+            parts.append(f"   মূল্য: {price}")
+        if url:
+            parts.append(f"   লিংক: {url}")
+        if parts:
+            lines.append('\n'.join(parts))
+
+    full_text = '\n\n'.join(lines).strip()
+    if not full_text:
+        full_text = plain
+    return _send_facebook_text_message(recipient_id, full_text)
+
+
 def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Optional[list[dict[str, Any]]] = None) -> bool:
     """Send a Messenger reply with optional web_url buttons for product links."""
     if not PAGE_ACCESS_TOKEN:
@@ -478,6 +549,11 @@ def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Op
     if not buttons:
         plain_text = str(message_text or '').strip()
         return _send_facebook_text_message(recipient_id, plain_text)
+
+    # Known FB Lite client — skip templates entirely, send plain text with URLs.
+    if is_lite_client(recipient_id):
+        logger.info("[LITE] sender_id=%s is FB Lite — sending plain-text links", recipient_id)
+        return _send_plain_with_links(recipient_id, message_text, buttons)
 
     plain_text = str(message_text or '').strip()
     intro_text = ''
@@ -566,8 +642,9 @@ def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Op
         }
 
         if not _send_facebook_payload(recipient_id, template_payload):
-            # Facebook Lite and some clients don't support button templates.
-            # Fall back to plain text with the URL on a separate line.
+            # Template failed — mark sender as FB Lite so all future messages
+            # skip templates and go straight to plain text with URLs.
+            mark_lite_client(recipient_id)
             url = str(btn.get('url') or '').strip()
             plain_fallback = f"{card_text}\nলিংক: {url}" if url else card_text
             if not _send_facebook_text_message(recipient_id, plain_fallback):
