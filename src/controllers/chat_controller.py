@@ -566,7 +566,12 @@ def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Op
         }
 
         if not _send_facebook_payload(recipient_id, template_payload):
-            return False
+            # Facebook Lite and some clients don't support button templates.
+            # Fall back to plain text with the URL on a separate line.
+            url = str(btn.get('url') or '').strip()
+            plain_fallback = f"{card_text}\nলিংক: {url}" if url else card_text
+            if not _send_facebook_text_message(recipient_id, plain_fallback):
+                return False
 
     if closing_text:
         if not _send_facebook_text_message(recipient_id, closing_text):
