@@ -943,6 +943,25 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
     if not any(s in msg for s in signals):
         return None
 
+    # If the message contains a new product name different from what's cached,
+    # treat it as a new search ("trimmer ache" after laptop results = search trimmer).
+    # We detect this by checking if a non-trivial noun in the message matches none
+    # of the cached product titles — in that case let the full pipeline handle it.
+    _prev_products_check = get_product_context(user_id)
+    if _prev_products_check:
+        cached_titles_lower = ' '.join(
+            p.get('title', '').lower() for p in _prev_products_check[:3]
+        )
+        # Words in message that are not pure availability/signal words
+        _SIGNAL_ONLY_WORDS = {
+            'ache', 'ase', 'available', 'stock', 'আছে', 'কি', 'ki', 'pabo',
+            'hobe', 'paoa', 'jabe', 'আপনাদের', 'apnader', 'কাছে', 'kache',
+        }
+        msg_nouns = [w for w in re.findall(r'[a-zঀ-৿]+', msg)
+                     if len(w) > 3 and w not in _SIGNAL_ONLY_WORDS]
+        if msg_nouns and not any(noun in cached_titles_lower for noun in msg_nouns):
+            return None  # New product — let pipeline do a fresh search
+
     ic = normalize_payload(load_context(user_id))
     prev_products = get_product_context(user_id)
 
