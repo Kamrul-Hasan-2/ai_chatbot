@@ -41,6 +41,7 @@ _product_url:       Dict[str, str]  = {}
 _last_intent:       Dict[str, str]  = {}
 _session_category:  Dict[str, str]  = {}  # persisted so restarts don't lose category
 _pending_question:  Dict[str, str]  = {}  # message that triggered a clarification prompt
+_pending_budget:    Dict[str, Dict] = {}  # category/brand/title waiting for a budget reply
 _search_pool:      Dict[str, List] = {}  # full 15-product result pool per user
 _search_offset:    Dict[str, int]  = {}  # next-page offset into _search_pool
 _search_key:       Dict[str, str]  = {}  # cache key (keywords|min|max) for the pool
@@ -155,6 +156,16 @@ def set_pending_question(user_id: str, question: str) -> None:
 def get_pending_question(user_id: str) -> str:
     """Return and clear the pending question (one-shot — consumed on read)."""
     return _pending_question.pop(user_id, '')
+
+
+def set_pending_budget(user_id: str, ctx: Dict) -> None:
+    """Save category/brand/title context while waiting for user's budget reply."""
+    _pending_budget[user_id] = dict(ctx)
+
+
+def get_pending_budget(user_id: str) -> Dict:
+    """Return and clear the pending budget context (one-shot — consumed on read)."""
+    return _pending_budget.pop(user_id, {})
 
 
 # ── In-session product state ──────────────────────────────────────────────────

@@ -36,6 +36,7 @@ from repositories.state_repository import (
     set_session_category, get_session_category,
     load_user_profile, save_user_profile,
     set_pending_question, get_pending_question,
+    get_pending_budget,
 )
 from services.humanizer_service import humanize_if_short
 from services.intent_service import (
@@ -251,6 +252,48 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                     set_pending_question(user_id, message)
                 _observe_and_save(user_id, profile, message, detail.get('intent', ''), prev_ctx)
                 return _build_response(user_id, detail, ChatMode.AI, AI_ACTIVE_STATUS,
+                                       (datetime.now() - start_time).total_seconds(),
+                                       user_message=message, profile=profile)
+
+        # Budget reply — user answered the "budget koto?" question.
+        # Extract price from their reply, merge with saved category, then search.
+        if get_last_intent(user_id) == 'need_budget':
+            pending_ctx = get_pending_budget(user_id)
+            if pending_ctx:
+                from services.intent_service import extract_budget_range
+                budget = extract_budget_range(message)
+                price_max = budget.get('max_price')
+                price_min = budget.get('min_price')
+                # Also try Groq-style budget parsing if extract_budget_range missed it
+                if price_max is None and price_min is None:
+                    # Run quick detect_intent just for budget extraction
+                    cat_names = [c['category_name'] for c in _categories]
+                    gr = detect_intent(message, [], prev_ctx, cat_names,
+                                      _groq_client, GROQ_MODEL,
+                                      user_profile_block=profile.to_prompt_block())
+                    price_max = gr.get('price_max') or gr.get('entities', {}).get('price_max')
+                    price_min = gr.get('price_min') or gr.get('entities', {}).get('price_min')
+                if price_max or price_min:
+                    merged = dict(pending_ctx)
+                    if price_max:
+                        merged['price_max'] = price_max
+                    if price_min:
+                        merged['price_min'] = price_min
+                    budget_result = handle_product_search(merged, user_id, message)
+                    _observe_and_save(user_id, profile, message, budget_result.get('intent', ''), merged)
+                    return _build_response(user_id, budget_result, ChatMode.AI, AI_ACTIVE_STATUS,
+                                           (datetime.now() - start_time).total_seconds(),
+                                           user_message=message, profile=profile)
+                # User didn't give a budget — re-ask politely
+                category = pending_ctx.get('category', 'প্রোডাক্ট')
+                from services.intent_service import normalize_payload as _np
+                ic_nb = _np(prev_ctx)
+                from repositories.state_repository import set_pending_budget as _spb
+                _spb(user_id, pending_ctx)  # restore so next reply still works
+                nb_result = {'response': f"স্যার, {category} কেনার জন্য আপনার সর্বোচ্চ বাজেট কত টাকা? (যেমন: ৩০,০০০ বা ২০,০০০-৪০,০০০)",
+                             'intent': 'need_budget', 'intent_content': ic_nb, 'products': []}
+                _observe_and_save(user_id, profile, message, 'need_budget', {})
+                return _build_response(user_id, nb_result, ChatMode.AI, AI_ACTIVE_STATUS,
                                        (datetime.now() - start_time).total_seconds(),
                                        user_message=message, profile=profile)
 
