@@ -22,7 +22,6 @@ from repositories.state_repository import (
     set_product_context, get_product_context,
     set_product_url, search_faq,
     set_search_pool, get_search_pool, advance_search_offset,
-    set_pending_budget,
 )
 from services.intent_service import (
     normalize_payload, intent_to_normalized,
@@ -708,29 +707,6 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
     price_max = ctx.get('price_max')
     price_min = ctx.get('price_min')
 
-    # No budget given yet — ask for it, then wait for the reply.
-    # Skip when: "more" request, existing pool, specific title/model already known,
-    # price query, or availability check ("hobe", "ache", "pabo", "available").
-    _is_price_query = any(w in (message or '').lower() for w in (
-        'price', 'dam', 'daam', 'koto', 'কত', 'দাম', 'মূল্য', 'cost', 'how much',
-    ))
-    _is_availability_check = any(w in (message or '').lower() for w in (
-        'hobe', 'হবে', 'ache', 'আছে', 'ase', 'pabo', 'পাবো', 'available',
-        'পাওয়া যাবে', 'hoy', 'হয়', 'পাওয়া যায়',
-    ))
-    if (price_max is None and price_min is None
-            and not _is_more_request(message)
-            and not ctx.get('title')
-            and not _is_price_query
-            and not _is_availability_check):
-        _, existing_key_b, _ = get_search_pool(user_id)
-        if not existing_key_b:
-            ic = intent_to_normalized(ctx)
-            set_pending_budget(user_id, ctx)
-            return _ok(
-                "স্যার, আপনার বাজেট কত? (যেমন: ২০,০০০ - ৪০,০০০ টাকা বা সর্বোচ্চ বাজেট বলুন)",
-                'need_budget', ic
-            )
 
     keywords  = _build_keywords(ctx)
     logger.info("handle_product_search keywords=%r price_min=%s price_max=%s", keywords, price_min, price_max)
