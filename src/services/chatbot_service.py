@@ -231,6 +231,27 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                                    (datetime.now() - start_time).total_seconds(),
                                    user_message=message, profile=profile)
 
+        # Self-reference buy: "এইটা/এটা/this order dite chaicchi" with cached products
+        # → skip Groq/budget, go straight to buy handler with the cached product.
+        from repositories.state_repository import get_product_context as _gpc_buy
+        _cached_buy = _gpc_buy(user_id)
+        _msg_lower_buy = message.lower()
+        _BUY_SELF_REF = {'এইটা', 'এটা', 'oita', 'eita', 'eta', 'this', 'এইটাই', 'এটাই'}
+        _BUY_ORDER_WORDS = {'order', 'kinbo', 'নেবো', 'নিতে চাই', 'kinte chai', 'order dite',
+                            'কিনতে চাই', 'অর্ডার', 'buy', 'purchase'}
+        _has_self_ref = any(w in _msg_lower_buy for w in _BUY_SELF_REF)
+        _has_buy_word = any(w in _msg_lower_buy for w in _BUY_ORDER_WORDS)
+        if _has_self_ref and _has_buy_word and _cached_buy:
+            from services.intent_service import normalize_payload as _np_buy
+            _buy_ctx = normalize_payload(prev_ctx)
+            _buy_ctx['category'] = (_cached_buy[0].get('category') or
+                                    prev_ctx.get('cat') or prev_ctx.get('category') or '')
+            buy_result = handle_buy(_buy_ctx, user_id, message)
+            _observe_and_save(user_id, profile, message, 'buy', _buy_ctx)
+            return _build_response(user_id, buy_result, ChatMode.AI, AI_ACTIVE_STATUS,
+                                   (datetime.now() - start_time).total_seconds(),
+                                   user_message=message, profile=profile)
+
         # Product detail follow-up.
         # Fire when either: (a) a specific product URL was pinned via set_product_url,
         # or (b) products from a search result are cached — use the first result's URL.
@@ -259,6 +280,10 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         # Extract price from their reply, merge with saved category, then search.
         if get_last_intent(user_id) == 'need_budget':
             pending_ctx = get_pending_budget(user_id)
+            # Long messages (>80 chars) are product descriptions or new search queries,
+            # not budget answers — clear pending and let the normal pipeline handle them.
+            if pending_ctx and len(message.strip()) > 80:
+                pending_ctx = {}  # discard, fall through to normal Groq pipeline
             if pending_ctx:
                 from services.intent_service import extract_budget_range
                 budget = extract_budget_range(message)
@@ -266,7 +291,6 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                 price_min = budget.get('min_price')
                 # Also try Groq-style budget parsing if extract_budget_range missed it
                 if price_max is None and price_min is None:
-                    # Run quick detect_intent just for budget extraction
                     cat_names = [c['category_name'] for c in _categories]
                     gr = detect_intent(message, [], prev_ctx, cat_names,
                                       _groq_client, GROQ_MODEL,

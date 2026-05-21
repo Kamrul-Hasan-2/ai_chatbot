@@ -419,16 +419,80 @@ def _handle_condition_question(user_id: str, message: str) -> Optional[Dict]:
     prev_products = get_product_context(user_id)
     if not prev_products:
         return None
+
+    # "brand new lagbe / notun chai / new want" — user wants a NEW unit, not asking
+    # about condition of a specific product. Re-search with 'new' keyword filter.
+    _WANT_SIGNALS = {'lagbe', 'chai', 'want', 'nibo', 'kinbo', 'দরকার', 'চাই', 'লাগবে'}
+    _NEW_SIGNALS  = {'new', 'notun', 'brand new', 'নতুন', 'fresh'}
+    _USED_SIGNALS = {'used', 'purano', 'second hand', 'refurbished', 'পুরনো', 'পুরাতন'}
+    has_want   = any(w in msg for w in _WANT_SIGNALS)
+    wants_new  = any(w in msg for w in _NEW_SIGNALS)
+    wants_used = any(w in msg for w in _USED_SIGNALS)
+    if has_want and (wants_new or wants_used):
+        condition_kw = 'new' if wants_new else 'used'
+        # Search with the condition keyword added to the existing category/title
+        top = prev_products[0]
+        base_kw = (top.get('title') or '').split()[:3]
+        search_kw = f"{condition_kw} {' '.join(base_kw)}".strip()
+        result = search_products(search_kw)
+        ic = normalize_payload(load_context(user_id))
+        if result['products_found'] > 0:
+            products = result['products']
+            set_product_context(user_id, products[:5])
+            text, buttons = _format_listing(products[:3])
+            label = 'নতুন' if wants_new else 'পুরনো/রিফার্বিশড'
+            return _ok(f"স্যার, {label} প্রোডাক্টগুলো দেখুন:\n\n" + text,
+                       'product_search', ic, products=products, link_buttons=buttons)
+        # Nothing found — give honest answer
+        label = 'নতুন' if wants_new else 'পুরনো/রিফার্বিশড'
+        return _ok(
+            f"স্যার, এই মুহূর্তে {label} কোনো প্রোডাক্ট পাওয়া যাচ্ছে না। "
+            "প্রোডাক্ট পেজে বিক্রেতার সাথে যোগাযোগ করে কন্ডিশন নিশ্চিত করুন।"
+            + LOOP_BACK,
+            'product_condition', ic,
+            link_buttons=[{'text': 'View Product', 'url': top.get('url', ''),
+                           'title': top.get('title', '')}] if top.get('url') else []
+        )
+
     ic = normalize_payload(load_context(user_id))
     if len(prev_products) > 1:
-        product_list = '\n'.join(
-            f"{i+1}. {p.get('title', '')[:50]}"
-            for i, p in enumerate(prev_products[:3])
-        )
-        return _ok(
-            f"স্যার, কোন প্রোডাক্টটি সম্পর্কে জানতে চাইছেন?\n\n{product_list}" + LOOP_BACK,
-            'product_clarification', ic
-        )
+        msg_lower_cq = msg.lower()
+
+        # If user says "atar / etar / its / 1 no" or a model identifier (has digits),
+        # auto-select without asking again.
+        _SELF_REF = {'atar', 'etar', 'otar', 'its', 'এটার', 'ওটার', 'এইটার'}
+        auto_idx = -1
+        if any(w in msg_lower_cq for w in _SELF_REF):
+            auto_idx = 0  # most recently discussed = first in list
+        else:
+            # Look for a model-number token (e.g. "G10", "845", "g9") in message
+            msg_tokens = re.findall(r'[a-z0-9]+', msg_lower_cq)
+            model_tokens = [t for t in msg_tokens if re.search(r'\d', t)]
+            for token in model_tokens:
+                for i, p in enumerate(prev_products[:3]):
+                    if token in (p.get('title') or '').lower():
+                        auto_idx = i
+                        break
+                if auto_idx >= 0:
+                    break
+
+        if auto_idx >= 0:
+            # Pin the auto-selected product
+            from repositories.state_repository import set_product_url as _set_url_cq
+            selected_cq = prev_products[auto_idx]
+            set_product_context(user_id, [selected_cq])
+            if selected_cq.get('url'):
+                _set_url_cq(user_id, selected_cq['url'])
+            prev_products = [selected_cq]
+        else:
+            product_list = '\n'.join(
+                f"{i+1}. {p.get('title', '')[:50]}"
+                for i, p in enumerate(prev_products[:3])
+            )
+            return _ok(
+                f"স্যার, কোন প্রোডাক্টটি সম্পর্কে জানতে চাইছেন?\n\n{product_list}" + LOOP_BACK,
+                'product_clarification', ic
+            )
     top = prev_products[0]
     product_url_top = top.get('url', '')
     product_id = _extract_product_id(product_url_top)
@@ -585,6 +649,8 @@ _REJECTION_PHRASES = {
     'হবে না', 'হবেনা', 'na hobe', 'hobe na', 'na hoi', 'hoi na',
     'পাওয়া যাবে না', 'পাবো না', 'paoa jabe na', 'pabo na',
     'এটা না', 'এগুলো না', 'এগুলো হবে না', 'এটা চাই না',
+    # "নেই??" pattern — user asking if something exists in this budget
+    'নেই', 'nei', 'পাওয়া যায় না', 'পাই না', 'নাই',
 }
 
 
@@ -596,23 +662,34 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
         ic = intent_to_normalized(ctx)
         return _handle_property_query(user_id, message, ic)
 
-    # Rejection message: user says previous products won't work (e.g. "৪০ এম্পিয়ারের হবে না").
-    # Search for the specific spec they mentioned instead of re-showing the same list.
+    # Rejection / "নেই?" message — user says shown products won't work OR asks if
+    # something exists in this budget. Extract the new keyword and search with budget.
     msg_lower = (message or '').lower()
     if any(p in msg_lower for p in _REJECTION_PHRASES):
-        # Extract the spec/keyword they mentioned (everything before "হবে না" etc.)
-        spec_text = re.sub(r'(হবে না|হবেনা|na hobe|hobe na|na hoi|hoi na|পাওয়া যাবে না|পাবো না|paoa jabe na|pabo na|এটা না|এগুলো না|এগুলো হবে না|এটা চাই না)', '', msg_lower).strip().rstrip('র ের এর').strip()
+        # Strip rejection/filler words; keep meaningful product keywords
+        _FILLER = (r'(হবে না|হবেনা|na hobe|hobe na|na hoi|hoi na|পাওয়া যাবে না|পাবো না|'
+                   r'paoa jabe na|pabo na|এটা না|এগুলো না|এগুলো হবে না|এটা চাই না|'
+                   r'নেই|nei|পাওয়া যায় না|পাই না|নাই|'
+                   r'এই বাজেটের মধ্যে|এই বাজেটে|বাজেটের মধ্যে|বাজেটে|'
+                   r'কোনো|কোন|আছে|আছে কি|কি|ki|ache|ase|'
+                   r'\?\?|\?|।)')
+        spec_text = re.sub(_FILLER, ' ', msg_lower).strip()
+        spec_text = re.sub(r'\s+', ' ', spec_text).strip().rstrip('র ের এর ের').strip()
         category = ctx.get('category', '')
+        price_max = ctx.get('price_max')
+        price_min = ctx.get('price_min')
         search_kw = f"{spec_text} {category}".strip() if spec_text else category
         ic = intent_to_normalized(ctx)
         if search_kw:
-            result = search_products(search_kw)
+            result = search_products(search_kw, price_max, price_min)
+            if result['products_found'] == 0 and (price_max or price_min):
+                result = search_products(search_kw)  # retry without budget
             if result['products_found'] > 0:
                 products = result['products']
                 set_search_pool(user_id, search_kw, products)
                 set_product_context(user_id, products[:5])
                 text, buttons = _format_listing(products[:3])
-                return _ok(f"স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:\n\n" + text,
+                return _ok("স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:\n\n" + text,
                            'product_search', ic, products=products, link_buttons=buttons)
         return _ok(
             "দুঃখিত স্যার, এই স্পেসিফিকেশনে এই মুহূর্তে কোনো প্রোডাক্ট পাওয়া যাচ্ছে না। "
@@ -632,15 +709,26 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
     price_min = ctx.get('price_min')
 
     # No budget given yet — ask for it, then wait for the reply.
-    # Skip this for "more" requests and follow-ups that already have a pool.
-    if price_max is None and price_min is None and not _is_more_request(message):
+    # Skip when: "more" request, existing pool, specific title/model already known,
+    # price query, or availability check ("hobe", "ache", "pabo", "available").
+    _is_price_query = any(w in (message or '').lower() for w in (
+        'price', 'dam', 'daam', 'koto', 'কত', 'দাম', 'মূল্য', 'cost', 'how much',
+    ))
+    _is_availability_check = any(w in (message or '').lower() for w in (
+        'hobe', 'হবে', 'ache', 'আছে', 'ase', 'pabo', 'পাবো', 'available',
+        'পাওয়া যাবে', 'hoy', 'হয়', 'পাওয়া যায়',
+    ))
+    if (price_max is None and price_min is None
+            and not _is_more_request(message)
+            and not ctx.get('title')
+            and not _is_price_query
+            and not _is_availability_check):
         _, existing_key_b, _ = get_search_pool(user_id)
         if not existing_key_b:
-            category = ctx.get('category', '')
             ic = intent_to_normalized(ctx)
             set_pending_budget(user_id, ctx)
             return _ok(
-                f"স্যার, আপনার বাজেট কত? (যেমন: ২০,০০০ - ৪০,০০০ টাকা বা সর্বোচ্চ বাজেট বলুন)",
+                "স্যার, আপনার বাজেট কত? (যেমন: ২০,০০০ - ৪০,০০০ টাকা বা সর্বোচ্চ বাজেট বলুন)",
                 'need_budget', ic
             )
 
@@ -931,7 +1019,7 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
         'warranty', 'warenty', 'guarantee', 'original', 'kena jabe', 'pabo',
         'intake', 'original intake', 'non intake', 'নন ইনটেক', 'ইনটেক',
         'স্টক', 'রং', 'মান', 'দাম', 'ওয়ারেন্টি', 'spec', 'feature',
-        'detail', 'বিস্তারিত', 'কেমন', 'kemon', 'review', 'rating',
+        'detail', 'details', 'বিস্তারিত', 'কেমন', 'kemon', 'review', 'rating',
         'used', 'new', 'পুরনো', 'purano', 'second hand', 'refurbished',
         'condition', 'কন্ডিশন', 'fresh',
         'discount', 'ছাড়', 'offer', 'fixed', 'negotiate', 'কমানো', 'কমবে',
@@ -972,15 +1060,39 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
         'intake', 'original intake', 'non intake', 'ইনটেক', 'নন ইনটেক',
     }
     if len(prev_products) > 1 and any(s in msg for s in _AMBIGUOUS_SIGNALS):
-        product_list = '\n'.join(
-            f"{i+1}. {p.get('title', '')[:50]}"
-            for i, p in enumerate(prev_products[:3])
-        )
-        return _ok(
-            f"স্যার, কোন প্রোডাক্টটি সম্পর্কে জানতে চাইছেন?\n\n{product_list}"
-            + LOOP_BACK,
-            'product_clarification', ic
-        )
+        # Try to auto-select by self-reference ("atar", "etar") or model token in message
+        _SELF_REF_FU = {'atar', 'etar', 'otar', 'its', 'এটার', 'ওটার', 'এইটার', 'mane', 'মানে'}
+        auto_idx_fu = -1
+        if any(w in msg for w in _SELF_REF_FU):
+            auto_idx_fu = 0
+        else:
+            msg_tokens_fu = re.findall(r'[a-z0-9]+', msg)
+            model_tokens_fu = [t for t in msg_tokens_fu if re.search(r'\d', t)]
+            for token in model_tokens_fu:
+                for i, p in enumerate(prev_products[:3]):
+                    if token in (p.get('title') or '').lower():
+                        auto_idx_fu = i
+                        break
+                if auto_idx_fu >= 0:
+                    break
+
+        if auto_idx_fu >= 0:
+            from repositories.state_repository import set_product_url as _set_url_fu
+            selected_fu = prev_products[auto_idx_fu]
+            set_product_context(user_id, [selected_fu])
+            if selected_fu.get('url'):
+                _set_url_fu(user_id, selected_fu['url'])
+            prev_products = [selected_fu]
+        else:
+            product_list = '\n'.join(
+                f"{i+1}. {p.get('title', '')[:50]}"
+                for i, p in enumerate(prev_products[:3])
+            )
+            return _ok(
+                f"স্যার, কোন প্রোডাক্টটি সম্পর্কে জানতে চাইছেন?\n\n{product_list}"
+                + LOOP_BACK,
+                'product_clarification', ic
+            )
 
     top = prev_products[0] if prev_products else {}
     title = top.get('title', '')
@@ -997,14 +1109,16 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
         'size', 'সাইজ', 'কত সাইজ', 'variant', 'option',
     }
     _STOCK_SIGNALS = {
-        'stock', 'available', 'পাবো', 'pabo', 'পাওয়া যাবে', 'ache', 'আছে কি',
+        'stock', 'available', 'পাবো', 'pabo', 'পাওয়া যাবে', 'আছে কি', 'স্টক আছে',
     }
 
     buttons = [{'text': 'View Product', 'url': product_url, 'title': title}] if product_url else []
 
-    if any(w in msg for w in ('price', 'dam', 'দাম', 'মূল্য')) and not any(w in msg for w in _SPEC_SIGNALS):
+    if any(w in msg for w in ('warranty', 'warenty', 'warrenty', 'guarantee', 'ওয়ারেন্টি', 'গ্যারান্টি', 'waranti')):
+        reply = "🛡️ ওয়ারেন্টি\n━━━━━━━━━━━━━━━\nওয়ারেন্টি সংক্রান্ত বিস্তারিত তথ্য প্রোডাক্ট পেজে দেওয়া আছে।"
+
+    elif any(w in msg for w in ('price', 'dam', 'দাম', 'মূল্য')) and not any(w in msg for w in _SPEC_SIGNALS):
         _raw_price = str(top.get('price') or '').strip()
-        # 'N/A' or '0' are not real prices — fetch from detail API instead
         price = _raw_price if (_raw_price and _raw_price not in ('N/A', '0', '0.00')) else ''
         if not price:
             listing_id = _extract_product_id(product_url)
@@ -1019,9 +1133,6 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
             reply = f"💰 মূল্য\n━━━━━━━━━━━━━━━\n{title} এর সর্বশেষ মূল্য জানতে প্রোডাক্ট পেজটি দেখুন।"
         else:
             reply = "স্যার, দাম জানতে প্রোডাক্ট পেজটি দেখুন।"
-
-    elif any(w in msg for w in ('warranty', 'warenty', 'guarantee', 'ওয়ারেন্টি')):
-        reply = "🛡️ ওয়ারেন্টি\n━━━━━━━━━━━━━━━\nওয়ারেন্টি সংক্রান্ত বিস্তারিত তথ্য প্রোডাক্ট পেজে দেওয়া আছে।"
 
     elif any(w in msg for w in ('discount', 'ছাড়', 'offer', 'fixed', 'negotiate', 'কমানো', 'কমবে')):
         discount = int(top.get('discount') or 0)
