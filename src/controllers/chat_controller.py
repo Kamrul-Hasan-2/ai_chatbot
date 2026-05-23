@@ -542,7 +542,7 @@ def send_facebook_message(recipient_id: str, message_text: str, link_buttons: Op
     if not buttons:
         for url in _extract_urls(message_text):
             buttons.append({
-                'text': 'View Product',
+                'text': 'প্রোডাক্ট দেখুন',
                 'url': url
             })
 

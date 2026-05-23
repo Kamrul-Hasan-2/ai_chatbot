@@ -104,7 +104,7 @@ def _comparison_buttons(ctx: Dict) -> List[Dict]:
                       re.sub(r'\s+', '-', category.strip().lower())).strip('-')
         if slug:
             target = f"https://www.bdstall.com/{quote(slug, safe='-')}/"
-    return [{'text': 'View', 'url': target}]
+    return [{'text': 'দেখুন', 'url': target}]
 
 
 def _extract_keywords_from_url(url: str) -> str:
@@ -172,15 +172,15 @@ def handle_buy(ctx: Dict, user_id: str, message: str) -> Dict:
         url   = p.get('url', '')
         title = (p.get('title') or 'প্রোডাক্ট দেখুন')[:40]
         if url:
-            buttons.append({'text': 'View Product', 'url': url, 'title': title})
+            buttons.append({'text': 'প্রোডাক্ট দেখুন', 'url': url, 'title': title})
 
     if not buttons:
-        buttons = [{'text': 'BDStall.com দেখুন', 'url': 'https://www.bdstall.com/'}]
+        buttons = [{'text': 'বিডিস্টল ভিজিট করুন', 'url': 'https://www.bdstall.com/'}]
 
     reply = (
         "স্যার, এই প্রোডাক্টটি কিনতে:\n\n"
-        "১. নিচের 'View Product' বাটনে ক্লিক করুন\n"
-        "২. প্রোডাক্ট পেজে গিয়ে বিক্রেতাকে Call বা WhatsApp করুন\n"
+        "১. নিচের 'প্রোডাক্ট দেখুন' বাটনে ক্লিক করুন\n"
+        "২. প্রোডাক্ট পেজে গিয়ে বিক্রেতাকে কল বা হোয়াটসঅ্যাপ করুন\n"
         "৩. দাম, কন্ডিশন ও ডেলিভারি নিশ্চিত করুন\n\n"
         "📞 বিক্রেতা সরাসরি আপনার সাথে যোগাযোগ করে ডেলিভারি দেবেন।"
     )
@@ -206,7 +206,7 @@ def handle_comparison(ctx: Dict, user_id: str, message: str) -> Dict:
         lines.append("")
         lines.append("রিভিউ ও রেটিং দেখে পছন্দ হলে অর্ডার করতে পারেন।")
         lines.append(LOOP_BACK)
-        buttons = [{'text': 'View Product', 'url': url, 'title': title,
+        buttons = [{'text': 'প্রোডাক্ট দেখুন', 'url': url, 'title': title,
                     'price': price}] if url else _comparison_buttons(ctx)
         return _ok('\n'.join(lines), 'comparison', ic, link_buttons=buttons)
     # No cached products — if we know the category, surface a real search result.
@@ -476,7 +476,7 @@ def _handle_condition_question(user_id: str, message: str) -> Optional[Dict]:
             "প্রোডাক্ট পেজে বিক্রেতার সাথে যোগাযোগ করে কন্ডিশন নিশ্চিত করুন।"
             + LOOP_BACK,
             'product_condition', ic,
-            link_buttons=[{'text': 'View Product', 'url': top.get('url', ''),
+            link_buttons=[{'text': 'প্রোডাক্ট দেখুন', 'url': top.get('url', ''),
                            'title': top.get('title', '')}] if top.get('url') else []
         )
 
@@ -528,7 +528,7 @@ def _handle_condition_question(user_id: str, message: str) -> Optional[Dict]:
     condition_text = (api_reply or
                       f"স্যার, {top.get('title', 'এই প্রোডাক্টটি')} এর কন্ডিশন জানতে "
                       "প্রোডাক্ট পেজটি দেখুন।")
-    buttons = [{'text': 'View Product', 'url': product_url_top,
+    buttons = [{'text': 'প্রোডাক্ট দেখুন', 'url': product_url_top,
                 'title': top.get('title', '')}] if product_url_top else []
     return _ok(condition_text + LOOP_BACK, 'product_condition', ic, link_buttons=buttons)
 
@@ -597,7 +597,7 @@ def handle_clarification_selection(user_id: str, message: str,
         _set_url(user_id, product_url_sel)
 
     ic = normalize_payload(load_context(user_id))
-    buttons = [{'text': 'View Product', 'url': product_url_sel, 'title': title}] if product_url_sel else []
+    buttons = [{'text': 'প্রোডাক্ট দেখুন', 'url': product_url_sel, 'title': title}] if product_url_sel else []
 
     # ── Route based on what the user originally asked ─────────────────────────
     _CONDITION_Q = {
@@ -944,7 +944,7 @@ def handle_product_link(ctx: Dict, user_id: str, message: str, url: str) -> Dict
             f"স্যার, এই লিংকের প্রোডাক্টটি ({keywords}) এই মুহূর্তে স্টকে নেই।"
             " সরাসরি লিংকে গিয়ে দেখতে পারেন।" + LOOP_BACK,
             'product_link_not_found', ic,
-            link_buttons=[{'text': 'View on BDStall', 'url': url}]
+            link_buttons=[{'text': 'বিডিস্টলে দেখুন', 'url': url}]
         )
 
     products = result['products']
@@ -977,7 +977,7 @@ def handle_product_link(ctx: Dict, user_id: str, message: str, url: str) -> Dict
     return _ok(
         '\n'.join(lines),
         'product_link', ic, products=products,
-        link_buttons=[{'text': 'View Product', 'url': url, 'title': title, 'price': price}]
+        link_buttons=[{'text': 'প্রোডাক্ট দেখুন', 'url': url, 'title': title, 'price': price}]
     )
 
 
@@ -1025,7 +1025,7 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
         top_qty = prev_products_qty[0]
         url_qty = top_qty.get('url', '')
         title_qty = top_qty.get('title', '')
-        buttons_qty = [{'text': 'View Product', 'url': url_qty, 'title': title_qty}] if url_qty else []
+        buttons_qty = [{'text': 'প্রোডাক্ট দেখুন', 'url': url_qty, 'title': title_qty}] if url_qty else []
         return _ok(
             "স্যার, একাধিক পিস বা বাল্ক অর্ডারের জন্য সরাসরি বিক্রেতার সাথে যোগাযোগ করুন। "
             "প্রোডাক্ট পেজে বিক্রেতার নম্বর ও WhatsApp পাবেন।" + LOOP_BACK,
@@ -1152,7 +1152,7 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
         'stock', 'available', 'পাবো', 'pabo', 'পাওয়া যাবে', 'আছে কি', 'স্টক আছে',
     }
 
-    buttons = [{'text': 'View Product', 'url': product_url, 'title': title}] if product_url else []
+    buttons = [{'text': 'প্রোডাক্ট দেখুন', 'url': product_url, 'title': title}] if product_url else []
 
     if any(w in msg for w in ('warranty', 'warenty', 'warrenty', 'guarantee', 'ওয়ারেন্টি', 'গ্যারান্টি', 'waranti')):
         reply = "🛡️ ওয়ারেন্টি\n━━━━━━━━━━━━━━━\nওয়ারেন্টি সংক্রান্ত বিস্তারিত তথ্য প্রোডাক্ট পেজে দেওয়া আছে।"
@@ -1482,7 +1482,7 @@ def handle_product_spec_query(ctx: Dict, user_id: str, message: str,
             "স্যার, এই মুহূর্তে প্রোডাক্টের তথ্য লোড করা যাচ্ছে না। "
             "সরাসরি প্রোডাক্ট পেজটি দেখুন।" + LOOP_BACK,
             'product_spec_query', ic,
-            link_buttons=[{'text': 'View Product', 'url': product_url}] if product_url else []
+            link_buttons=[{'text': 'প্রোডাক্ট দেখুন', 'url': product_url}] if product_url else []
         )
 
     features = spec_data['features']
@@ -1543,7 +1543,7 @@ def handle_product_spec_query(ctx: Dict, user_id: str, message: str,
             if title else
             "স্যার, বিস্তারিত তথ্য প্রোডাক্ট পেজে পাবেন।"
         )
-    buttons = [{'text': 'View Product', 'url': product_url,
+    buttons = [{'text': 'প্রোডাক্ট দেখুন', 'url': product_url,
                 'title': title}] if product_url else []
     return _ok(reply + LOOP_BACK, 'product_spec_query', ic, link_buttons=buttons)
 
@@ -1674,7 +1674,7 @@ def _reply_price_from_context(user_id: str) -> Optional[Tuple[str, List[Dict]]]:
         url   = p.get('url', '')
         if price and price.upper() != 'N/A':
             return (f"জি স্যার, {title} এর দাম {price}।" + LOOP_BACK,
-                    [{'text': 'View', 'url': url, 'title': title, 'price': price}] if url else [])
+                    [{'text': 'দেখুন', 'url': url, 'title': title, 'price': price}] if url else [])
     lines   = ["স্যার, আপনার দেখা প্রোডাক্টগুলোর দাম:"]
     buttons = []
     for i, p in enumerate(products[:5], 1):

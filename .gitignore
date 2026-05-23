@@ -11,5 +11,7 @@ ENV/
 *.log
 *.db
 data/user_data.json
+data/chatbot_state.json
+data/lite_clients.json
 /models/
 .DS_Store
