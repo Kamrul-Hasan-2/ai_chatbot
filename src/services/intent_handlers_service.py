@@ -90,7 +90,7 @@ def _format_listing(products: List[Dict]) -> Tuple[str, List[Dict]]:
         url   = p.get('url', '')
         lines.append(f"{i}. {title}\n   মূল্য: {price}")
         if url:
-            buttons.append({'text': f"{i}. View", 'url': url,
+            buttons.append({'text': f"{i}. দেখুন", 'url': url,
                             'title': title, 'price': price})
     lines.append("\nআরও প্রোডাক্ট চাইলে বলুন, আমি দেখাচ্ছি।" + LOOP_BACK)
     return '\n'.join(lines), buttons

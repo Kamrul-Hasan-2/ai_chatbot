@@ -229,6 +229,29 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                                    (datetime.now() - start_time).total_seconds(),
                                    user_message=message, profile=profile)
 
+        # Generic buy/order intent intercept — short messages like
+        # "ami order korte chai", "kinte chai", "buy korbo" are purchase-process
+        # questions, not new product searches. Groq sometimes mislabels them as
+        # product_search and re-shows cached products. Catch them deterministically.
+        _BUY_PHRASES = (
+            'order korte chai', 'order korbo', 'order dibo', 'order dite chai',
+            'order korte chacchi', 'order dite chacchi', 'অর্ডার করতে চাই',
+            'অর্ডার করব', 'অর্ডার দিব', 'অর্ডার দিতে চাই',
+            'kinte chai', 'kinbo', 'kinte chacchi', 'কিনতে চাই', 'কিনব',
+            'buy korbo', 'buy korte chai', 'purchase korbo',
+        )
+        _msg_stripped = _msg_lower_buy.strip().rstrip('.?!।')
+        if any(p in _msg_lower_buy for p in _BUY_PHRASES) and len(_msg_stripped) <= 40:
+            _buy_ctx = normalize_payload(prev_ctx)
+            if _cached_buy:
+                _buy_ctx['category'] = (_cached_buy[0].get('category') or
+                                        prev_ctx.get('cat') or prev_ctx.get('category') or '')
+            buy_result = handle_buy(_buy_ctx, user_id, message)
+            _observe_and_save(user_id, profile, message, 'buy', _buy_ctx)
+            return _build_response(user_id, buy_result, ChatMode.AI, AI_ACTIVE_STATUS,
+                                   (datetime.now() - start_time).total_seconds(),
+                                   user_message=message, profile=profile)
+
         # Product detail follow-up.
         # Fire when either: (a) a specific product URL was pinned via set_product_url,
         # or (b) products from a search result are cached — use the first result's URL.
