@@ -372,9 +372,38 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
             if _title_words and _title_words.issubset(_FILLER_WORDS):
                 groq_result['entities']['title'] = ''
 
-        logger.info("Intent=%s entities=%s followup=%s",
+        logger.info("Intent=%s entities=%s followup=%s confidence=%.2f",
                     groq_result['intent'], groq_result['entities'],
-                    groq_result['is_followup'])
+                    groq_result['is_followup'], groq_result.get('confidence', 0.0))
+
+        # Strict policy: if Groq cannot classify (intent='unknown') or returns
+        # very low confidence with no usable entities, hand the conversation off
+        # to a human agent instead of guessing.
+        _conf = float(groq_result.get('confidence') or 0.0)
+        _has_entity = any(groq_result['entities'].get(k) for k in
+                          ('category', 'brand', 'title', 'price_max', 'price_min'))
+        if (groq_result['intent'] == 'unknown'
+                or (_conf < 0.55 and not _has_entity
+                    and not groq_result.get('is_followup'))):
+            logger.info("Strict handoff — intent=%s conf=%.2f entities=%s",
+                        groq_result['intent'], _conf, groq_result['entities'])
+            try:
+                assign_agent(user_id, 'unknown_intent')
+            except Exception as e:
+                logger.warning("assign_agent on unknown intent failed: %s", e)
+            ic = normalize_payload(prev_ctx)
+            handler_result = {
+                'response': ("স্যার, আপনার মেসেজটি আমি ঠিকমতো বুঝতে পারিনি। "
+                             "আমাদের একজন প্রতিনিধি শীঘ্রই আপনার সাথে যোগাযোগ করবেন।"),
+                'intent': 'unknown_handoff',
+                'intent_content': ic,
+                'products': [],
+            }
+            _observe_and_save(user_id, profile, message, 'unknown_handoff', {})
+            return _build_response(user_id, handler_result,
+                                   ChatMode.HUMAN, HUMAN_SUPPORT_REQUIRED_STATUS,
+                                   (datetime.now() - start_time).total_seconds(),
+                                   user_message=message, profile=profile)
 
         # ── STEP 3: merge_context ────────────────────────────────────────────
         def _clear():
