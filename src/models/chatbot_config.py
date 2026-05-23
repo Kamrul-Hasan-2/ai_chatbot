@@ -34,6 +34,11 @@ PRODUCT_RELATED_INTENTS = {'product_search', 'price_query', 'comparison', 'order
 
 CONTEXT_TTL_SECONDS = 1800
 
+# ── Knowledge intent (Groq-backed answers) rate limit ────────────────────────
+# Knowledge questions (technical_advice) consume Groq tokens. Cap at 5/day per
+# user; once exceeded the user is handed off to a human agent.
+KNOWLEDGE_DAILY_LIMIT = int(os.getenv('KNOWLEDGE_DAILY_LIMIT', '5'))
+
 # ── Category prompt ───────────────────────────────────────────────────────────
 
 CATEGORY_PROMPT = (

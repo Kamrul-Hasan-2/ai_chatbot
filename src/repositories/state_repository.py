@@ -46,6 +46,7 @@ _search_pool:      Dict[str, List] = {}  # full 15-product result pool per user
 _search_offset:    Dict[str, int]  = {}  # next-page offset into _search_pool
 _search_key:       Dict[str, str]  = {}  # cache key (keywords|min|max) for the pool
 _user_profile:     Dict[str, Dict] = {}  # per-user behavioural profile (JSON dict form)
+_knowledge_count:  Dict[str, Dict] = {}  # per-user knowledge calls today: {user_id: {date: 'YYYY-MM-DD', count: int}}
 _state_lock = threading.Lock()
 
 _PROJECT_ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
@@ -62,6 +63,7 @@ def _load_local_state() -> None:
         _last_intent.update(state.get('user_last_intent') or {})
         _session_category.update(state.get('user_session_category') or {})
         _user_profile.update(state.get('user_profile') or {})
+        _knowledge_count.update(state.get('user_knowledge_count') or {})
     except Exception as e:
         logger.warning("_load_local_state failed: %s", e)
 
@@ -75,6 +77,7 @@ def _save_local_state() -> None:
                 'user_last_intent':      _last_intent,
                 'user_session_category': _session_category,
                 'user_profile':          _user_profile,
+                'user_knowledge_count':  _knowledge_count,
             }
             fd, tmp = tempfile.mkstemp(dir=os.path.dirname(_STATE_FILE), suffix='.tmp')
             try:
@@ -239,6 +242,29 @@ def save_user_profile(user_id: str, profile) -> None:
         return
     _user_profile[user_id] = profile.to_dict()
     _save_local_state()
+
+
+# ── Knowledge intent rate limiting (Groq-backed answers, max 5/user/day) ─────
+
+def get_knowledge_count(user_id: str) -> int:
+    """Return today's Groq-backed knowledge answer count for this user (0 if new day)."""
+    today = datetime.now().strftime('%Y-%m-%d')
+    rec = _knowledge_count.get(user_id)
+    if not rec or rec.get('date') != today:
+        return 0
+    return int(rec.get('count', 0))
+
+
+def increment_knowledge_count(user_id: str) -> int:
+    """Bump and return today's knowledge count. Auto-resets at midnight."""
+    today = datetime.now().strftime('%Y-%m-%d')
+    rec = _knowledge_count.get(user_id) or {}
+    if rec.get('date') != today:
+        rec = {'date': today, 'count': 0}
+    rec['count'] = int(rec.get('count', 0)) + 1
+    _knowledge_count[user_id] = rec
+    _save_local_state()
+    return rec['count']
 
 
 # ── FAQ database ──────────────────────────────────────────────────────────────

@@ -15,13 +15,14 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
-from models.chatbot_config import CATEGORY_PROMPT, LOOP_BACK
-from services.api_client_service import search_products, fetch_delivery_template, fetch_condition_template, fetch_product_spec
+from models.chatbot_config import CATEGORY_PROMPT, LOOP_BACK, KNOWLEDGE_DAILY_LIMIT
+from services.api_client_service import search_products, fetch_delivery_template, fetch_condition_template, fetch_product_spec, assign_agent
 from repositories.state_repository import (
     load_context, get_last_intent,
     set_product_context, get_product_context,
     set_product_url, search_faq,
     set_search_pool, get_search_pool, advance_search_offset,
+    get_knowledge_count, increment_knowledge_count,
 )
 from services.intent_service import (
     normalize_payload, intent_to_normalized,
@@ -376,6 +377,12 @@ def handle_faq(ctx: Dict, user_id: str, message: str, faq_db: List) -> Dict:
 def handle_technical_advice(ctx: Dict, user_id: str, message: str,
                              categories: List[Dict],
                              groq_client, groq_model: str) -> Dict:
+    """Knowledge-style answer via Groq.
+
+    Only this handler is allowed to generate Groq-backed text replies.
+    Rate-limited to KNOWLEDGE_DAILY_LIMIT (5) calls per user per day.
+    When the limit is exceeded, the conversation is handed off to a human agent.
+    """
     ic = intent_to_normalized(ctx)
     resolved = resolve_category_from_message(message, categories)
     if not resolved:
@@ -393,8 +400,28 @@ def handle_technical_advice(ctx: Dict, user_id: str, message: str,
             + LOOP_BACK,
             'technical_advice_out_of_scope', ic
         )
-    answer = (get_technical_advice(message, groq_client, groq_model)
-              or "স্যার, এই বিষয়ে আমি নিশ্চিত নই।")
+
+    # Rate limit: 5 Groq-backed knowledge answers per user per day. After that
+    # we switch the conversation to human-agent mode and ask the user to wait.
+    used_today = get_knowledge_count(user_id)
+    if used_today >= KNOWLEDGE_DAILY_LIMIT:
+        logger.info("knowledge limit exceeded user=%s used=%d", user_id, used_today)
+        try:
+            assign_agent(user_id, 'knowledge_limit_exceeded')
+        except Exception as e:
+            logger.warning("assign_agent on knowledge limit failed: %s", e)
+        return _ok(
+            "স্যার, আজকের জন্য বিস্তারিত পরামর্শের সীমা শেষ হয়েছে। "
+            "আমাদের একজন প্রতিনিধি শীঘ্রই আপনার সাথে যোগাযোগ করবেন।",
+            'knowledge_limit_exceeded', ic
+        )
+
+    answer = get_technical_advice(message, groq_client, groq_model)
+    if answer:
+        increment_knowledge_count(user_id)
+    else:
+        answer = "স্যার, এই বিষয়ে আমি নিশ্চিত নই।"
+
     full_answer = (answer
                    + "\n\nতবে স্যার, কেনার আগে অবশ্যই আরেকবার যাচাই করে নিন।"
                    + "\n\nকোন প্রোডাক্ট দেখতে চান বললে আমি এখনই দেখিয়ে দিতে পারি।"
@@ -695,6 +722,43 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
             "বাজেট বা স্পেসিফিকেশন পরিবর্তন করে আবার খুঁজুন।" + LOOP_BACK,
             'no_products_found', ic
         )
+
+    # Use-case / purpose intercept — "graphics er kajor jonni" / "video editing er jonno"
+    # Pattern: <purpose> er kaje / er kajer jonno / er jonno / er jonni / for <purpose> work
+    _PURPOSE_PATTERN = re.compile(
+        r'(\w+)\s+(?:er\s+)?(?:kaj(?:or?|er?)\s*(?:jonno?|jonni)?|jonno?|jonni|kaje|kajer\s+jonno?)'
+        r'|for\s+(\w+)\s+(?:work|use|task)',
+        re.IGNORECASE
+    )
+    _GENERIC_PURPOSE = {'ami', 'apni', 'amar', 'apnar', 'ki', 'kono', 'sob', 'ei',
+                        'oi', 'je', 'ta', 'to', 'na', 'hobe', 'chai', 'lagbe'}
+    _purpose_match = _PURPOSE_PATTERN.search(msg_lower)
+    if _purpose_match:
+        purpose_word = (_purpose_match.group(1) or _purpose_match.group(2) or '').lower().strip()
+        category = ctx.get('category', '')
+        if purpose_word and purpose_word not in _GENERIC_PURPOSE and purpose_word != category.lower():
+            purpose_kw = f"{purpose_word} {category}".strip() if category else purpose_word
+            current_kw = _build_keywords(ctx)
+            # Only re-search if purpose word is not already in the current keywords
+            if purpose_word not in current_kw.lower():
+                price_max = ctx.get('price_max')
+                price_min = ctx.get('price_min')
+                logger.info("purpose intercept: purpose=%r kw=%r", purpose_word, purpose_kw)
+                result = search_products(purpose_kw, price_max, price_min)
+                if result['products_found'] == 0 and (price_max or price_min):
+                    result = search_products(purpose_kw)
+                if result['products_found'] > 0:
+                    products = result['products']
+                    pool_key = f"{purpose_kw}|{price_min or ''}|{price_max or ''}"
+                    set_search_pool(user_id, pool_key, products)
+                    set_product_context(user_id, products[:5])
+                    text, buttons = _format_listing(products[:3])
+                    ic = intent_to_normalized(ctx)
+                    if price_max:
+                        header = f"স্যার, ৳{price_max:,} এর মধ্যে {purpose_word} কাজের জন্য উপযুক্ত প্রোডাক্টগুলো দেখুন:\n\n"
+                    else:
+                        header = f"স্যার, {purpose_word} কাজের জন্য উপযুক্ত প্রোডাক্টগুলো দেখুন:\n\n"
+                    return _ok(header + text, 'product_search', ic, products=products, link_buttons=buttons)
 
     # Intercept condition questions — don't re-search, answer about cached products
     condition_result = _handle_condition_question(user_id, message)
@@ -1383,11 +1447,22 @@ def handle_product_spec_query(ctx: Dict, user_id: str, message: str,
     logger.info("handle_product_spec_query: url=%r id=%r msg=%r", product_url, listing_id, message)
 
     if not listing_id:
-        # No product on screen — treat as general technical advice instead
+        # No product on screen — treat as general technical advice instead.
+        # Rate-limited: Groq-backed knowledge answers cap at KNOWLEDGE_DAILY_LIMIT/day.
+        if get_knowledge_count(user_id) >= KNOWLEDGE_DAILY_LIMIT:
+            try:
+                assign_agent(user_id, 'knowledge_limit_exceeded')
+            except Exception as e:
+                logger.warning("assign_agent on knowledge limit failed: %s", e)
+            return _ok(
+                "স্যার, আজকের জন্য বিস্তারিত পরামর্শের সীমা শেষ হয়েছে। "
+                "আমাদের একজন প্রতিনিধি শীঘ্রই আপনার সাথে যোগাযোগ করবেন।",
+                'knowledge_limit_exceeded', ic
+            )
         from services.intent_service import get_technical_advice
-        from services.api_client_service import fetch_categories as _fetch_cats
         answer = get_technical_advice(message, groq_client, groq_model)
         if answer:
+            increment_knowledge_count(user_id)
             return _ok(
                 answer + "\n\nতবে স্যার, কেনার আগে অবশ্যই আরেকবার যাচাই করে নিন।" + LOOP_BACK,
                 'technical_advice', ic
@@ -1438,10 +1513,15 @@ def handle_product_spec_query(ctx: Dict, user_id: str, message: str,
         return _ok(reply + LOOP_BACK, 'product_spec_query', ic)
 
     # ── Groq constrained to this product's own review text ────────────────────
-    groq_answer = _get_technical_answer_from_review(message, review, groq_client, groq_model)
-    if groq_answer:
-        logger.info("handle_product_spec_query: Groq review-based answer returned")
-        return _ok(groq_answer + LOOP_BACK, 'product_spec_query', ic)
+    # Rate-limited: this is a knowledge-style answer, counts against daily quota.
+    if get_knowledge_count(user_id) < KNOWLEDGE_DAILY_LIMIT:
+        groq_answer = _get_technical_answer_from_review(message, review, groq_client, groq_model)
+        if groq_answer:
+            increment_knowledge_count(user_id)
+            logger.info("handle_product_spec_query: Groq review-based answer returned")
+            return _ok(groq_answer + LOOP_BACK, 'product_spec_query', ic)
+    else:
+        logger.info("handle_product_spec_query: knowledge limit reached, skipping Groq")
 
     # ── Nothing found — warm redirect with product page link ─────────────────
     _LIVE_INVENTORY_WORDS = {

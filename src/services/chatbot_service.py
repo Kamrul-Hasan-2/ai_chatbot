@@ -37,7 +37,6 @@ from repositories.state_repository import (
     load_user_profile, save_user_profile,
     set_pending_question, get_pending_question,
 )
-from services.humanizer_service import humanize_if_short
 from services.intent_service import (
     detect_intent, merge_context,
     resolve_category, normalize_payload,
@@ -89,15 +88,9 @@ def _is_automated(message: str) -> bool:
 
 # ── Response builder ──────────────────────────────────────────────────────────
 
-# Intents whose responses are short and conversational. Safe to humanize —
-# no URLs, no prices, no numbered product lists.
-_HUMANIZABLE_INTENTS = {
-    'greeting', 'goodbye', 'thanks', 'exit',
-    'unknown', 'need_category', 'need_product', 'faq_not_found',
-    'technical_advice_out_of_scope', 'image_url', 'bdstall_url',
-    'unsupported_url',
-}
-
+# Once an intent is detected, responses are emitted from formatted templates
+# only — Groq is reserved for the knowledge (technical_advice) intent. The
+# humanizer is intentionally disabled.
 
 def _build_response(user_id: str, handler_result: Dict,
                     mode: ChatMode, conversation_status: str,
@@ -108,21 +101,6 @@ def _build_response(user_id: str, handler_result: Dict,
 
     response_text = handler_result.get('response', '')
     intent = handler_result.get('intent', 'unknown')
-
-    # Humanize only short conversational replies — keeps structured
-    # product/price/link responses byte-for-byte unchanged.
-    if (profile is not None
-            and intent in _HUMANIZABLE_INTENTS
-            and response_text
-            and _groq_client):
-        response_text = humanize_if_short(
-            response_text,
-            language=profile.language,
-            style=profile.style,
-            user_message=user_message,
-            groq_client=_groq_client,
-            groq_model=GROQ_MODEL,
-        )
 
     result: Dict[str, Any] = {
         'response':            response_text,
@@ -399,6 +377,24 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
             for _k in ('category', 'cat', 'prev_cat'):
                 prev_ctx[_k] = ''
 
+        # Intent change: when the current intent differs from the last bot turn,
+        # treat the previous conversation context as not applicable. Drop cached
+        # products so a new intent never gets answered using stale product state.
+        # Skipped for follow-ups (is_followup=true) — those depend on context.
+        _prev_intent = get_last_intent(user_id)
+        _cur_intent  = groq_result['intent']
+        _NON_RESET_INTENTS = {
+            'greeting', 'goodbye', 'thanks', 'exit',
+            'product_clarification',  # mid-flow selection
+        }
+        if (_prev_intent and _cur_intent
+                and _prev_intent != _cur_intent
+                and _cur_intent not in _NON_RESET_INTENTS
+                and not groq_result.get('is_followup')):
+            logger.info("intent change %s -> %s — clearing product context",
+                        _prev_intent, _cur_intent)
+            clear_product_state(user_id)
+
         merged = merge_context(groq_result, prev_ctx, groq_result['intent'], _clear)
 
         # Inherit category for non-product intents when still empty.
@@ -469,6 +465,18 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                           groq_result['entities'])
 
         # ── STEP 5: build and return (persistence done by caller) ────────────
+        # Handoff intents flip the mode to human so the next message bypasses AI.
+        _HANDOFF_INTENT_NAMES = {
+            'unknown_handoff', 'knowledge_limit_exceeded',
+            'seller_query', 'hate_speech', 'explicit_human_request',
+            'complaint_handoff',
+        }
+        _intent_out = handler_result.get('intent', '')
+        if _intent_out in _HANDOFF_INTENT_NAMES:
+            return _build_response(user_id, handler_result,
+                                   ChatMode.HUMAN, HUMAN_SUPPORT_REQUIRED_STATUS,
+                                   (datetime.now() - start_time).total_seconds(),
+                                   user_message=message, profile=profile)
         return _build_response(user_id, handler_result, ChatMode.AI, AI_ACTIVE_STATUS,
                                (datetime.now() - start_time).total_seconds(),
                                user_message=message, profile=profile)
@@ -530,30 +538,15 @@ def _dispatch(intent: str, ctx: Dict, user_id: str, message: str,
         if any(s in msg_l for s in _RETURN_SIGNALS):
             ic = normalize_payload(prev_ctx or load_context(user_id))
             policy_text = fetch_return_policy()
-            if policy_text and _groq_client:
-                try:
-                    groq_resp = _groq_client.chat.completions.create(
-                        model=GROQ_ANSWER_MODEL,
-                        messages=[
-                            {"role": "system", "content": (
-                                "You are a helpful Bangladeshi e-commerce support agent for BDStall.com. "
-                                "The user asked about returning a product. "
-                                "Summarize the following return policy in 2-3 short Bangla sentences. "
-                                "Be warm, concise, and practical. No bullet lists. No headers. "
-                                "Always finish complete sentences — never cut off mid-sentence. "
-                                "Do NOT include the apology line — that is added separately."
-                            )},
-                            {"role": "user", "content": policy_text[:3000]},
-                        ],
-                        temperature=0.3,
-                        max_tokens=300,
-                    )
-                    summary = groq_resp.choices[0].message.content.strip()
-                except Exception as e:
-                    logger.warning("return policy summarize failed: %s", e)
-                    summary = policy_text[:400].rsplit(' ', 1)[0] + '…'
-            elif policy_text:
-                summary = policy_text[:400].rsplit(' ', 1)[0] + '…'
+            # Formatted answer only — no Groq summarization. Trim to a clean
+            # sentence boundary to fit a Messenger reply.
+            if policy_text:
+                trimmed = policy_text.strip()
+                if len(trimmed) > 600:
+                    cut = trimmed[:600].rsplit('।', 1)[0] or trimmed[:600].rsplit(' ', 1)[0]
+                    summary = cut + '…'
+                else:
+                    summary = trimmed
             else:
                 summary = "প্রোডাক্ট রিটার্ন বা সমস্যার ক্ষেত্রে আমাদের রিটার্ন পলিসি অনুযায়ী পদক্ষেপ নিন।"
             reply = "স্যার, অসুবিধার জন্য আন্তরিকভাবে দুঃখিত। 😔\n\n" + summary
@@ -612,7 +605,20 @@ def _dispatch(intent: str, ctx: Dict, user_id: str, message: str,
             return handle_comparison(ctx, user_id, message)
         return handle_product_search(ctx, user_id, message)
 
-    return handle_fallback(ctx, user_id, message, _faq_db)
+    # Strict policy: no recognised intent → hand the conversation to a human.
+    logger.info("Unrecognised intent %r — handing off to human agent", intent)
+    try:
+        assign_agent(user_id, 'unknown_intent')
+    except Exception as e:
+        logger.warning("assign_agent on unknown intent failed: %s", e)
+    ic = normalize_payload(prev_ctx or load_context(user_id))
+    return {
+        'response': ("স্যার, আপনার মেসেজটি আমি ঠিকমতো বুঝতে পারিনি। "
+                     "আমাদের একজন প্রতিনিধি শীঘ্রই আপনার সাথে যোগাযোগ করবেন।"),
+        'intent': 'unknown_handoff',
+        'intent_content': ic,
+        'products': [],
+    }
 
 
 # ── Convenience wrappers (used by app_simple.py / controllers) ────────────────
