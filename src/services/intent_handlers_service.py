@@ -968,6 +968,25 @@ def handle_product_link(ctx: Dict, user_id: str, message: str, url: str) -> Dict
     ic['product_url'] = url
     ic['title'] = title
 
+    # If the same message also asks a follow-up question (warranty / spec / price /
+    # color / stock / discount), route it through the followup handler so the bot
+    # answers the actual question instead of just echoing the product card.
+    msg_lower = (message or '').lower()
+    _FOLLOWUP_TRIGGERS = (
+        'warranty', 'warenty', 'warrenty', 'guarantee', 'waranti',
+        'ওয়ারেন্টি', 'গ্যারান্টি',
+        'spec', 'specification', 'feature', 'ram', 'storage', 'processor',
+        'battery', 'display', 'camera',
+        'color', 'colour', 'rong', 'রং', 'রঙ',
+        'discount', 'ছাড়', 'offer',
+        'stock', 'স্টক', 'available',
+        'price', 'dam', 'দাম', 'মূল্য',
+    )
+    if any(t in msg_lower for t in _FOLLOWUP_TRIGGERS):
+        followup = handle_product_detail_followup(ic, user_id, message, url)
+        if followup:
+            return followup
+
     lines = [f"স্যার, এই প্রোডাক্টটি পেয়েছি:", f"", f"📦 {title}", f"💰 মূল্য: {price}"]
     if orig_price and discount:
         lines.append(f"🏷️ আগের দাম: {orig_price} ({discount}% ছাড়)")
@@ -1155,7 +1174,15 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
     buttons = [{'text': 'প্রোডাক্ট দেখুন', 'url': product_url, 'title': title}] if product_url else []
 
     if any(w in msg for w in ('warranty', 'warenty', 'warrenty', 'guarantee', 'ওয়ারেন্টি', 'গ্যারান্টি', 'waranti')):
-        reply = "🛡️ ওয়ারেন্টি\n━━━━━━━━━━━━━━━\nওয়ারেন্টি সংক্রান্ত বিস্তারিত তথ্য প্রোডাক্ট পেজে দেওয়া আছে।"
+        warranty_value = ''
+        listing_id = _extract_product_id(product_url)
+        if listing_id:
+            spec_data = fetch_product_spec(listing_id)
+            warranty_value = str(((spec_data or {}).get('features') or {}).get('Warranty') or '').strip()
+        if warranty_value:
+            reply = f"🛡️ ওয়ারেন্টি\n━━━━━━━━━━━━━━━\n{warranty_value}"
+        else:
+            reply = "🛡️ ওয়ারেন্টি\n━━━━━━━━━━━━━━━\nওয়ারেন্টি সংক্রান্ত বিস্তারিত তথ্য প্রোডাক্ট পেজে দেওয়া আছে।"
 
     elif any(w in msg for w in ('price', 'dam', 'দাম', 'মূল্য')) and not any(w in msg for w in _SPEC_SIGNALS):
         _raw_price = str(top.get('price') or '').strip()
