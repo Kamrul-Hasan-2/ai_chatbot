@@ -183,6 +183,22 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                 (datetime.now() - start_time).total_seconds(),
                 user_message=message, profile=profile)
 
+        # Deterministic greeting intercept — short hi/hello/salam messages should
+        # never depend on Groq. Without this a Groq outage hands every new user
+        # to a human via the strict-handoff policy.
+        _GREETING_PHRASES = {
+            'hi', 'hii', 'hiii', 'hello', 'helo', 'hey', 'hlw', 'hloo',
+            'salam', 'assalamualaikum', 'asalamualaikum', 'assalam', 'slm',
+            'হাই', 'হ্যালো', 'হেলো', 'সালাম', 'আসসালামু আলাইকুম', 'আসসালামুয়ালাইকুম',
+        }
+        _msg_norm = message.strip().lower().rstrip('.?!।,')
+        if _msg_norm in _GREETING_PHRASES:
+            greet_result = handle_greeting(normalize_payload(prev_ctx), user_id, message)
+            _observe_and_save(user_id, profile, message, 'greeting', {})
+            return _build_response(user_id, greet_result, ChatMode.AI, AI_ACTIVE_STATUS,
+                                   (datetime.now() - start_time).total_seconds(),
+                                   user_message=message, profile=profile)
+
         # URL in message
         url_match = re.search(r'https?://[^\s]+', message)
         if url_match:

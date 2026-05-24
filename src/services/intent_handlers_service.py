@@ -1075,7 +1075,7 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
     signals = [
         'stock', 'ache', 'available', 'color', 'colour', 'rong',
         'quality', 'maan', 'durable', 'price', 'dam', 'koto',
-        'warranty', 'warenty', 'guarantee', 'original', 'kena jabe', 'pabo',
+        'warranty', 'warenty', 'warrenty', 'warrantee', 'waranti', 'guarantee', 'original', 'kena jabe', 'pabo',
         'intake', 'original intake', 'non intake', 'নন ইনটেক', 'ইনটেক',
         'স্টক', 'রং', 'মান', 'দাম', 'ওয়ারেন্টি', 'spec', 'feature',
         'detail', 'details', 'বিস্তারিত', 'কেমন', 'kemon', 'review', 'rating',
@@ -1213,10 +1213,12 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
         price = _raw_price if (_raw_price and _raw_price not in ('N/A', '0', '0.00')) else ''
         orig   = str(top.get('original_price') or '').strip()
         if discount and price:
+            price_fmt = price if price.lstrip().startswith('৳') else f"৳ {price}"
+            orig_fmt = orig if orig.lstrip().startswith('৳') else f"৳ {orig}"
             reply = (
                 f"🏷️ মূল্য ও ছাড়\n━━━━━━━━━━━━━━━\n"
-                f"বর্তমান মূল্য: ৳ {price}\n"
-                f"আগের মূল্য: ৳ {orig} ({discount}% ছাড়)\n\n"
+                f"বর্তমান মূল্য: {price_fmt}\n"
+                f"আগের মূল্য: {orig_fmt} ({discount}% ছাড়)\n\n"
                 f"এই মূল্যটি ইতোমধ্যে ডিসকাউন্টেড — আরও বেশি সাশ্রয়ের সুযোগ থাকলে আমরা অবশ্যই জানাবো!"
             )
         else:
