@@ -1104,8 +1104,14 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
             'ache', 'ase', 'available', 'stock', 'আছে', 'কি', 'ki', 'pabo',
             'hobe', 'paoa', 'jabe', 'আপনাদের', 'apnader', 'কাছে', 'kache',
         }
+        # Any followup signal word (warranty/spec/price/color/etc.) is also not a
+        # product noun — without this, "warrenty ase" was treated as a new product
+        # search for "warrenty" instead of a warranty question about the cached item.
+        _signals_lower = {s.lower() for s in signals}
         msg_nouns = [w for w in re.findall(r'[a-zঀ-৿]+', msg)
-                     if len(w) > 3 and w not in _SIGNAL_ONLY_WORDS]
+                     if len(w) > 3
+                     and w not in _SIGNAL_ONLY_WORDS
+                     and w not in _signals_lower]
         if msg_nouns and not any(noun in cached_titles_lower for noun in msg_nouns):
             return None  # New product — let pipeline do a fresh search
 
