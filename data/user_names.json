@@ -7,5 +7,7 @@
   "msg_debug_user4": "Debug",
   "human_test_5555": "User t_5555",
   "human_test_9999": "User t_9999",
-  "verify_after_fix_001": "User ix_001"
+  "verify_after_fix_001": "User ix_001",
+  "real_human_user_42": "User ser_42",
+  "ack_test_001": "User st_001"
 }

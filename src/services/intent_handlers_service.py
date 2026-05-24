@@ -1017,14 +1017,28 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
     if any(s in msg for s in _REJECTION_SIGNALS):
         return None
 
-    # "let me see / okay show me" — user wants to view the currently shown products.
-    # Re-show cached list with buttons instead of triggering a new search.
+    # Plain acknowledgment ("ok", "thik ache", "haan") — user is just confirming
+    # they received the previous reply. Don't re-show products; reply with a short
+    # ack and keep the conversation open.
+    _ACK_SIGNALS = {
+        'ok', 'okay', 'k', 'kk', 'ohk', 'oki',
+        'theek ache', 'thik ache', 'thikache', 'ঠিক আছে',
+        'আচ্ছা', 'acha', 'achaa', 'accha', 'acca', 'aca', 'sure',
+        'haan', 'হ্যাঁ', 'ha', 'haa', 'haaa', 'hmm', 'hm',
+    }
+    msg_stripped = msg.strip().rstrip('.!?।,')
+    if msg_stripped in _ACK_SIGNALS:
+        ic_ack = normalize_payload(load_context(user_id))
+        return _ok("জি, স্যার! আর কোনো প্রোডাক্ট বা বিষয়ে সাহায্য করতে পারি? 😊",
+                   'ack', ic_ack)
+
+    # Explicit "let me see / show me" — user wants to view the currently shown
+    # products. Re-show cached list with buttons instead of triggering a new search.
     _VIEW_CURRENT_SIGNALS = {
-        'দেখি', 'dekhi', 'dekhbo', 'theek ache', 'thik ache', 'ok', 'okay',
-        'ঠিক আছে', 'আচ্ছা', 'acha', 'accha', 'sure', 'haan', 'হ্যাঁ', 'ha',
+        'দেখি', 'dekhi', 'dekhbo', 'দেখান', 'dekhao', 'dekhan',
     }
     prev_products_vc = get_product_context(user_id)
-    if msg.strip() in _VIEW_CURRENT_SIGNALS and prev_products_vc:
+    if msg_stripped in _VIEW_CURRENT_SIGNALS and prev_products_vc:
         ic_vc = normalize_payload(load_context(user_id))
         text_vc, buttons_vc = _format_listing(prev_products_vc[:3])
         return _ok("স্যার, এই প্রোডাক্টগুলো দেখুন:\n\n" + text_vc,
