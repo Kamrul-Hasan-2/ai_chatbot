@@ -777,6 +777,36 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
     # normal product search if the ai_template API doesn't recognise the
     # category. The "more" branch below must not be short-circuited, so we
     # only run this for the first turn of a generic search.
+    # Spec/model qualifiers in the raw message (CPU/GPU generation, RAM size,
+    # storage, gaming, etc.) — if any are present, the user wants a filtered
+    # search, not the generic category landing page.
+    _SPEC_QUALIFIERS = (
+        # CPU / chipset
+        'i3', 'i5', 'i7', 'i9', 'ryzen', 'celeron', 'pentium', 'core',
+        'snapdragon', 'mediatek', 'helio', 'dimensity', 'exynos', 'kirin',
+        'gen', 'generation', 'th gen', 'nd gen', 'rd gen', 'st gen',
+        # GPU
+        'rtx', 'gtx', 'radeon', 'nvidia', 'amd', 'graphics', 'gpu',
+        # Memory / storage
+        'gb', 'tb', 'ram', 'ssd', 'hdd', 'storage', 'memory',
+        # Display
+        'inch', '"', 'fhd', 'hd', '4k', '2k', 'oled', 'amoled', 'lcd', 'led',
+        'curved', 'touch',
+        # Use-case
+        'gaming', 'office', 'business', 'student', 'editing',
+        # Network
+        '4g', '5g', 'wifi', 'bluetooth',
+        # Battery / camera (mobiles)
+        'mah', 'mp', 'megapixel', 'camera',
+        # Bangla
+        'গেমিং', 'র‍্যাম', 'প্রসেসর', 'ব্যাটারি', 'ক্যামেরা',
+    )
+    _msg_l = (message or '').lower()
+    _cat_l = (ctx.get('category') or '').lower()
+    _has_spec_qualifier = any(
+        q in _msg_l and q not in _cat_l for q in _SPEC_QUALIFIERS
+    )
+
     _is_generic_category = (
         ctx.get('category')
         and not (ctx.get('brand') or '').strip()
@@ -784,6 +814,7 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
         and not price_min
         and not price_max
         and not _is_more_request(message)
+        and not _has_spec_qualifier
     )
     if _is_generic_category:
         cat_template = fetch_category_template(ctx['category'])
