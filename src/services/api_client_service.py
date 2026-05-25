@@ -290,15 +290,20 @@ def fetch_delivery_template() -> Optional[str]:
 
 
 _category_template_cache: Dict[str, tuple] = {}
-_CATEGORY_TEMPLATE_TTL = 3600  # 1 hour — category landing URLs rarely change
+_CATEGORY_TEMPLATE_TTL = 300  # 5 min — short enough that API-shape changes don't stick
 
 
 def fetch_category_template(category: str) -> Optional[Dict[str, str]]:
     """Fetch the category landing page from ai_template?intent=category.
 
     Returns {'text': str, 'link': str} on success, or None when the category
-    isn't recognised by BDStall. The API now returns `data` (text) and `link`
+    isn't recognised by BDStall. The API returns `data` (text) and `link`
     as separate fields.
+
+    A result is only cached when BOTH `text` and `link` are present — partial
+    results (e.g. text only, missing link) re-fetch on the next call so a
+    transient API-shape glitch can't silently degrade the button card for an
+    extended period.
     """
     if not category:
         return None
@@ -323,7 +328,10 @@ def fetch_category_template(category: str) -> Optional[Dict[str, str]]:
             _category_template_cache[key] = (now, None)
             return None
         result = {'text': text, 'link': link}
-        _category_template_cache[key] = (now, result)
+        # Only cache when both fields populated — avoids long-lived
+        # half-results from a transient upstream blip.
+        if link:
+            _category_template_cache[key] = (now, result)
         return result
     except Exception as e:
         logger.warning("fetch_category_template failed: %s", e)
