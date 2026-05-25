@@ -501,6 +501,7 @@ def fetch_categories() -> List[Dict]:
                 'category_id':      str(e.get('category_id', '')).strip(),
                 'category_name':    str(e.get('category_name', '')).strip(),
                 'bn_category_name': str(e.get('bn_category_name', '')).strip(),
+                'cat_url':          str(e.get('cat_url', '')).strip(),
             }
             for e in data
             if isinstance(e, dict) and e.get('category_id') and e.get('category_name')

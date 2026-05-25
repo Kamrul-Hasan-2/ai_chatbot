@@ -671,6 +671,51 @@ def _is_more_request(message: str) -> bool:
     return False
 
 
+def _build_category_button_label(category_name: str) -> str:
+    """Build a Messenger button label like 'Laptop List' within the 20-char limit.
+
+    Falls back to the Bangla 'তালিকা দেখুন' for category names too long to fit
+    with the ' List' suffix (e.g. 'Air Conditioner' = 15 + 5 = 20 chars OK,
+    'Wall Mounted Split Type AC' would not fit).
+    """
+    name = (category_name or '').strip()
+    suffix = ' List'
+    if name and len(name) + len(suffix) <= 20:
+        return f"{name}{suffix}"
+    return 'তালিকা দেখুন'
+
+
+def _find_cat_list_match(message: str, category: str, cat_list: List[Dict]) -> Optional[Dict]:
+    """Find a cat_list entry whose name appears in the user message.
+
+    Priority: longest category_name that is a substring of the lowercased
+    message wins, so "used laptop" matches "Used Laptop" (12 chars) instead
+    of "Laptop" (6 chars). Also tries the bn_category_name and the
+    Groq-resolved `category` field as fallbacks.
+
+    Returns the cat_list dict (with cat_url) or None.
+    """
+    if not cat_list:
+        return None
+    msg = (message or '').lower().strip()
+    cat = (category or '').lower().strip()
+    best: Optional[Dict] = None
+    best_len = 0
+    for entry in cat_list:
+        if not entry.get('cat_url'):
+            continue
+        name_en = (entry.get('category_name') or '').lower().strip()
+        name_bn = (entry.get('bn_category_name') or '').lower().strip()
+        for candidate in (name_en, name_bn):
+            if not candidate or len(candidate) <= best_len:
+                continue
+            if (candidate in msg) or (cat and candidate in cat) or (cat and cat == candidate):
+                best = entry
+                best_len = len(candidate)
+                break
+    return best
+
+
 _REJECTION_PHRASES = {
     'হবে না', 'হবেনা', 'na hobe', 'hobe na', 'na hoi', 'hoi na',
     'পাওয়া যাবে না', 'পাবো না', 'paoa jabe na', 'pabo na',
@@ -817,13 +862,35 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
         and not _has_spec_qualifier
     )
     if _is_generic_category:
+        # First try the direct cat_list lookup — if the user's category (or raw
+        # message) matches a known cat_list entry by substring, return its
+        # cat_url directly. This handles "used laptop", "smart tv" etc. without
+        # hitting the ai_template API or doing a product search. Falls through
+        # to fetch_category_template when nothing matches.
+        try:
+            from services.chatbot_service import _categories as _cat_list
+        except Exception:
+            _cat_list = []
+        _direct = _find_cat_list_match(message, ctx.get('category', ''), _cat_list)
+        if _direct and _direct.get('cat_url'):
+            cat_name_direct = _direct.get('category_name') or ctx.get('category') or ''
+            cat_url_direct = _direct['cat_url']
+            label_d = _build_category_button_label(cat_name_direct)
+            ic_d = intent_to_normalized(ctx)
+            reply_d = (f"স্যার, আপনি বিডিস্টলে {cat_name_direct} "
+                       f"ক্যাটাগরিতে বিভিন্ন পণ্য দেখতে পারেন।")
+            buttons_d = [{'text': label_d, 'url': cat_url_direct,
+                          'title': cat_name_direct}]
+            return _ok(reply_d + LOOP_BACK, 'product_search', ic_d,
+                       link_buttons=buttons_d)
+
         cat_template = fetch_category_template(ctx['category'])
         if cat_template:
             cat_text = cat_template.get('text', '')
             cat_url = cat_template.get('link', '')
-            # Title-case the category for the button label ("Laptop", "Air Conditioner")
-            cat_label = (ctx['category'] or '').strip().title() or 'দেখুন'
-            buttons = ([{'text': cat_label[:20], 'url': cat_url,
+            cat_name = (ctx['category'] or '').strip().title()
+            cat_label = _build_category_button_label(cat_name)
+            buttons = ([{'text': cat_label, 'url': cat_url,
                          'title': ctx['category']}]
                        if cat_url else [])
             ic = intent_to_normalized(ctx)
