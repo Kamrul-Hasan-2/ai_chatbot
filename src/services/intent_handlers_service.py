@@ -823,13 +823,11 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
             cat_url = cat_template.get('link', '')
             # Title-case the category for the button label ("Laptop", "Air Conditioner")
             cat_label = (ctx['category'] or '').strip().title() or 'দেখুন'
-            # Append the URL inline so FB Lite users (no button cards) still see it.
-            reply_text = f"{cat_text}\n{cat_url}".rstrip() if cat_url else cat_text
             buttons = ([{'text': cat_label[:20], 'url': cat_url,
                          'title': ctx['category']}]
                        if cat_url else [])
             ic = intent_to_normalized(ctx)
-            return _ok(reply_text + LOOP_BACK, 'product_search', ic,
+            return _ok(cat_text + LOOP_BACK, 'product_search', ic,
                        link_buttons=buttons)
 
     keywords  = _build_keywords(ctx)
