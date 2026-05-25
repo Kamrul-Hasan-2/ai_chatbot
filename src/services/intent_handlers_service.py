@@ -819,15 +819,17 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
     if _is_generic_category:
         cat_template = fetch_category_template(ctx['category'])
         if cat_template:
-            # The template text already includes the URL inline. Also build a
-            # button card so Messenger users get a tappable link.
-            cat_url_match = re.search(r'https?://[^\s]+', cat_template)
-            cat_url = cat_url_match.group(0).rstrip('.,!?') if cat_url_match else ''
-            buttons = ([{'text': 'ক্যাটাগরি দেখুন', 'url': cat_url,
+            cat_text = cat_template.get('text', '')
+            cat_url = cat_template.get('link', '')
+            # Title-case the category for the button label ("Laptop", "Air Conditioner")
+            cat_label = (ctx['category'] or '').strip().title() or 'দেখুন'
+            # Append the URL inline so FB Lite users (no button cards) still see it.
+            reply_text = f"{cat_text}\n{cat_url}".rstrip() if cat_url else cat_text
+            buttons = ([{'text': cat_label[:20], 'url': cat_url,
                          'title': ctx['category']}]
                        if cat_url else [])
             ic = intent_to_normalized(ctx)
-            return _ok(cat_template + LOOP_BACK, 'product_search', ic,
+            return _ok(reply_text + LOOP_BACK, 'product_search', ic,
                        link_buttons=buttons)
 
     keywords  = _build_keywords(ctx)

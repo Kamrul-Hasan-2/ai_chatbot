@@ -293,11 +293,12 @@ _category_template_cache: Dict[str, tuple] = {}
 _CATEGORY_TEMPLATE_TTL = 3600  # 1 hour — category landing URLs rarely change
 
 
-def fetch_category_template(category: str) -> Optional[str]:
-    """Fetch the category-landing-page text + URL from ai_template?intent=category.
+def fetch_category_template(category: str) -> Optional[Dict[str, str]]:
+    """Fetch the category landing page from ai_template?intent=category.
 
-    Returns the data string ("আপনি laptop ক্যাটাগরিতে ... <url>") on success,
-    or None when the category isn't recognised by BDStall.
+    Returns {'text': str, 'link': str} on success, or None when the category
+    isn't recognised by BDStall. The API now returns `data` (text) and `link`
+    as separate fields.
     """
     if not category:
         return None
@@ -313,12 +314,17 @@ def fetch_category_template(category: str) -> Optional[str]:
         if resp.status_code != 200:
             return None
         data = resp.json() if resp.text else {}
-        if isinstance(data, dict) and data.get('success') is False:
+        if not isinstance(data, dict) or data.get('success') is False:
             _category_template_cache[key] = (now, None)
             return None
-        text = _parse_template(data)
-        _category_template_cache[key] = (now, text)
-        return text
+        text = str(data.get('data') or '').strip()
+        link = str(data.get('link') or '').strip()
+        if not text:
+            _category_template_cache[key] = (now, None)
+            return None
+        result = {'text': text, 'link': link}
+        _category_template_cache[key] = (now, result)
+        return result
     except Exception as e:
         logger.warning("fetch_category_template failed: %s", e)
         return None
