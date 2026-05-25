@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 from models.chatbot_config import CATEGORY_PROMPT, LOOP_BACK, KNOWLEDGE_DAILY_LIMIT
-from services.api_client_service import search_products, fetch_delivery_template, fetch_condition_template, fetch_product_spec, assign_agent
+from services.api_client_service import search_products, fetch_delivery_template, fetch_condition_template, fetch_category_template, fetch_product_spec, assign_agent
 from repositories.state_repository import (
     load_context, get_last_intent,
     set_product_context, get_product_context,
@@ -771,6 +771,33 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
     price_max = ctx.get('price_max')
     price_min = ctx.get('price_min')
 
+    # Generic-category intercept: when the user asks for a bare category
+    # (no brand, no specific title, no budget), return the BDStall category
+    # landing-page link instead of dumping 3 products. Falls back to the
+    # normal product search if the ai_template API doesn't recognise the
+    # category. The "more" branch below must not be short-circuited, so we
+    # only run this for the first turn of a generic search.
+    _is_generic_category = (
+        ctx.get('category')
+        and not (ctx.get('brand') or '').strip()
+        and not (ctx.get('title') or '').strip()
+        and not price_min
+        and not price_max
+        and not _is_more_request(message)
+    )
+    if _is_generic_category:
+        cat_template = fetch_category_template(ctx['category'])
+        if cat_template:
+            # The template text already includes the URL inline. Also build a
+            # button card so Messenger users get a tappable link.
+            cat_url_match = re.search(r'https?://[^\s]+', cat_template)
+            cat_url = cat_url_match.group(0).rstrip('.,!?') if cat_url_match else ''
+            buttons = ([{'text': 'ক্যাটাগরি দেখুন', 'url': cat_url,
+                         'title': ctx['category']}]
+                       if cat_url else [])
+            ic = intent_to_normalized(ctx)
+            return _ok(cat_template + LOOP_BACK, 'product_search', ic,
+                       link_buttons=buttons)
 
     keywords  = _build_keywords(ctx)
     logger.info("handle_product_search keywords=%r price_min=%s price_max=%s", keywords, price_min, price_max)

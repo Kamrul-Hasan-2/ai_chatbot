@@ -289,6 +289,41 @@ def fetch_delivery_template() -> Optional[str]:
         return None
 
 
+_category_template_cache: Dict[str, tuple] = {}
+_CATEGORY_TEMPLATE_TTL = 3600  # 1 hour — category landing URLs rarely change
+
+
+def fetch_category_template(category: str) -> Optional[str]:
+    """Fetch the category-landing-page text + URL from ai_template?intent=category.
+
+    Returns the data string ("আপনি laptop ক্যাটাগরিতে ... <url>") on success,
+    or None when the category isn't recognised by BDStall.
+    """
+    if not category:
+        return None
+    key = category.lower().strip()
+    now = time.time()
+    cached = _category_template_cache.get(key)
+    if cached and (now - cached[0]) < _CATEGORY_TEMPLATE_TTL:
+        return cached[1]
+    try:
+        resp = requests.get(DELIVERY_URL,
+                            params={'intent': 'category', 'category': category, 'key': API_KEY},
+                            timeout=10)
+        if resp.status_code != 200:
+            return None
+        data = resp.json() if resp.text else {}
+        if isinstance(data, dict) and data.get('success') is False:
+            _category_template_cache[key] = (now, None)
+            return None
+        text = _parse_template(data)
+        _category_template_cache[key] = (now, text)
+        return text
+    except Exception as e:
+        logger.warning("fetch_category_template failed: %s", e)
+        return None
+
+
 def _parse_template(data: Any) -> Optional[str]:
     if isinstance(data, str):
         return data.strip() or None

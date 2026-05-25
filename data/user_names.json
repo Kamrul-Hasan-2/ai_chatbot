@@ -9,5 +9,13 @@
   "human_test_9999": "User t_9999",
   "verify_after_fix_001": "User ix_001",
   "real_human_user_42": "User ser_42",
-  "ack_test_001": "User st_001"
+  "ack_test_001": "User st_001",
+  "cat_generic_1": "User eric_1",
+  "cat_generic_2": "User eric_2",
+  "cat_generic_3": "User eric_3",
+  "cat_generic_4": "User eric_4",
+  "cat_budget_1": "User dget_1",
+  "cat_brand_1": "User rand_1",
+  "cat_model_1": "User odel_1",
+  "multi_user": "User i_user"
 }
