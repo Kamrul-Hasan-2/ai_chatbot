@@ -130,7 +130,7 @@ def handle_greeting(ctx: Dict, user_id: str, message: str) -> Dict:
     set_session_category(user_id, '')
     # Reset all context so stale category/price don't bleed into next conversation
     ic = {'title': '', 'cat': '', 'brand': '', 'price_max': 0, 'price_min': 0, 'compare': '', 'buy': ''}
-    return _ok("ওয়ালাইকুম আসসালাম! 😊 BDStall-এ স্বাগতম। আপনি কোন প্রোডাক্টটি খুঁজছেন?", 'greeting', ic)
+    return _ok("আসসালামু আলাইকুম স্যার! 😊 আমি BDStall-এর ভার্চুয়াল অ্যাসিস্ট্যান্ট। আপনাকে কীভাবে সাহায্য করতে পারি?", 'greeting', ic)
 
 
 def handle_goodbye(ctx: Dict, user_id: str, message: str) -> Dict:
