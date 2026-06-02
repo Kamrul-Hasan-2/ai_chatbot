@@ -166,26 +166,20 @@ def handle_buy(ctx: Dict, user_id: str, message: str) -> Dict:
     if not prev_products and ctx.get('category'):
         return handle_product_search(ctx, user_id, message)
 
-    buttons = []
-    if prev_products:
-        p     = prev_products[0]
-        url   = p.get('url', '')
-        title = (p.get('title') or 'প্রোডাক্ট দেখুন')[:40]
-        if url:
-            buttons.append({'text': 'প্রোডাক্ট দেখুন', 'url': url, 'title': title})
+    # Multiple cached products — ask user to pick one before starting the order
+    if len(prev_products) > 1:
+        product_list = '\n'.join(
+            f"{i+1}. {p.get('title', '')[:50]}"
+            for i, p in enumerate(prev_products[:3])
+        )
+        return _ok(
+            f"স্যার, কোন প্রোডাক্টটি অর্ডার করতে চান?\n\n{product_list}" + LOOP_BACK,
+            'product_clarification', ic
+        )
 
-    if not buttons:
-        buttons = [{'text': 'বিডিস্টল ভিজিট করুন', 'url': 'https://www.bdstall.com/'}]
-
-    reply = (
-        "স্যার, এই প্রোডাক্টটি কিনতে:\n\n"
-        "১. নিচের 'প্রোডাক্ট দেখুন' বাটনে ক্লিক করুন\n"
-        "২. প্রোডাক্ট পেজে গিয়ে বিক্রেতাকে কল বা হোয়াটসঅ্যাপ করুন\n"
-        "৩. দাম, কন্ডিশন ও ডেলিভারি নিশ্চিত করুন\n\n"
-        "📞 বিক্রেতা সরাসরি আপনার সাথে যোগাযোগ করে ডেলিভারি দেবেন।"
-    )
-
-    return _ok(reply + LOOP_BACK, 'buy', ic, link_buttons=buttons)
+    # Single product — kick off the multi-step order flow
+    from services.order_handler import start_order_flow
+    return start_order_flow(user_id, prev_products[0])
 
 
 def handle_comparison(ctx: Dict, user_id: str, message: str) -> Dict:
@@ -614,6 +608,13 @@ def handle_clarification_selection(user_id: str, message: str,
         reply = (api_reply or
                  f"স্যার, {title} এর কন্ডিশন জানতে প্রোডাক্ট পেজটি দেখুন।")
         return _ok(reply + LOOP_BACK, 'product_condition', ic, link_buttons=buttons)
+
+    # Buy route: pending question was a purchase intent — start the order flow.
+    _BUY_Q = {'kinbo', 'kinte', 'buy', 'order', 'purchase',
+              'কিনব', 'কিনতে', 'অর্ডার'}
+    if any(w in q for w in _BUY_Q):
+        from services.order_handler import start_order_flow
+        return start_order_flow(user_id, selected)
 
     # Default: spec query — handles ram/display/battery/full-spec/any other detail
     ctx = {'category': selected.get('category', ''), 'brand': '', 'title': title}

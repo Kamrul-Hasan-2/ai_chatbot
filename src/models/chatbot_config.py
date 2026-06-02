@@ -67,6 +67,9 @@ SAVE_MESSAGE_KEY  = os.getenv('SAVE_MESSAGE_API_KEY',    os.getenv('BDSTALL_API_
 CAT_LIST_URL      = os.getenv('CATLIST_API_URL',         'https://www.bdstall.com/api/chatbot/cat_list/')
 SPEC_URL          = os.getenv('SPEC_API_URL',            'https://www.bdstall.com/api/item/list_details/')
 KNOWLEDGE_URL     = os.getenv('KNOWLEDGE_API_URL',       'https://www.bdstall.com/api/chatbot/knowledge/')
+CITY_LIST_URL     = os.getenv('CITY_LIST_API_URL',       'https://www.bdstall.com/api/chatbot/city_list/')
+AREA_LIST_URL     = os.getenv('AREA_LIST_API_URL',       'https://www.bdstall.com/api/chatbot/area_list/')
+PLACE_ORDER_URL   = os.getenv('PLACE_ORDER_API_URL',     'https://www.bdstall.com/api/chatbot/chatbot_place_order/')
 
 try:
     HISTORY_LIMIT = max(1, min(int(os.getenv('CHATBOT_HISTORY_LIMIT', '5')), 20))

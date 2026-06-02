@@ -30,6 +30,7 @@ from models.chatbot_config import (
     HISTORY_URL, HISTORY_LIMIT,
     SAVE_MESSAGE_URL, SAVE_MESSAGE_KEY,
     CAT_LIST_URL, SPEC_URL, KNOWLEDGE_URL,
+    CITY_LIST_URL, AREA_LIST_URL, PLACE_ORDER_URL,
     _log_api_call,
 )
 
@@ -555,6 +556,116 @@ def fetch_faq_db() -> List[Dict]:
 
 _knowledge_cache: Dict[str, tuple] = {}
 _KNOWLEDGE_TTL = 3600  # 1 hour — policy text rarely changes
+
+
+# ── City / Area / Place Order (order flow) ────────────────────────────────────
+
+_city_list_cache: Optional[tuple] = None
+_area_list_cache: Optional[tuple] = None
+_CITY_AREA_TTL = 86400  # 24h — city/area lists rarely change
+
+
+def fetch_city_list() -> List[Dict]:
+    """Fetch city list. Returns list of {'city_id', 'city_name'}."""
+    global _city_list_cache
+    now = time.time()
+    if _city_list_cache and (now - _city_list_cache[0]) < _CITY_AREA_TTL:
+        return _city_list_cache[1]
+    try:
+        started = datetime.now()
+        resp = requests.get(CITY_LIST_URL, params={'key': API_KEY}, timeout=10)
+        duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+        _log_api_call('city_list', 'GET', CITY_LIST_URL, {'key': '***'},
+                      resp.status_code, duration_ms,
+                      'PASS' if resp.status_code == 200 else 'FAIL', resp.text[:200])
+        if resp.status_code != 200:
+            return _city_list_cache[1] if _city_list_cache else []
+        data = resp.json() if resp.text else {}
+        rows = data.get('data') if isinstance(data, dict) else None
+        if not isinstance(rows, list):
+            return _city_list_cache[1] if _city_list_cache else []
+        items = [
+            {'city_id': str(r.get('city_id', '')).strip(),
+             'city_name': str(r.get('city_name', '')).strip()}
+            for r in rows if isinstance(r, dict) and r.get('city_id') and r.get('city_name')
+        ]
+        _city_list_cache = (now, items)
+        return items
+    except Exception as e:
+        logger.warning("fetch_city_list failed: %s", e)
+        return _city_list_cache[1] if _city_list_cache else []
+
+
+def fetch_area_list() -> List[Dict]:
+    """Fetch area list. Returns list of {'area_id', 'area_name', 'city_id'}."""
+    global _area_list_cache
+    now = time.time()
+    if _area_list_cache and (now - _area_list_cache[0]) < _CITY_AREA_TTL:
+        return _area_list_cache[1]
+    try:
+        started = datetime.now()
+        resp = requests.get(AREA_LIST_URL, params={'key': API_KEY}, timeout=15)
+        duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+        _log_api_call('area_list', 'GET', AREA_LIST_URL, {'key': '***'},
+                      resp.status_code, duration_ms,
+                      'PASS' if resp.status_code == 200 else 'FAIL', resp.text[:200])
+        if resp.status_code != 200:
+            return _area_list_cache[1] if _area_list_cache else []
+        data = resp.json() if resp.text else {}
+        rows = data.get('data') if isinstance(data, dict) else None
+        if not isinstance(rows, list):
+            return _area_list_cache[1] if _area_list_cache else []
+        items = [
+            {'area_id':   str(r.get('area_id', '')).strip(),
+             'area_name': str(r.get('area_name', '')).strip(),
+             'city_id':   str(r.get('city_id', '')).strip()}
+            for r in rows if isinstance(r, dict) and r.get('area_id') and r.get('area_name')
+        ]
+        _area_list_cache = (now, items)
+        return items
+    except Exception as e:
+        logger.warning("fetch_area_list failed: %s", e)
+        return _area_list_cache[1] if _area_list_cache else []
+
+
+def place_order(name: str, mobile: str, address: str,
+                listing_id, qty: int, city_id, area_id) -> Dict[str, Any]:
+    """POST to chatbot_place_order. Returns {'success': bool, 'message': str, 'raw': dict|str}."""
+    payload = {
+        'key':        API_KEY,
+        'name':       str(name or '').strip(),
+        'mobile':     str(mobile or '').strip(),
+        'address':    str(address or '').strip(),
+        'listing_id': int(listing_id) if str(listing_id).isdigit() else listing_id,
+        'qty':        int(qty) if qty else 1,
+        'city_id':    int(city_id) if str(city_id).isdigit() else city_id,
+        'area_id':    int(area_id) if str(area_id).isdigit() else area_id,
+    }
+    try:
+        started = datetime.now()
+        resp = requests.post(PLACE_ORDER_URL, json=payload, timeout=15)
+        duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+        ok = 200 <= resp.status_code < 300
+        body: Any = resp.text
+        try:
+            body = resp.json()
+            if isinstance(body, dict) and 'success' in body:
+                ok = bool(body.get('success'))
+        except Exception:
+            pass
+        # Mask API key in logs
+        log_payload = dict(payload)
+        log_payload['key'] = '***'
+        _log_api_call('place_order', 'POST', PLACE_ORDER_URL, log_payload,
+                      resp.status_code, duration_ms,
+                      'PASS' if ok else 'FAIL', resp.text[:400])
+        message = ''
+        if isinstance(body, dict):
+            message = str(body.get('message') or '').strip()
+        return {'success': ok, 'message': message, 'raw': body}
+    except Exception as e:
+        logger.error("place_order failed: %s", e)
+        return {'success': False, 'message': str(e), 'raw': None}
 
 
 def fetch_return_policy() -> Optional[str]:

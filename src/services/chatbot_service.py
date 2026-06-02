@@ -183,6 +183,21 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                 (datetime.now() - start_time).total_seconds(),
                 user_message=message, profile=profile)
 
+        # ── Order flow pump ──────────────────────────────────────────────────
+        # If the user is mid-order (collecting name/mobile/address/city/area/qty,
+        # or at the final confirm step), every incoming message must go through
+        # the order handler so we don't kick them back into Groq routing.
+        from services.order_handler import is_in_order_flow, continue_order_flow
+        if is_in_order_flow(user_id):
+            order_result = continue_order_flow(user_id, message)
+            if order_result is not None:
+                _observe_and_save(user_id, profile, message,
+                                  order_result.get('intent', 'order_flow'), {})
+                return _build_response(user_id, order_result,
+                                       ChatMode.AI, AI_ACTIVE_STATUS,
+                                       (datetime.now() - start_time).total_seconds(),
+                                       user_message=message, profile=profile)
+
         # Deterministic greeting intercept — short hi/hello/salam messages should
         # never depend on Groq. Without this a Groq outage hands every new user
         # to a human via the strict-handoff policy.
