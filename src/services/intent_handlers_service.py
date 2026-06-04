@@ -173,7 +173,8 @@ def handle_buy(ctx: Dict, user_id: str, message: str) -> Dict:
             for i, p in enumerate(prev_products[:3])
         )
         return _ok(
-            f"স্যার, কোন প্রোডাক্টটি অর্ডার করতে চান?\n\n{product_list}" + LOOP_BACK,
+            (f"স্যার, কোন প্রোডাক্টটি অর্ডার করতে চান?\n\n{product_list}\n\n"
+             "স্যার, আপনি কোন প্রোডাক্টটি কিনতে চান, ১, ২, ৩ যেকোনো নম্বর বলুন।"),
             'product_clarification', ic
         )
 
@@ -276,22 +277,17 @@ def _extract_order_no(message: str) -> str:
 
 
 def _format_order_status(data: Dict) -> str:
-    """Render the order-status API payload as a Bangla card."""
-    order_no    = str(data.get('OrderNo') or '').strip()
-    status_raw  = str(data.get('status') or '').strip()
-    name        = str(data.get('customer_name') or '').strip()
-    mobile      = str(data.get('Mobile') or '').strip()
-    address     = str(data.get('address') or '').strip().replace('\r\n', ', ')
-    city        = str(data.get('city') or '').strip()
-    area        = str(data.get('area') or '').strip()
-    total       = str(data.get('total_amount') or '').strip()
-    ship        = str(data.get('ShippingCharge') or '').strip()
-    order_date  = str(data.get('order_date') or '').strip()[:10]  # YYYY-MM-DD only
-    items       = data.get('items') or []
+    """Render the order-status API payload as a short Bangla card.
 
-    # Translate common statuses to Bangla for nicer display
+    Customer only sees order number + status. Other fields (items, totals,
+    address) intentionally omitted to keep the reply concise.
+    """
+    order_no   = str(data.get('OrderNo') or '').strip()
+    status_raw = str(data.get('status') or '').strip()
+
     _STATUS_BN = {
         'pending':    'অপেক্ষমাণ',
+        'submitted':  'গৃহীত',
         'processing': 'প্রক্রিয়াধীন',
         'confirmed':  'নিশ্চিত',
         'shipped':    'পাঠানো হয়েছে',
@@ -307,39 +303,6 @@ def _format_order_status(data: Dict) -> str:
         lines.append(f"অর্ডার নম্বর: {order_no}")
     if status_bn:
         lines.append(f"স্ট্যাটাস: {status_bn}")
-    if order_date:
-        lines.append(f"তারিখ: {order_date}")
-
-    if items:
-        lines.append("")
-        lines.append("📦 প্রোডাক্ট:")
-        for it in items[:5]:
-            t   = str(it.get('ListingTitle') or '').strip()
-            qty = str(it.get('Qty') or '').strip()
-            pr  = str(it.get('ListingPrice') or '').strip()
-            row = f"  • {t}" if t else "  • প্রোডাক্ট"
-            if qty:
-                row += f" × {qty}"
-            if pr:
-                row += f" — ৳ {pr}"
-            lines.append(row)
-
-    if total:
-        lines.append("")
-        lines.append(f"💰 মোট: ৳ {total}")
-        if ship:
-            lines.append(f"🚚 ডেলিভারি চার্জ: ৳ {ship}")
-
-    if name or mobile:
-        lines.append("")
-        if name:
-            lines.append(f"👤 নাম: {name}")
-        if mobile:
-            lines.append(f"📞 মোবাইল: {mobile}")
-    loc_bits = ', '.join(b for b in [address, area, city] if b)
-    if loc_bits:
-        lines.append(f"🏠 ঠিকানা: {loc_bits}")
-
     return '\n'.join(lines)
 
 
