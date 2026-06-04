@@ -48,6 +48,7 @@ from services.intent_handlers_service import (
     handle_technical_advice, handle_product_search, handle_price_query,
     handle_url_message, handle_product_detail_followup, handle_fallback,
     handle_clarification_selection, handle_product_spec_query,
+    handle_order_status,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -194,6 +195,30 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                 _observe_and_save(user_id, profile, message,
                                   order_result.get('intent', 'order_flow'), {})
                 return _build_response(user_id, order_result,
+                                       ChatMode.AI, AI_ACTIVE_STATUS,
+                                       (datetime.now() - start_time).total_seconds(),
+                                       user_message=message, profile=profile)
+
+        # ── Order status lookup intercept ────────────────────────────────────
+        # Catch messages like "order status 17805593641", "অর্ডার চেক 17805…",
+        # "track order 17805…" before Groq sends them to the generic delivery
+        # FAQ. Requires a status-related keyword AND an order-no-shaped number
+        # so a plain price or phone number doesn't accidentally trigger it.
+        _ORDER_STATUS_SIGNALS = (
+            'order status', 'order track', 'track order', 'order check',
+            'order kothay', 'order koi', 'order id', 'order no',
+            'অর্ডার স্ট্যাটাস', 'অর্ডার চেক', 'অর্ডার ট্র্যাক', 'অর্ডার কোথায়',
+            'অর্ডার নম্বর', 'অর্ডার আইডি', 'অর্ডার দেখান', 'অর্ডার আপডেট',
+            'check my order', 'where is my order', 'status of my order',
+        )
+        _msg_l_os = message.lower()
+        if any(s in _msg_l_os for s in _ORDER_STATUS_SIGNALS):
+            os_ctx = normalize_payload(prev_ctx)
+            os_result = handle_order_status(os_ctx, user_id, message)
+            if os_result is not None:
+                _observe_and_save(user_id, profile, message,
+                                  os_result.get('intent', 'order_status'), {})
+                return _build_response(user_id, os_result,
                                        ChatMode.AI, AI_ACTIVE_STATUS,
                                        (datetime.now() - start_time).total_seconds(),
                                        user_message=message, profile=profile)

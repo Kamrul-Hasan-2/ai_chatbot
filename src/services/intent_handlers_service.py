@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 from models.chatbot_config import CATEGORY_PROMPT, LOOP_BACK, KNOWLEDGE_DAILY_LIMIT
-from services.api_client_service import search_products, fetch_delivery_template, fetch_condition_template, fetch_category_template, fetch_product_spec, fetch_buy_template, assign_agent
+from services.api_client_service import search_products, fetch_delivery_template, fetch_condition_template, fetch_category_template, fetch_product_spec, fetch_buy_template, fetch_order_status, assign_agent
 from repositories.state_repository import (
     load_context, get_last_intent,
     set_product_context, get_product_context,
@@ -241,6 +241,128 @@ def handle_comparison(ctx: Dict, user_id: str, message: str) -> Dict:
         "রিভিউ দেখে পছন্দের প্রোডাক্টটি নিতে পারেন: 👉 www.bdstall.com"
         + LOOP_BACK,
         'comparison', ic, link_buttons=_comparison_buttons(ctx)
+    )
+
+
+# ── Order status lookup ──────────────────────────────────────────────────────
+
+# Bangla digits → English so we can match an order_no written like "১৭৮০..."
+_BN_ORDER_DIGITS = str.maketrans('০১২৩৪৫৬৭৮৯', '0123456789')
+
+
+def _extract_order_no(message: str) -> str:
+    """Pull a numeric order_no out of the user's message.
+
+    BDStall order_no values seen so far are 9–14 digits. We require >= 8 digits
+    so a "10k" budget or a phone number doesn't accidentally trigger the lookup.
+    Mobile-shaped tokens (start with 01, 11 digits) are excluded.
+    """
+    if not message:
+        return ''
+    text = message.translate(_BN_ORDER_DIGITS)
+    # Take the longest run of digits in the message
+    runs = re.findall(r'\d+', text)
+    if not runs:
+        return ''
+    runs.sort(key=len, reverse=True)
+    for token in runs:
+        if len(token) < 8:
+            continue
+        # Exclude Bangladeshi mobile pattern (01XXXXXXXXX) — that's not an order
+        if len(token) == 11 and token.startswith('01'):
+            continue
+        return token
+    return ''
+
+
+def _format_order_status(data: Dict) -> str:
+    """Render the order-status API payload as a Bangla card."""
+    order_no    = str(data.get('OrderNo') or '').strip()
+    status_raw  = str(data.get('status') or '').strip()
+    name        = str(data.get('customer_name') or '').strip()
+    mobile      = str(data.get('Mobile') or '').strip()
+    address     = str(data.get('address') or '').strip().replace('\r\n', ', ')
+    city        = str(data.get('city') or '').strip()
+    area        = str(data.get('area') or '').strip()
+    total       = str(data.get('total_amount') or '').strip()
+    ship        = str(data.get('ShippingCharge') or '').strip()
+    order_date  = str(data.get('order_date') or '').strip()[:10]  # YYYY-MM-DD only
+    items       = data.get('items') or []
+
+    # Translate common statuses to Bangla for nicer display
+    _STATUS_BN = {
+        'pending':    'অপেক্ষমাণ',
+        'processing': 'প্রক্রিয়াধীন',
+        'confirmed':  'নিশ্চিত',
+        'shipped':    'পাঠানো হয়েছে',
+        'delivered':  'ডেলিভারি সম্পন্ন',
+        'cancelled':  'বাতিল',
+        'canceled':   'বাতিল',
+        'returned':   'ফেরত',
+    }
+    status_bn = _STATUS_BN.get(status_raw.lower(), status_raw)
+
+    lines = ["🧾 আপনার অর্ডারের তথ্য:", ""]
+    if order_no:
+        lines.append(f"অর্ডার নম্বর: {order_no}")
+    if status_bn:
+        lines.append(f"স্ট্যাটাস: {status_bn}")
+    if order_date:
+        lines.append(f"তারিখ: {order_date}")
+
+    if items:
+        lines.append("")
+        lines.append("📦 প্রোডাক্ট:")
+        for it in items[:5]:
+            t   = str(it.get('ListingTitle') or '').strip()
+            qty = str(it.get('Qty') or '').strip()
+            pr  = str(it.get('ListingPrice') or '').strip()
+            row = f"  • {t}" if t else "  • প্রোডাক্ট"
+            if qty:
+                row += f" × {qty}"
+            if pr:
+                row += f" — ৳ {pr}"
+            lines.append(row)
+
+    if total:
+        lines.append("")
+        lines.append(f"💰 মোট: ৳ {total}")
+        if ship:
+            lines.append(f"🚚 ডেলিভারি চার্জ: ৳ {ship}")
+
+    if name or mobile:
+        lines.append("")
+        if name:
+            lines.append(f"👤 নাম: {name}")
+        if mobile:
+            lines.append(f"📞 মোবাইল: {mobile}")
+    loc_bits = ', '.join(b for b in [address, area, city] if b)
+    if loc_bits:
+        lines.append(f"🏠 ঠিকানা: {loc_bits}")
+
+    return '\n'.join(lines)
+
+
+def handle_order_status(ctx: Dict, user_id: str, message: str) -> Optional[Dict]:
+    """Look up and reply with an order's current status.
+
+    Returns None if no order_no can be extracted from the message — that way
+    the caller can fall through to other intent handling (delivery FAQ etc.).
+    """
+    ic = intent_to_normalized(ctx)
+    order_no = _extract_order_no(message)
+    if not order_no:
+        return None
+    result = fetch_order_status(order_no)
+    if result.get('success') and result.get('data'):
+        text = _format_order_status(result['data'])
+        return _ok(text + LOOP_BACK, 'order_status', ic)
+    api_msg = (result.get('message') or '').strip()
+    detail = f" ({api_msg})" if api_msg else ''
+    return _ok(
+        f"দুঃখিত স্যার, অর্ডার নম্বর {order_no} এর তথ্য খুঁজে পাইনি{detail}। "
+        "অনুগ্রহ করে অর্ডার নম্বরটি একবার যাচাই করে পাঠান।" + LOOP_BACK,
+        'order_status_not_found', ic
     )
 
 

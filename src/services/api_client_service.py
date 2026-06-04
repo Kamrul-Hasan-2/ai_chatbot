@@ -30,7 +30,7 @@ from models.chatbot_config import (
     HISTORY_URL, HISTORY_LIMIT,
     SAVE_MESSAGE_URL, SAVE_MESSAGE_KEY,
     CAT_LIST_URL, SPEC_URL, KNOWLEDGE_URL,
-    CITY_LIST_URL, AREA_LIST_URL, PLACE_ORDER_URL,
+    CITY_LIST_URL, AREA_LIST_URL, PLACE_ORDER_URL, ORDER_STATUS_URL,
     _log_api_call,
 )
 
@@ -724,6 +724,45 @@ def place_order(name: str, mobile: str, address: str,
         logger.error("place_order failed: %s", e)
         return {'success': False, 'message': str(e),
                 'order_id': '', 'order_no': '', 'raw': None}
+
+
+def fetch_order_status(order_no: str) -> Dict[str, Any]:
+    """Look up an order by its order_no.
+
+    Returns:
+        On success: {'success': True, 'data': {...full order dict...}}
+        On failure: {'success': False, 'message': str, 'data': {}}
+    """
+    if not order_no:
+        return {'success': False, 'message': 'order_no required', 'data': {}}
+    try:
+        started = datetime.now()
+        resp = requests.get(ORDER_STATUS_URL,
+                            params={'order_no': str(order_no).strip(),
+                                    'key': API_KEY},
+                            timeout=10)
+        duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+        ok = 200 <= resp.status_code < 300
+        body: Any = resp.text
+        try:
+            body = resp.json()
+        except Exception:
+            pass
+        if isinstance(body, dict) and 'success' in body:
+            ok = bool(body.get('success'))
+        _log_api_call('order_status', 'GET', ORDER_STATUS_URL,
+                      {'order_no': order_no}, resp.status_code, duration_ms,
+                      'PASS' if ok else 'FAIL', resp.text[:400])
+        if not isinstance(body, dict):
+            return {'success': False, 'message': 'Unexpected response', 'data': {}}
+        return {
+            'success': bool(body.get('success')),
+            'message': str(body.get('message') or '').strip(),
+            'data':    body.get('data') or {},
+        }
+    except Exception as e:
+        logger.error("fetch_order_status failed: %s", e)
+        return {'success': False, 'message': str(e), 'data': {}}
 
 
 def fetch_return_policy() -> Optional[str]:
