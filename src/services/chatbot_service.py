@@ -255,6 +255,10 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
             _buy_ctx['category'] = (_cached_buy[0].get('category') or
                                     prev_ctx.get('cat') or prev_ctx.get('category') or '')
             buy_result = handle_buy(_buy_ctx, user_id, message)
+            # If handle_buy returned a "which one?" prompt, remember the original
+            # buy phrase so the next turn (e.g. "1") routes to the order flow.
+            if buy_result.get('intent') == 'product_clarification':
+                set_pending_question(user_id, message)
             _observe_and_save(user_id, profile, message, 'buy', _buy_ctx)
             return _build_response(user_id, buy_result, ChatMode.AI, AI_ACTIVE_STATUS,
                                    (datetime.now() - start_time).total_seconds(),
@@ -278,6 +282,8 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                 _buy_ctx['category'] = (_cached_buy[0].get('category') or
                                         prev_ctx.get('cat') or prev_ctx.get('category') or '')
             buy_result = handle_buy(_buy_ctx, user_id, message)
+            if buy_result.get('intent') == 'product_clarification':
+                set_pending_question(user_id, message)
             _observe_and_save(user_id, profile, message, 'buy', _buy_ctx)
             return _build_response(user_id, buy_result, ChatMode.AI, AI_ACTIVE_STATUS,
                                    (datetime.now() - start_time).total_seconds(),
