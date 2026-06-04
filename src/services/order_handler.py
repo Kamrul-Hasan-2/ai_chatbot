@@ -1,17 +1,20 @@
 """
-src/services/order_handler.py — multi-step order placement flow.
+src/services/order_handler.py — one-shot order placement flow.
 
-The flow collects: name → mobile → address → city → area → qty → confirm,
-then POSTs to chatbot_place_order. State is held in state_repository._order_flow.
+The user is asked for ALL fields (name, mobile, address, city, area, qty) in
+ONE message. Their reply is parsed for labelled lines like "নাম: ..." or
+free-form (line 1 = name, any 11-digit Bangladeshi number = mobile, etc.).
+Missing or invalid fields trigger a single combined re-prompt; once everything
+is valid, the user confirms with "হ্যাঁ" and the order is POSTed.
 
 Public entry points:
-  start_order_flow(user_id, product)       → dict (first step prompt)
-  continue_order_flow(user_id, message)    → dict | None  (None = not in flow)
+  start_order_flow(user_id, product)       → dict (combined ask)
+  continue_order_flow(user_id, message)    → dict | None (None = not in flow)
   is_in_order_flow(user_id)                → bool
 """
 import re
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from models.chatbot_config import LOOP_BACK
 from services.api_client_service import (
@@ -26,29 +29,25 @@ logger = logging.getLogger(__name__)
 
 # ── Step constants ────────────────────────────────────────────────────────────
 
-STEP_NAME    = 'name'
-STEP_MOBILE  = 'mobile'
-STEP_ADDRESS = 'address'
-STEP_CITY    = 'city'
-STEP_AREA    = 'area'
-STEP_QTY     = 'qty'
-STEP_CONFIRM = 'confirm'
+STEP_COLLECT = 'collect'   # waiting for the combined reply (or a fix)
+STEP_CONFIRM = 'confirm'   # all fields parsed, waiting for "হ্যাঁ"
 
 # Words that cancel an in-progress order
 _CANCEL_WORDS = {
-    'cancel', 'bad', 'বাদ', 'বাতিল', 'cancel korbo', 'বাদ দিন',
-    'thak', 'থাক', 'na', 'না', 'stop', 'বন্ধ',
+    'cancel', 'বাতিল', 'cancel korbo', 'বাদ দিন', 'বাদ দাও',
+    'stop', 'বন্ধ', 'বন্ধ করো',
 }
 
 # Words that confirm
 _CONFIRM_WORDS = {
-    'yes', 'হ্যাঁ', 'ha', 'haa', 'confirm', 'ok', 'okay', 'thik',
+    'yes', 'হ্যাঁ', 'haa', 'confirm', 'ok', 'okay', 'thik',
     'ঠিক আছে', 'thik ache', 'হাঁ', 'অবশ্যই', 'jee', 'জি', 'ji',
-    'kor', 'korun', 'korben', 'submit', 'place', 'order korun',
+    'korun', 'korben', 'submit', 'place', 'order korun', 'order koro',
+    'করুন', 'place korun',
 }
 
 
-# ── Response builder (matches intent_handlers_service._ok shape) ──────────────
+# ── Response builder ──────────────────────────────────────────────────────────
 
 def _ok(response: str, intent: str, intent_content: Dict = None,
         link_buttons: List = None) -> Dict:
@@ -64,7 +63,6 @@ def _ok(response: str, intent: str, intent_content: Dict = None,
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _extract_listing_id(url: str) -> str:
-    """Extract numeric listing id from a BDStall URL."""
     if not url:
         return ''
     m = re.search(r'[/-](\d{3,})/?(?:[?#].*)?$', url.rstrip('/') + '/')
@@ -76,7 +74,7 @@ def _normalize_token(text: str) -> str:
 
 
 def _is_cancel(message: str) -> bool:
-    msg = _normalize_token(message)
+    msg = _normalize_token(message).rstrip('.!?।,')
     if not msg:
         return False
     return any(msg == w or msg.startswith(w + ' ') or msg.endswith(' ' + w)
@@ -110,10 +108,11 @@ _BN_NUM_WORDS = {
 }
 
 
-def _parse_qty(message: str) -> int:
-    """Parse a quantity from text (digits or Bangla/Banglish words). Returns 0 if not found."""
-    text = _to_en_digits(message or '')
-    m = re.search(r'\d+', text)
+def _parse_qty(text: str) -> int:
+    if not text:
+        return 0
+    digits = _to_en_digits(text)
+    m = re.search(r'\d+', digits)
     if m:
         try:
             n = int(m.group(0))
@@ -121,107 +120,276 @@ def _parse_qty(message: str) -> int:
                 return n
         except Exception:
             pass
-    msg_l = _normalize_token(message)
+    t = _normalize_token(text)
     for word, val in _BN_NUM_WORDS.items():
-        if word in msg_l:
+        if word in t:
             return val
     return 0
 
 
-def _parse_mobile(message: str) -> str:
-    """Extract a Bangladeshi mobile number from text (returns '' if not valid)."""
-    text = _to_en_digits(message or '')
-    # Bangladeshi mobiles: 11 digits starting with 01, optionally prefixed with +880
-    text = re.sub(r'[\s\-()]', '', text)
-    m = re.search(r'(?:\+?880)?(01\d{9})', text)
+def _parse_mobile(text: str) -> str:
+    """Find a Bangladeshi 11-digit mobile starting with 01 anywhere in text."""
+    if not text:
+        return ''
+    digits = _to_en_digits(text)
+    digits = re.sub(r'[\s\-()]', '', digits)
+    m = re.search(r'(?:\+?880)?(01\d{9})', digits)
     return m.group(1) if m else ''
 
 
-def _match_city(message: str, cities: List[Dict]) -> Optional[Dict]:
-    """Find a city by id (digits) or fuzzy name match. Returns the city dict or None."""
-    msg = _normalize_token(message)
-    if not msg:
+def _match_city(text: str, cities: List[Dict]) -> Optional[Dict]:
+    if not text:
         return None
+    t = _normalize_token(text)
 
-    # Digits = direct city_id
-    digits = re.findall(r'\d+', _to_en_digits(msg))
+    # By city_id (digits)
+    digits = re.findall(r'\d+', _to_en_digits(t))
     if digits:
         for d in digits:
             for c in cities:
                 if c.get('city_id') == d:
                     return c
 
-    # Substring match against city_name (longest wins so "Dhaka" beats no match)
-    best = None
-    best_len = 0
+    # By name — longest substring wins
+    best, best_len = None, 0
     for c in cities:
         name = (c.get('city_name') or '').lower()
-        if name and (name in msg or msg in name) and len(name) > best_len:
-            best = c
-            best_len = len(name)
+        if not name:
+            continue
+        if (name in t or t in name) and len(name) > best_len:
+            best, best_len = c, len(name)
     return best
 
 
-def _match_area(message: str, areas: List[Dict], city_id: str) -> Optional[Dict]:
-    """Find an area within the given city by id or name."""
-    msg = _normalize_token(message)
-    if not msg or not city_id:
+def _match_area(text: str, areas: List[Dict], city_id: str) -> Optional[Dict]:
+    if not text or not city_id:
         return None
-
+    t = _normalize_token(text)
     candidates = [a for a in areas if str(a.get('city_id')) == str(city_id)]
     if not candidates:
         return None
 
-    digits = re.findall(r'\d+', _to_en_digits(msg))
+    digits = re.findall(r'\d+', _to_en_digits(t))
     if digits:
         for d in digits:
             for a in candidates:
                 if a.get('area_id') == d:
                     return a
 
-    best = None
-    best_len = 0
+    best, best_len = None, 0
     for a in candidates:
         name = (a.get('area_name') or '').lower()
-        if name and (name in msg or msg in name) and len(name) > best_len:
-            best = a
-            best_len = len(name)
+        if not name:
+            continue
+        if (name in t or t in name) and len(name) > best_len:
+            best, best_len = a, len(name)
     return best
 
 
-# ── Step prompts ──────────────────────────────────────────────────────────────
+# ── Combined-reply parser ─────────────────────────────────────────────────────
 
-def _prompt_name(product_title: str = '') -> str:
-    head = (f"স্যার, আপনি \"{product_title}\" অর্ডার করতে চান। "
-            if product_title else "স্যার, অর্ডার করতে কিছু তথ্য দরকার। ")
-    return head + ("\n\n১) আপনার নাম কী?\n\n"
-                   "(অর্ডার বাতিল করতে \"বাতিল\" লিখুন।)")
+# Map label keywords (lowercase) → canonical field name
+_LABEL_ALIASES: Dict[str, str] = {
+    # name
+    'name': 'name', 'নাম': 'name', 'naam': 'name',
+    # mobile
+    'mobile': 'mobile', 'phone': 'mobile', 'number': 'mobile', 'no': 'mobile',
+    'নম্বর': 'mobile', 'মোবাইল': 'mobile', 'ফোন': 'mobile',
+    # address
+    'address': 'address', 'addr': 'address', 'ঠিকানা': 'address',
+    'thikana': 'address',
+    # city
+    'city': 'city', 'district': 'city', 'জেলা': 'city', 'শহর': 'city',
+    'jela': 'city', 'shahor': 'city',
+    # area
+    'area': 'area', 'thana': 'area', 'এলাকা': 'area', 'থানা': 'area',
+    # qty
+    'qty': 'qty', 'quantity': 'qty', 'পরিমাণ': 'qty', 'সংখ্যা': 'qty',
+    'কয়টি': 'qty', 'koyti': 'qty',
+}
 
-
-def _prompt_mobile() -> str:
-    return "ধন্যবাদ। এবার আপনার মোবাইল নম্বরটি দিন (১১ ডিজিট, যেমন: 017XXXXXXXX)।"
-
-
-def _prompt_address() -> str:
-    return "এবার আপনার সম্পূর্ণ ঠিকানা দিন (বাসা/রোড/এলাকা)।"
-
-
-def _prompt_city(cities: List[Dict]) -> str:
-    top = [c['city_name'] for c in cities[:10] if c.get('city_name')]
-    sample = ', '.join(top) if top else ''
-    extra = f"\n\nযেমন: {sample}" if sample else ''
-    return ("আপনি কোন জেলা/শহরে আছেন? জেলার নাম লিখুন।" + extra)
-
-
-def _prompt_area(city_name: str, areas: List[Dict], city_id: str) -> str:
-    in_city = [a['area_name'] for a in areas if str(a.get('city_id')) == str(city_id)][:10]
-    sample = ', '.join(in_city) if in_city else ''
-    extra = f"\n\nযেমন: {sample}" if sample else ''
-    return (f"{city_name}-এর কোন এলাকা? এলাকার নাম লিখুন।" + extra)
+# Match "label : value" or "label = value" on a single line
+_LABEL_LINE_RE = re.compile(
+    r'^\s*([A-Za-zঀ-৿ঀ-৿]+)\s*[:=]\s*(.+?)\s*$',
+    re.UNICODE,
+)
 
 
-def _prompt_qty() -> str:
-    return "কয়টি প্রোডাক্ট নিবেন? (সংখ্যা লিখুন, যেমন: 1)"
+def _parse_labelled_lines(text: str) -> Dict[str, str]:
+    """Pull labelled fields from a multi-line reply. Returns whatever it finds."""
+    out: Dict[str, str] = {}
+    if not text:
+        return out
+    for raw_line in text.splitlines():
+        m = _LABEL_LINE_RE.match(raw_line)
+        if not m:
+            continue
+        label_word = (m.group(1) or '').strip().lower()
+        value = (m.group(2) or '').strip()
+        if not value:
+            continue
+        field = _LABEL_ALIASES.get(label_word)
+        if field and field not in out:
+            out[field] = value
+    return out
+
+
+def _parse_freeform(text: str) -> Dict[str, str]:
+    """Best-effort parse when the user didn't use labels.
+
+    Strategy:
+      mobile  = first 11-digit BD mobile found anywhere
+      name    = first non-empty line that isn't the mobile and has no digits
+      address = longest remaining line
+      qty     = last bare number (1–99) on its own line, if any
+    Everything else is left to the validator.
+    """
+    out: Dict[str, str] = {}
+    if not text:
+        return out
+
+    mobile = _parse_mobile(text)
+    if mobile:
+        out['mobile'] = mobile
+
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    remaining: List[str] = []
+    for ln in lines:
+        if mobile and mobile in _to_en_digits(ln).replace(' ', ''):
+            continue
+        remaining.append(ln)
+
+    # name: first line with letters and no digits
+    for ln in remaining:
+        if re.search(r'[A-Za-zঀ-৿ঀ-৿]', ln) and not re.search(r'\d', _to_en_digits(ln)):
+            out['name'] = ln
+            remaining.remove(ln)
+            break
+
+    # qty: a line that is only a small number (1–99)
+    for ln in list(remaining):
+        if re.fullmatch(r'\s*\d{1,2}\s*', _to_en_digits(ln)):
+            out['qty'] = ln.strip()
+            remaining.remove(ln)
+            break
+
+    # address: longest remaining line
+    if remaining:
+        out['address'] = max(remaining, key=len)
+
+    return out
+
+
+def _extract_fields(text: str) -> Dict[str, str]:
+    """Combine labelled + freeform parsing. Labels win when both present."""
+    labelled = _parse_labelled_lines(text)
+    freeform = _parse_freeform(text)
+    out = dict(freeform)
+    out.update(labelled)  # labelled overrides freeform guesses
+    return out
+
+
+def _validate_and_resolve(
+    state: Dict,
+    extracted: Dict[str, str],
+    cities: List[Dict],
+    areas: List[Dict],
+) -> Tuple[Dict, List[str]]:
+    """Validate extracted fields against API lists, merge into state.
+
+    Returns (updated_state, missing_field_labels). When the list is empty,
+    every field is valid and the order is ready for confirmation.
+    """
+    # Name
+    raw_name = extracted.get('name', '').strip() or state.get('name', '')
+    if len(raw_name) >= 2:
+        state['name'] = raw_name
+
+    # Mobile
+    raw_mobile = extracted.get('mobile', '').strip()
+    mobile = _parse_mobile(raw_mobile or '') or state.get('mobile', '')
+    if mobile:
+        state['mobile'] = mobile
+
+    # Address
+    raw_address = extracted.get('address', '').strip() or state.get('address', '')
+    if len(raw_address) >= 5:
+        state['address'] = raw_address
+
+    # City
+    raw_city = extracted.get('city', '').strip()
+    if raw_city:
+        match = _match_city(raw_city, cities)
+        if match:
+            state['city_id']   = match['city_id']
+            state['city_name'] = match['city_name']
+            # When city changes, drop any previously-resolved area — it may
+            # belong to the old city.
+            if state.get('area_city_id') and state['area_city_id'] != match['city_id']:
+                state.pop('area_id', None)
+                state.pop('area_name', None)
+                state.pop('area_city_id', None)
+
+    # Area (only resolvable once city is known)
+    raw_area = extracted.get('area', '').strip()
+    if raw_area and state.get('city_id'):
+        match = _match_area(raw_area, areas, state['city_id'])
+        if match:
+            state['area_id']      = match['area_id']
+            state['area_name']    = match['area_name']
+            state['area_city_id'] = match['city_id']
+
+    # Qty
+    raw_qty = extracted.get('qty', '').strip()
+    qty = _parse_qty(raw_qty) if raw_qty else int(state.get('qty', 0) or 0)
+    if qty > 0:
+        state['qty'] = qty
+
+    # Figure out what's still missing
+    missing: List[str] = []
+    if not (state.get('name') and len(state['name']) >= 2):
+        missing.append('নাম')
+    if not state.get('mobile'):
+        missing.append('মোবাইল (01XXXXXXXXX)')
+    if not (state.get('address') and len(state['address']) >= 5):
+        missing.append('ঠিকানা')
+    if not state.get('city_id'):
+        missing.append('জেলা')
+    if not state.get('area_id'):
+        missing.append('এলাকা')
+    if not state.get('qty'):
+        missing.append('পরিমাণ')
+    return state, missing
+
+
+# ── Prompts ───────────────────────────────────────────────────────────────────
+
+def _prompt_collect(product_title: str = '') -> str:
+    head = (f"স্যার, আপনি \"{product_title}\" অর্ডার করতে চান। নিচের সব তথ্য "
+            "একসাথে দিন:\n\n"
+            if product_title else
+            "স্যার, অর্ডারের জন্য নিচের সব তথ্য একসাথে দিন:\n\n")
+    template = (
+        "নাম: <আপনার পূর্ণ নাম>\n"
+        "মোবাইল: 017XXXXXXXX\n"
+        "ঠিকানা: <বাসা, রোড, এলাকা>\n"
+        "জেলা: Dhaka\n"
+        "এলাকা: Mirpur\n"
+        "পরিমাণ: 1\n\n"
+        "(বাতিল করতে \"বাতিল\" লিখুন।)"
+    )
+    return head + template
+
+
+def _prompt_missing(missing: List[str], state: Dict) -> str:
+    head = "স্যার, নিচের তথ্যগুলো এখনো বাকি বা সঠিক হয়নি:\n\n"
+    bullets = '\n'.join(f"• {m}" for m in missing)
+    hint = ''
+    if 'এলাকা' in missing and state.get('city_name'):
+        hint = f"\n\n({state['city_name']}-এর এলাকার নাম দিন, যেমন: Mirpur, Dhanmondi)"
+    elif 'জেলা' in missing:
+        hint = "\n\n(যেমন: Dhaka, Chittagong, Khulna)"
+    return head + bullets + hint + "\n\nঅনুগ্রহ করে এগুলো লিখে পাঠান।"
 
 
 def _prompt_confirm(state: Dict) -> str:
@@ -234,10 +402,10 @@ def _prompt_confirm(state: Dict) -> str:
         f"👤 নাম: {state.get('name', '')}",
         f"📞 মোবাইল: {state.get('mobile', '')}",
         f"🏠 ঠিকানা: {state.get('address', '')}",
-        f"🏙️ শহর: {state.get('city_name', '')}",
+        f"🏙️ জেলা: {state.get('city_name', '')}",
         f"📍 এলাকা: {state.get('area_name', '')}",
         "",
-        "সব তথ্য ঠিক থাকলে \"হ্যাঁ\" লিখুন। পরিবর্তন করতে \"বাতিল\" লিখে আবার শুরু করুন।",
+        "সব ঠিক থাকলে \"হ্যাঁ\" লিখুন। পরিবর্তন করতে \"বাতিল\" লিখে আবার শুরু করুন।",
     ]
     return '\n'.join(lines)
 
@@ -250,12 +418,11 @@ def is_in_order_flow(user_id: str) -> bool:
 
 
 def start_order_flow(user_id: str, product: Dict) -> Dict:
-    """Begin the order flow for a chosen product (dict with title/url)."""
+    """Begin the order flow for a chosen product."""
     title = (product or {}).get('title', '')
     url   = (product or {}).get('url', '')
     listing_id = _extract_listing_id(url)
     if not listing_id:
-        # Can't order without a listing id — fall back gracefully
         return _ok(
             "স্যার, এই প্রোডাক্টটির আইডি বের করা যাচ্ছে না। "
             "প্রোডাক্ট পেজে গিয়ে সরাসরি অর্ডার করুন।" + LOOP_BACK,
@@ -263,17 +430,17 @@ def start_order_flow(user_id: str, product: Dict) -> Dict:
             link_buttons=[{'text': 'প্রোডাক্ট দেখুন', 'url': url, 'title': title}] if url else []
         )
     state = {
-        'step':          STEP_NAME,
+        'step':          STEP_COLLECT,
         'product_title': title,
         'product_url':   url,
         'listing_id':    listing_id,
     }
     set_order_flow(user_id, state)
-    return _ok(_prompt_name(title), 'order_collect_name')
+    return _ok(_prompt_collect(title), 'order_collect')
 
 
 def continue_order_flow(user_id: str, message: str) -> Optional[Dict]:
-    """Advance the order flow by one step. Returns None if user not in flow."""
+    """Advance the order flow. Returns None if user is not in flow."""
     state = get_order_flow(user_id)
     if not state or not state.get('step'):
         return None
@@ -286,101 +453,31 @@ def continue_order_flow(user_id: str, message: str) -> Optional[Dict]:
         )
 
     step = state['step']
-    msg = (message or '').strip()
 
-    if step == STEP_NAME:
-        if len(msg) < 2:
-            return _ok("স্যার, অনুগ্রহ করে আপনার পূর্ণ নাম লিখুন।", 'order_collect_name')
-        state['name'] = msg
-        state['step'] = STEP_MOBILE
-        set_order_flow(user_id, state)
-        return _ok(_prompt_mobile(), 'order_collect_mobile')
-
-    if step == STEP_MOBILE:
-        mobile = _parse_mobile(msg)
-        if not mobile:
-            return _ok(
-                "স্যার, মোবাইল নম্বরটি সঠিক বলে মনে হচ্ছে না। "
-                "বাংলাদেশী ১১ ডিজিটের নম্বর লিখুন (যেমন: 017XXXXXXXX)।",
-                'order_collect_mobile'
-            )
-        state['mobile'] = mobile
-        state['step'] = STEP_ADDRESS
-        set_order_flow(user_id, state)
-        return _ok(_prompt_address(), 'order_collect_address')
-
-    if step == STEP_ADDRESS:
-        if len(msg) < 5:
-            return _ok(
-                "স্যার, একটু বিস্তারিত ঠিকানা লিখুন (বাসা/রোড/এলাকা সহ)।",
-                'order_collect_address'
-            )
-        state['address'] = msg
-        state['step'] = STEP_CITY
-        set_order_flow(user_id, state)
+    if step == STEP_COLLECT:
         cities = fetch_city_list()
-        return _ok(_prompt_city(cities), 'order_collect_city')
-
-    if step == STEP_CITY:
-        cities = fetch_city_list()
-        if not cities:
+        areas  = fetch_area_list()
+        if not cities or not areas:
             clear_order_flow(user_id)
             return _ok(
-                "দুঃখিত স্যার, শহরের তালিকা এখন লোড করা যাচ্ছে না। "
+                "দুঃখিত স্যার, শহর/এলাকার তালিকা এখন লোড করা যাচ্ছে না। "
                 "একটু পরে আবার চেষ্টা করুন।" + LOOP_BACK,
-                'order_city_list_error'
+                'order_list_error'
             )
-        match = _match_city(msg, cities)
-        if not match:
-            return _ok(
-                "স্যার, শহরটি খুঁজে পাইনি। সঠিক জেলার নাম লিখুন "
-                "(যেমন: Dhaka, Chittagong, Khulna)।",
-                'order_collect_city'
-            )
-        state['city_id']   = match['city_id']
-        state['city_name'] = match['city_name']
-        state['step']      = STEP_AREA
-        set_order_flow(user_id, state)
-        areas = fetch_area_list()
-        return _ok(_prompt_area(match['city_name'], areas, match['city_id']),
-                   'order_collect_area')
 
-    if step == STEP_AREA:
-        areas = fetch_area_list()
-        if not areas:
-            clear_order_flow(user_id)
-            return _ok(
-                "দুঃখিত স্যার, এলাকার তালিকা এখন লোড করা যাচ্ছে না। "
-                "একটু পরে আবার চেষ্টা করুন।" + LOOP_BACK,
-                'order_area_list_error'
-            )
-        match = _match_area(msg, areas, state.get('city_id', ''))
-        if not match:
-            return _ok(
-                f"স্যার, {state.get('city_name', '')}-এর মধ্যে এই এলাকাটি খুঁজে পাইনি। "
-                "অনুগ্রহ করে সঠিক এলাকার নাম লিখুন।",
-                'order_collect_area'
-            )
-        state['area_id']   = match['area_id']
-        state['area_name'] = match['area_name']
-        state['step']      = STEP_QTY
+        extracted = _extract_fields(message)
+        state, missing = _validate_and_resolve(state, extracted, cities, areas)
         set_order_flow(user_id, state)
-        return _ok(_prompt_qty(), 'order_collect_qty')
 
-    if step == STEP_QTY:
-        qty = _parse_qty(msg)
-        if qty <= 0:
-            return _ok(
-                "স্যার, কয়টি নিবেন সংখ্যায় লিখুন (যেমন: 1, 2)।",
-                'order_collect_qty'
-            )
-        state['qty']  = qty
+        if missing:
+            return _ok(_prompt_missing(missing, state), 'order_collect')
+
         state['step'] = STEP_CONFIRM
         set_order_flow(user_id, state)
         return _ok(_prompt_confirm(state), 'order_confirm')
 
     if step == STEP_CONFIRM:
-        if not _is_confirm(msg):
+        if not _is_confirm(message):
             return _ok(
                 "স্যার, অর্ডার নিশ্চিত করতে \"হ্যাঁ\" লিখুন, "
                 "অথবা বাতিল করতে \"বাতিল\" লিখুন।",
@@ -418,7 +515,7 @@ def continue_order_flow(user_id: str, message: str) -> Optional[Dict]:
             lines.append("বিক্রেতা শীঘ্রই আপনার সাথে যোগাযোগ করে ডেলিভারি কনফার্ম করবেন।")
             return _ok('\n'.join(lines) + LOOP_BACK, 'order_placed',
                        link_buttons=buttons)
-        # Failure: surface API message when available
+
         msg_err = result.get('message') or 'অর্ডার এখন প্রক্রিয়া করা যাচ্ছে না।'
         return _ok(
             f"দুঃখিত স্যার, অর্ডার সম্পন্ন হয়নি: {msg_err}\n\n"
@@ -427,7 +524,6 @@ def continue_order_flow(user_id: str, message: str) -> Optional[Dict]:
             'order_failed', link_buttons=buttons
         )
 
-    # Unknown step — clear and bail out
     logger.warning("continue_order_flow: unknown step %r for user %s", step, user_id)
     clear_order_flow(user_id)
     return None
