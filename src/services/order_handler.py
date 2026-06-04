@@ -38,6 +38,20 @@ _CANCEL_WORDS = {
     'stop', 'বন্ধ', 'বন্ধ করো',
 }
 
+# Phrases that mean the user is asking about discount / negotiating the price
+# while mid-order. We answer with a fixed "price is fixed" message and re-show
+# the order form, keeping all collected state intact.
+_PRICE_NEGOTIATE_SIGNALS = (
+    'price komano', 'price komabo', 'price kom', 'price reduce', 'price kobe',
+    'dam komano', 'dam komabo', 'dam kom', 'dam kobe',
+    'discount', 'discount dabo', 'discount koto', 'offer',
+    'negotiate', 'negotiation', 'bargain',
+    'kom kora', 'kom korte', 'kom hobe', 'komano jabe', 'komano hobe',
+    'দাম কমানো', 'দাম কমাবো', 'দাম কমবে', 'কমানো যাবে', 'কমানো হবে',
+    'ছাড়', 'ছাড় দিন', 'ছাড় দাও', 'অফার',
+    'fixed naki', 'fix naki', 'fixed price', 'fix price',
+)
+
 # Words that confirm
 _CONFIRM_WORDS = {
     'yes', 'হ্যাঁ', 'haa', 'confirm', 'ok', 'okay', 'thik',
@@ -79,6 +93,14 @@ def _is_cancel(message: str) -> bool:
         return False
     return any(msg == w or msg.startswith(w + ' ') or msg.endswith(' ' + w)
                for w in _CANCEL_WORDS)
+
+
+def _is_price_negotiation(message: str) -> bool:
+    """True when the user is asking about discount / price negotiation mid-order."""
+    msg = _normalize_token(message)
+    if not msg:
+        return False
+    return any(s in msg for s in _PRICE_NEGOTIATE_SIGNALS)
 
 
 def _is_confirm(message: str) -> bool:
@@ -452,6 +474,20 @@ def continue_order_flow(user_id: str, message: str) -> Optional[Dict]:
             "ঠিক আছে স্যার, অর্ডার বাতিল করা হলো। আবার প্রয়োজন হলে বলবেন। 😊",
             'order_cancelled'
         )
+
+    # Price-negotiation question mid-order — give the fixed reply and keep the
+    # order state exactly where it was. The product, listing_id, and any fields
+    # the user already provided stay intact so they can continue ordering.
+    if _is_price_negotiation(message):
+        title = state.get('product_title', '')
+        intro = "স্যার, আমাদের দাম ফিক্সড। দাম কমানো বা ছাড় দেওয়ার সুযোগ নেই।"
+        # Re-show the order form if we're still collecting, or the confirm
+        # summary if we were about to place the order.
+        if state.get('step') == STEP_CONFIRM:
+            tail = _prompt_confirm(state)
+        else:
+            tail = _prompt_collect(title)
+        return _ok(intro + "\n\n" + tail, 'order_price_fixed')
 
     step = state['step']
 
