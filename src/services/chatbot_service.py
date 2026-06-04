@@ -283,33 +283,11 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                                    (datetime.now() - start_time).total_seconds(),
                                    user_message=message, profile=profile)
 
-        # Product detail follow-up.
-        # Fire when either: (a) a specific product URL was pinned via set_product_url,
-        # or (b) products from a search result are cached — use the first result's URL.
-        # Without (b), questions like "ki ki color ase" after a search result bypassed
-        # this intercept and hit Groq cold, producing a new product search instead.
-        from repositories.state_repository import get_product_context as _gpc_early
-        _cached_products_early = _gpc_early(user_id)
-        product_url = (get_product_url(user_id)
-                       or prev_ctx.get('product_url', '')
-                       or (_cached_products_early[0].get('url', '')
-                           if _cached_products_early else ''))
-        if product_url:
-            detail = handle_product_detail_followup(prev_ctx, user_id, message, product_url,
-                                                     _groq_client, GROQ_ANSWER_MODEL)
-            if detail:
-                # When the followup handler asks the user to pick a product by number,
-                # save the original message so the selection turn can answer WHAT was asked.
-                if detail.get('intent') == 'product_clarification':
-                    set_pending_question(user_id, message)
-                _observe_and_save(user_id, profile, message, detail.get('intent', ''), prev_ctx)
-                return _build_response(user_id, detail, ChatMode.AI, AI_ACTIVE_STATUS,
-                                       (datetime.now() - start_time).total_seconds(),
-                                       user_message=message, profile=profile)
-
         # Clarification selection — user picks a numbered product after clarification prompt.
-        # Pass the original pending question so the handler answers WHAT was asked,
-        # not just the condition (new/used) that was hardwired before.
+        # Must run BEFORE handle_product_detail_followup, otherwise the followup
+        # intercept treats "1" as a stray query about cached products and answers
+        # with the wrong handler (spec-fallback instead of routing to the original
+        # pending question, e.g. buy → order flow).
         if get_last_intent(user_id) == 'product_clarification':
             pending_q = get_pending_question(user_id)
             selected = handle_clarification_selection(
@@ -359,6 +337,31 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                             return _build_response(user_id, spec_r, ChatMode.AI, AI_ACTIVE_STATUS,
                                                    (datetime.now() - start_time).total_seconds(),
                                                    user_message=message, profile=profile)
+
+        # Product detail follow-up.
+        # Fire when either: (a) a specific product URL was pinned via set_product_url,
+        # or (b) products from a search result are cached — use the first result's URL.
+        # Runs AFTER the clarification-selection check so a numbered reply ("1")
+        # routes through the correct pending-question handler (e.g. buy → order
+        # flow) instead of being misread as a stray product question.
+        from repositories.state_repository import get_product_context as _gpc_early
+        _cached_products_early = _gpc_early(user_id)
+        product_url = (get_product_url(user_id)
+                       or prev_ctx.get('product_url', '')
+                       or (_cached_products_early[0].get('url', '')
+                           if _cached_products_early else ''))
+        if product_url:
+            detail = handle_product_detail_followup(prev_ctx, user_id, message, product_url,
+                                                     _groq_client, GROQ_ANSWER_MODEL)
+            if detail:
+                # When the followup handler asks the user to pick a product by number,
+                # save the original message so the selection turn can answer WHAT was asked.
+                if detail.get('intent') == 'product_clarification':
+                    set_pending_question(user_id, message)
+                _observe_and_save(user_id, profile, message, detail.get('intent', ''), prev_ctx)
+                return _build_response(user_id, detail, ChatMode.AI, AI_ACTIVE_STATUS,
+                                       (datetime.now() - start_time).total_seconds(),
+                                       user_message=message, profile=profile)
 
         # ── STEP 2: detect_intent ────────────────────────────────────────────
         history     = fetch_history(user_id)
