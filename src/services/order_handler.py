@@ -401,16 +401,23 @@ def continue_order_flow(user_id: str, message: str) -> Optional[Dict]:
                      'title': state.get('product_title', '')}]
                    if product_url else [])
         if result.get('success'):
-            reply = (
-                "✅ অর্ডার সফলভাবে গ্রহণ করা হয়েছে স্যার!\n\n"
-                f"📦 প্রোডাক্ট: {state.get('product_title', '')}\n"
-                f"🔢 পরিমাণ: {state.get('qty', 1)}\n"
-                f"📞 মোবাইল: {state.get('mobile', '')}\n"
+            order_no = (result.get('order_no') or '').strip()
+            order_id = (result.get('order_id') or '').strip()
+            order_ref = order_no or order_id
+            lines = ["✅ অর্ডার সফলভাবে গ্রহণ করা হয়েছে স্যার!", ""]
+            if order_ref:
+                lines.append(f"🧾 অর্ডার নম্বর: {order_ref}")
+            lines.append(f"📦 প্রোডাক্ট: {state.get('product_title', '')}")
+            lines.append(f"🔢 পরিমাণ: {state.get('qty', 1)}")
+            lines.append(f"📞 মোবাইল: {state.get('mobile', '')}")
+            lines.append(
                 f"🏠 ঠিকানা: {state.get('address', '')}, "
-                f"{state.get('area_name', '')}, {state.get('city_name', '')}\n\n"
-                "বিক্রেতা শীঘ্রই আপনার সাথে যোগাযোগ করে ডেলিভারি কনফার্ম করবেন।"
+                f"{state.get('area_name', '')}, {state.get('city_name', '')}"
             )
-            return _ok(reply + LOOP_BACK, 'order_placed', link_buttons=buttons)
+            lines.append("")
+            lines.append("বিক্রেতা শীঘ্রই আপনার সাথে যোগাযোগ করে ডেলিভারি কনফার্ম করবেন।")
+            return _ok('\n'.join(lines) + LOOP_BACK, 'order_placed',
+                       link_buttons=buttons)
         # Failure: surface API message when available
         msg_err = result.get('message') or 'অর্ডার এখন প্রক্রিয়া করা যাচ্ছে না।'
         return _ok(

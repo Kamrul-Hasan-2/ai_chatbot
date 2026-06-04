@@ -352,6 +352,57 @@ def _parse_template(data: Any) -> Optional[str]:
     return None
 
 
+# ── Buy template (decides ecommerce vs classified flow) ──────────────────────
+
+_buy_template_cache: Dict[str, tuple] = {}
+_BUY_TEMPLATE_TTL = 600  # 10 min — listing type rarely flips
+
+
+def fetch_buy_template(product_id: str) -> Optional[Dict[str, str]]:
+    """Fetch the buy template for a listing.
+
+    Returns:
+        {'data': str, 'market_place_type': 'ecommerce'|'classified'|...}
+        or None on failure / missing id.
+
+    The chatbot uses `market_place_type` to decide whether to start the
+    multi-step order flow (`ecommerce`) or just show the `data` text with
+    the seller-contact link (`classified`).
+    """
+    if not product_id:
+        return None
+    key = str(product_id)
+    now = time.time()
+    cached = _buy_template_cache.get(key)
+    if cached and (now - cached[0]) < _BUY_TEMPLATE_TTL:
+        return cached[1]
+    try:
+        started = datetime.now()
+        resp = requests.get(DELIVERY_URL,
+                            params={'intent': 'buy', 'id': product_id, 'key': API_KEY},
+                            timeout=10)
+        duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+        _log_api_call('buy_template', 'GET', DELIVERY_URL,
+                      {'intent': 'buy', 'id': product_id}, resp.status_code,
+                      duration_ms, 'PASS' if resp.status_code == 200 else 'FAIL',
+                      resp.text[:400])
+        if resp.status_code != 200:
+            return None
+        data = resp.json() if resp.text else {}
+        if not isinstance(data, dict) or data.get('success') is False:
+            _buy_template_cache[key] = (now, None)
+            return None
+        result = {
+            'data':              str(data.get('data') or '').strip(),
+            'market_place_type': str(data.get('market_place_type') or '').strip().lower(),
+        }
+        _buy_template_cache[key] = (now, result)
+        return result
+    except Exception as e:
+        logger.warning("fetch_buy_template failed: %s", e)
+        return None
+
+
 # ── Condition template ────────────────────────────────────────────────────────
 
 def fetch_condition_template(product_id: str) -> Optional[str]:
@@ -659,13 +710,20 @@ def place_order(name: str, mobile: str, address: str,
         _log_api_call('place_order', 'POST', PLACE_ORDER_URL, log_payload,
                       resp.status_code, duration_ms,
                       'PASS' if ok else 'FAIL', resp.text[:400])
-        message = ''
+        message  = ''
+        order_id = ''
+        order_no = ''
         if isinstance(body, dict):
             message = str(body.get('message') or '').strip()
-        return {'success': ok, 'message': message, 'raw': body}
+            data = body.get('data') if isinstance(body.get('data'), dict) else {}
+            order_id = str(data.get('order_id') or '').strip()
+            order_no = str(data.get('order_no') or '').strip()
+        return {'success': ok, 'message': message,
+                'order_id': order_id, 'order_no': order_no, 'raw': body}
     except Exception as e:
         logger.error("place_order failed: %s", e)
-        return {'success': False, 'message': str(e), 'raw': None}
+        return {'success': False, 'message': str(e),
+                'order_id': '', 'order_no': '', 'raw': None}
 
 
 def fetch_return_policy() -> Optional[str]:

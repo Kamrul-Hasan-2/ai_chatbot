@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 from models.chatbot_config import CATEGORY_PROMPT, LOOP_BACK, KNOWLEDGE_DAILY_LIMIT
-from services.api_client_service import search_products, fetch_delivery_template, fetch_condition_template, fetch_category_template, fetch_product_spec, assign_agent
+from services.api_client_service import search_products, fetch_delivery_template, fetch_condition_template, fetch_category_template, fetch_product_spec, fetch_buy_template, assign_agent
 from repositories.state_repository import (
     load_context, get_last_intent,
     set_product_context, get_product_context,
@@ -177,9 +177,39 @@ def handle_buy(ctx: Dict, user_id: str, message: str) -> Dict:
             'product_clarification', ic
         )
 
-    # Single product — kick off the multi-step order flow
-    from services.order_handler import start_order_flow
-    return start_order_flow(user_id, prev_products[0])
+    # Single product — decide route based on BDStall buy template:
+    #   market_place_type == 'ecommerce' → start order flow (Buy Now)
+    #   anything else (e.g. classified)  → show seller-contact text from API
+    selected   = prev_products[0]
+    product_url = selected.get('url', '')
+    title       = (selected.get('title') or 'প্রোডাক্ট দেখুন')[:40]
+    listing_id  = _extract_product_id(product_url)
+
+    template = fetch_buy_template(listing_id) if listing_id else None
+    market_type = (template or {}).get('market_place_type', '')
+
+    if market_type == 'ecommerce':
+        from services.order_handler import start_order_flow
+        return start_order_flow(user_id, selected)
+
+    # Classified / unknown → fall back to API-provided seller-contact text
+    api_text = (template or {}).get('data', '').strip()
+    buttons = ([{'text': 'প্রোডাক্ট দেখুন', 'url': product_url, 'title': title}]
+               if product_url else
+               [{'text': 'বিডিস্টল ভিজিট করুন', 'url': 'https://www.bdstall.com/'}])
+
+    if api_text:
+        return _ok(api_text + LOOP_BACK, 'buy', ic, link_buttons=buttons)
+
+    # Hard fallback: API didn't return text (no listing id, network error etc.)
+    reply = (
+        "স্যার, এই প্রোডাক্টটি কিনতে:\n\n"
+        "১. নিচের 'প্রোডাক্ট দেখুন' বাটনে ক্লিক করুন\n"
+        "২. প্রোডাক্ট পেজে গিয়ে বিক্রেতাকে কল বা হোয়াটসঅ্যাপ করুন\n"
+        "৩. দাম, কন্ডিশন ও ডেলিভারি নিশ্চিত করুন\n\n"
+        "📞 বিক্রেতা সরাসরি আপনার সাথে যোগাযোগ করে ডেলিভারি দেবেন।"
+    )
+    return _ok(reply + LOOP_BACK, 'buy', ic, link_buttons=buttons)
 
 
 def handle_comparison(ctx: Dict, user_id: str, message: str) -> Dict:
@@ -609,12 +639,26 @@ def handle_clarification_selection(user_id: str, message: str,
                  f"স্যার, {title} এর কন্ডিশন জানতে প্রোডাক্ট পেজটি দেখুন।")
         return _ok(reply + LOOP_BACK, 'product_condition', ic, link_buttons=buttons)
 
-    # Buy route: pending question was a purchase intent — start the order flow.
+    # Buy route: pending question was a purchase intent — route via the buy
+    # template gate so ecommerce items kick off the order flow and classified
+    # items fall back to seller-contact text.
     _BUY_Q = {'kinbo', 'kinte', 'buy', 'order', 'purchase',
               'কিনব', 'কিনতে', 'অর্ডার'}
     if any(w in q for w in _BUY_Q):
-        from services.order_handler import start_order_flow
-        return start_order_flow(user_id, selected)
+        listing_id_sel = _extract_product_id(product_url_sel)
+        template_sel = fetch_buy_template(listing_id_sel) if listing_id_sel else None
+        market_type_sel = (template_sel or {}).get('market_place_type', '')
+        if market_type_sel == 'ecommerce':
+            from services.order_handler import start_order_flow
+            return start_order_flow(user_id, selected)
+        api_text_sel = (template_sel or {}).get('data', '').strip()
+        if api_text_sel:
+            return _ok(api_text_sel + LOOP_BACK, 'buy', ic, link_buttons=buttons)
+        return _ok(
+            f"স্যার, {title} কিনতে প্রোডাক্ট পেজে গিয়ে বিক্রেতার সাথে যোগাযোগ করুন।"
+            + LOOP_BACK,
+            'buy', ic, link_buttons=buttons
+        )
 
     # Default: spec query — handles ram/display/battery/full-spec/any other detail
     ctx = {'category': selected.get('category', ''), 'brand': '', 'title': title}
