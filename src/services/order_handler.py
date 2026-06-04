@@ -512,7 +512,7 @@ def continue_order_flow(user_id: str, message: str) -> Optional[Dict]:
                 f"{state.get('area_name', '')}, {state.get('city_name', '')}"
             )
             lines.append("")
-            lines.append("বিক্রেতা শীঘ্রই আপনার সাথে যোগাযোগ করে ডেলিভারি কনফার্ম করবেন।")
+            lines.append("আমাদের একজন প্রতিনিধি শীঘ্রই আপনার সাথে যোগাযোগ করে ডেলিভারি কনফার্ম করবেন।")
             return _ok('\n'.join(lines) + LOOP_BACK, 'order_placed',
                        link_buttons=buttons)
 
