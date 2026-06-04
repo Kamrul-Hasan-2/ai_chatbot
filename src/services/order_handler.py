@@ -311,9 +311,10 @@ def _validate_and_resolve(
     if mobile:
         state['mobile'] = mobile
 
-    # Address
+    # Address — accept any non-trivial string. The user may type a short label
+    # like "Ulon" or "Savar"; rejecting these as "missing" surprises the user.
     raw_address = extracted.get('address', '').strip() or state.get('address', '')
-    if len(raw_address) >= 5:
+    if len(raw_address) >= 2:
         state['address'] = raw_address
 
     # City
@@ -351,7 +352,7 @@ def _validate_and_resolve(
         missing.append('নাম')
     if not state.get('mobile'):
         missing.append('মোবাইল (01XXXXXXXXX)')
-    if not (state.get('address') and len(state['address']) >= 5):
+    if not (state.get('address') and len(state['address']) >= 2):
         missing.append('ঠিকানা')
     if not state.get('city_id'):
         missing.append('জেলা')
@@ -465,7 +466,31 @@ def continue_order_flow(user_id: str, message: str) -> Optional[Dict]:
                 'order_list_error'
             )
 
-        extracted = _extract_fields(message)
+        # Smart follow-up: if the previous turn asked for ONE missing field
+        # and the user's reply has no labels, treat the whole reply as that
+        # field's value. Without this, an unlabelled "Abu Saiyed Market"
+        # would be misread as a name by the freeform parser instead of an
+        # address fix-up.
+        _, missing_before = _validate_and_resolve(dict(state), {}, cities, areas)
+        has_labels = bool(_LABEL_LINE_RE.search(message or '') or
+                          re.search(r'[:=]', message or ''))
+        extracted: Dict[str, str] = {}
+        if len(missing_before) == 1 and not has_labels:
+            single = missing_before[0]
+            _FIELD_FROM_LABEL = {
+                'নাম': 'name',
+                'মোবাইল (01XXXXXXXXX)': 'mobile',
+                'ঠিকানা': 'address',
+                'জেলা': 'city',
+                'এলাকা': 'area',
+                'পরিমাণ': 'qty',
+            }
+            field = _FIELD_FROM_LABEL.get(single)
+            if field:
+                extracted[field] = (message or '').strip()
+
+        if not extracted:
+            extracted = _extract_fields(message)
         state, missing = _validate_and_resolve(state, extracted, cities, areas)
         set_order_flow(user_id, state)
 
