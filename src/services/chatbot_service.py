@@ -199,6 +199,22 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                                        (datetime.now() - start_time).total_seconds(),
                                        user_message=message, profile=profile)
 
+        # ── Advance payment intercept ────────────────────────────────────────
+        # Groq often mislabels "অগ্রিম টাকা দিতে হবে?" as product_search.
+        # Catch it deterministically before Groq.
+        _ADVANCE_SIGNALS = (
+            'অগ্রিম', 'agrim', 'আগাম', 'আগে টাকা', 'আগে পেমেন্ট',
+            'upfront', 'prepaid', 'prepay', 'advance pay', 'advance dite',
+        )
+        if any(s in message.lower() for s in _ADVANCE_SIGNALS):
+            from services.intent_handlers_service import handle_delivery as _hd
+            _adv_ctx = normalize_payload(prev_ctx)
+            _adv_result = _hd(_adv_ctx, user_id, message, [])
+            _observe_and_save(user_id, profile, message, 'delivery', {})
+            return _build_response(user_id, _adv_result, ChatMode.AI, AI_ACTIVE_STATUS,
+                                   (datetime.now() - start_time).total_seconds(),
+                                   user_message=message, profile=profile)
+
         # ── Order status lookup intercept ────────────────────────────────────
         # Catch messages like "order status 17805593641", "অর্ডার চেক 17805…",
         # "track order 17805…" before Groq sends them to the generic delivery
