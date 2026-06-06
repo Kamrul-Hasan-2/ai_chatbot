@@ -347,10 +347,25 @@ _TRACK_SIGNALS = {
     'shipment', 'parcel', 'courier status', 'delivery status',
 }
 
+_ADVANCE_PAYMENT_SIGNALS = {
+    'অগ্রিম', 'agrim', 'advance', 'আগাম', 'আগে টাকা', 'আগে পেমেন্ট',
+    'আগে দিতে হবে', 'আগে দিতে হয়', 'আগে পাঠাতে হবে',
+    'upfront', 'prepaid', 'prepay',
+}
+
+_ADVANCE_PAYMENT_RESPONSE = (
+    "স্যার, শুধুমাত্র ঢাকার বাইরে ডেলিভারির ক্ষেত্রে অগ্রিম পেমেন্ট দিতে হবে।\n\n"
+    "ঢাকার ভেতরে ডেলিভারিতে অগ্রিম পেমেন্টের প্রয়োজন নেই।"
+)
+
 
 def handle_delivery(ctx: Dict, user_id: str, message: str, faq_db: List) -> Dict:
     ic = intent_to_normalized(ctx)
     msg_lower = message.lower()
+
+    # Advance payment question
+    if any(s in msg_lower for s in _ADVANCE_PAYMENT_SIGNALS):
+        return _ok(_ADVANCE_PAYMENT_RESPONSE + LOOP_BACK, 'delivery', ic)
 
     # Tracking / order-status questions go straight to FAQ — the delivery
     # template only has charge/time info and would be the wrong answer.

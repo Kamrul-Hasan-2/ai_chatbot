@@ -168,7 +168,7 @@ def resolve_category(text: str, categories: List[Dict]) -> str:
                 ratio = SequenceMatcher(None, tl, cand).ratio()
                 if ratio > best_ratio:
                     best_ratio, best_rec = ratio, rec
-        if best_rec and best_ratio >= 0.82:
+        if best_rec and best_ratio >= 0.88:
             return best_rec['category_name']
     return ''
 
@@ -211,7 +211,7 @@ def resolve_category_from_message(message: str, categories: List[Dict]) -> str:
         return best
 
     for tok in set(_tokenize(tl)):
-        if len(tok) < 3:
+        if len(tok) < 5:
             continue
         for rec in categories:
             if tok in _tokenize(rec['category_name']):
@@ -219,17 +219,17 @@ def resolve_category_from_message(message: str, categories: List[Dict]) -> str:
 
     # Fuzzy fallback: check each word in message against category names
     for tok in set(_tokenize(tl)):
-        if len(tok) < 4:
+        if len(tok) < 5:
             continue
         best_ratio, best_rec = 0.0, None
         for cname_lower, rec in by_name.items():
             for cpart in _tokenize(cname_lower):
-                if len(cpart) < 4:
+                if len(cpart) < 5:
                     continue
                 ratio = SequenceMatcher(None, tok, cpart).ratio()
                 if ratio > best_ratio:
                     best_ratio, best_rec = ratio, rec
-        if best_rec and best_ratio >= 0.80:
+        if best_rec and best_ratio >= 0.85:
             return best_rec['category_name']
 
     return ''
