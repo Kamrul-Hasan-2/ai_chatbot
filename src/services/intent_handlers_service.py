@@ -348,9 +348,10 @@ _TRACK_SIGNALS = {
 }
 
 _ADVANCE_PAYMENT_SIGNALS = {
-    'অগ্রিম', 'agrim', 'advance', 'আগাম', 'আগে টাকা', 'আগে পেমেন্ট',
+    'অগ্রিম', 'agrim', 'ogrim', 'ogram', 'advance', 'আগাম', 'আগে টাকা', 'আগে পেমেন্ট',
     'আগে দিতে হবে', 'আগে দিতে হয়', 'আগে পাঠাতে হবে',
     'upfront', 'prepaid', 'prepay',
+    'age taka', 'age payment', 'age dite', 'age pathate',
 }
 
 _ADVANCE_PAYMENT_RESPONSE = (

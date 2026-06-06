@@ -203,8 +203,9 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         # Groq often mislabels "অগ্রিম টাকা দিতে হবে?" as product_search.
         # Catch it deterministically before Groq.
         _ADVANCE_SIGNALS = (
-            'অগ্রিম', 'agrim', 'আগাম', 'আগে টাকা', 'আগে পেমেন্ট',
+            'অগ্রিম', 'agrim', 'ogrim', 'ogram', 'ogrim', 'আগাম', 'আগে টাকা', 'আগে পেমেন্ট',
             'upfront', 'prepaid', 'prepay', 'advance pay', 'advance dite',
+            'age taka', 'age payment', 'age dite', 'age pathate',
         )
         if any(s in message.lower() for s in _ADVANCE_SIGNALS):
             from services.intent_handlers_service import handle_delivery as _hd
