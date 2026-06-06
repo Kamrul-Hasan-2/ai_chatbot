@@ -49,6 +49,25 @@ _GREETING_RESET_WORDS = {
     'good morning', 'good evening', 'good afternoon',
 }
 
+# Product-search signals that should escape an in-progress order flow.
+# When a user mid-order suddenly asks about a completely different product,
+# they've abandoned the order — clear state and let Groq route normally.
+_PRODUCT_SEARCH_SIGNALS = (
+    'ase', 'আছে', 'ache', 'lagbe', 'লাগবে', 'chai', 'চাই',
+    'dekhan', 'dekhao', 'দেখান', 'দেখাও',
+    'khujtasi', 'khujchi', 'খুঁজছি',
+    'price', 'dam', 'দাম', 'koto taka', 'koto daam',
+    'laptop', 'mobile', 'phone', 'tv', 'ac', 'fridge',
+    'computer', 'tablet', 'watch', 'camera', 'headphone',
+    'charger', 'router', 'printer', 'monitor', 'keyboard',
+)
+
+# Brand names that, combined with a search signal, confirm a product query
+_BRAND_WORDS = (
+    'hp', 'dell', 'asus', 'acer', 'lenovo', 'samsung', 'apple', 'walton',
+    'xiaomi', 'realme', 'oppo', 'vivo', 'nokia', 'sony', 'lg', 'toshiba',
+)
+
 # Phrases that mean the user is asking about discount / negotiating the price
 # while mid-order. We answer with a fixed "price is fixed" message and re-show
 # the order form, keeping all collected state intact.
@@ -112,6 +131,42 @@ def _is_greeting_reset(message: str) -> bool:
     if not msg or len(msg) > 25:
         return False
     return msg in _GREETING_RESET_WORDS
+
+
+def _is_product_search_escape(message: str) -> bool:
+    """True when the user is clearly asking about a product, not filling the order form.
+
+    Catches messages like "hp laptop ase", "samsung phone lagbe", "AC dekhao" that
+    arrive while order state is stale (user abandoned the previous order without
+    explicitly cancelling). We clear the flow and let Groq route normally.
+
+    Guard: require either (a) a brand word + any search signal, or (b) a product
+    category word + a search signal. A bare brand name ("hp") or a bare search
+    signal ("ase") alone is NOT enough — those could be legitimate form values.
+    """
+    msg = _normalize_token(message)
+    if not msg:
+        return False
+
+    has_search = any(s in msg for s in _PRODUCT_SEARCH_SIGNALS)
+    has_brand  = any(b in msg.split() or msg.startswith(b + ' ') or msg.endswith(' ' + b) or msg == b
+                     for b in _BRAND_WORDS)
+
+    # Brand + search signal → definitely a product query
+    if has_brand and has_search:
+        return True
+
+    # Product category word + search signal (e.g. "laptop lagbe", "AC ase")
+    _CATEGORY_WORDS = (
+        'laptop', 'mobile', 'phone', 'tv', 'ac ', 'fridge',
+        'computer', 'tablet', 'watch', 'camera', 'headphone',
+        'charger', 'router', 'printer', 'monitor', 'keyboard',
+    )
+    has_category = any(c in msg for c in _CATEGORY_WORDS)
+    if has_category and has_search:
+        return True
+
+    return False
 
 
 def _is_price_negotiation(message: str) -> bool:
@@ -494,6 +549,13 @@ def continue_order_flow(user_id: str, message: str) -> Optional[Dict]:
     # in-progress order state and let the main pipeline reply with its
     # normal greeting.
     if _is_greeting_reset(message):
+        clear_order_flow(user_id)
+        return None
+
+    # Product-search escape: user sent a product query ("hp laptop ase",
+    # "samsung phone lagbe") instead of filling the order form. They've
+    # abandoned the previous order — clear state and fall through to Groq.
+    if _is_product_search_escape(message):
         clear_order_flow(user_id)
         return None
 
