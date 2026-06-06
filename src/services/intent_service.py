@@ -667,7 +667,8 @@ def get_technical_advice(message: str, groq_client, model: str) -> Optional[str]
         "Bangladesh's trusted online electronics and gadget marketplace.\n"
         "Answer the user's technical question about product capability, compatibility, upgrade "
         "potential, or performance in 2-3 clear sentences.\n"
-        "The user may write in English, Bangla, or Banglish. Always reply in the SAME language the user used.\n"
+        "IMPORTANT: Always reply in pure Bengali (Bangla) script only — never use English words or Banglish. "
+        "Even if the user writes in English or Banglish, your answer must be fully in Bangla.\n"
         "Be direct and helpful. Do NOT add disclaimers, recommend competitor brands, or mention specific prices."
     )
     try:
