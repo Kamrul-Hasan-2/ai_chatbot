@@ -38,6 +38,17 @@ _CANCEL_WORDS = {
     'stop', 'বন্ধ', 'বন্ধ করো',
 }
 
+# Short greetings that should break out of the order flow entirely.
+# When the user types one of these, they're starting fresh — not filling the
+# form — so we silently clear in-progress state and let the main pipeline's
+# greeting intercept run.
+_GREETING_RESET_WORDS = {
+    'hi', 'hii', 'hiii', 'hello', 'helo', 'hey', 'hlw', 'hloo',
+    'salam', 'assalamualaikum', 'asalamualaikum', 'assalam', 'slm',
+    'হাই', 'হ্যালো', 'হেলো', 'সালাম', 'আসসালামু আলাইকুম', 'আসসালামুয়ালাইকুম',
+    'good morning', 'good evening', 'good afternoon',
+}
+
 # Phrases that mean the user is asking about discount / negotiating the price
 # while mid-order. We answer with a fixed "price is fixed" message and re-show
 # the order form, keeping all collected state intact.
@@ -93,6 +104,14 @@ def _is_cancel(message: str) -> bool:
         return False
     return any(msg == w or msg.startswith(w + ' ') or msg.endswith(' ' + w)
                for w in _CANCEL_WORDS)
+
+
+def _is_greeting_reset(message: str) -> bool:
+    """True when the message is a short greeting that should break the order flow."""
+    msg = _normalize_token(message).rstrip('.!?।,')
+    if not msg or len(msg) > 25:
+        return False
+    return msg in _GREETING_RESET_WORDS
 
 
 def _is_price_negotiation(message: str) -> bool:
@@ -463,9 +482,19 @@ def start_order_flow(user_id: str, product: Dict) -> Dict:
 
 
 def continue_order_flow(user_id: str, message: str) -> Optional[Dict]:
-    """Advance the order flow. Returns None if user is not in flow."""
+    """Advance the order flow. Returns None if user is not in flow or if the
+    message is a fresh-start signal (greeting) — in which case the caller's
+    main pipeline handles it as if no order were in progress."""
     state = get_order_flow(user_id)
     if not state or not state.get('step'):
+        return None
+
+    # Fresh-start signal: user typed "Hi" / "Hello" / "সালাম" etc. — that's
+    # the start of a new conversation, not a form field. Silently drop the
+    # in-progress order state and let the main pipeline reply with its
+    # normal greeting.
+    if _is_greeting_reset(message):
+        clear_order_flow(user_id)
         return None
 
     if _is_cancel(message):
