@@ -158,8 +158,8 @@ def handle_buy(ctx: Dict, user_id: str, message: str) -> Dict:
     prev_products = get_product_context(user_id)
     if not prev_products and not ctx.get('category'):
         return _ok(
-            "স্যার, আপনি কোন প্রোডাক্টটি কিনতে চান? "
-            "প্রোডাক্টের নাম বা ক্যাটাগরি বললে আমি এখনই দেখিয়ে দিতে পারি।",
+            "স্যার, আপনি কোন মডেল কিনতে চান? "
+            "মডেল এর নাম বা ক্যাটাগরি বললে আমি এখনই দেখিয়ে দিতে পারি।",
             'buy', ic
         )
     # Category known but no cached products — search first, then show buy instructions
@@ -174,7 +174,7 @@ def handle_buy(ctx: Dict, user_id: str, message: str) -> Dict:
         )
         return _ok(
             (f"স্যার, কোন প্রোডাক্টটি অর্ডার করতে চান?\n\n{product_list}\n\n"
-             "স্যার, আপনি কোন প্রোডাক্টটি কিনতে চান, ১, ২, ৩ যেকোনো নম্বর বলুন।"),
+             "স্যার, আপনি কোন মডেল কিনতে চান, ১, ২, ৩ যেকোনো নম্বর বলুন।"),
             'product_clarification', ic
         )
 
