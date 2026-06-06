@@ -625,7 +625,7 @@ def _handle_condition_question(user_id: str, message: str) -> Optional[Dict]:
                 for i, p in enumerate(prev_products[:3])
             )
             return _ok(
-                f"স্যার, কোন প্রোডাক্টটি সম্পর্কে জানতে চাইছেন?\n\n{product_list}" + LOOP_BACK,
+                f"স্যার, কোন প্রোডাক্টটি সম্পর্কে জানতে চান, ১, ২, ৩ যেকোনো নম্বর বলুন।\n\n{product_list}",
                 'product_clarification', ic
             )
     top = prev_products[0]
@@ -1423,8 +1423,7 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
                 for i, p in enumerate(prev_products[:3])
             )
             return _ok(
-                f"স্যার, কোন প্রোডাক্টটি সম্পর্কে জানতে চাইছেন?\n\n{product_list}"
-                + LOOP_BACK,
+                f"স্যার, কোন প্রোডাক্টটি সম্পর্কে জানতে চান, ১, ২, ৩ যেকোনো নম্বর বলুন।\n\n{product_list}",
                 'product_clarification', ic
             )
 
@@ -1743,7 +1742,7 @@ def handle_product_spec_query(ctx: Dict, user_id: str, message: str,
             for i, p in enumerate(prev_products[:3])
         )
         return _ok(
-            f"স্যার, কোন প্রোডাক্টটি সম্পর্কে জানতে চাইছেন?\n\n{product_list}" + LOOP_BACK,
+            f"স্যার, কোন প্রোডাক্টটি সম্পর্কে জানতে চান, ১, ২, ৩ যেকোনো নম্বর বলুন।\n\n{product_list}",
             'product_clarification', ic
         )
 
