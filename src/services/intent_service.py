@@ -119,21 +119,26 @@ _CATEGORY_ALIASES = {
     'পিসি': 'desktop pc',
     'computer': 'desktop pc',
     'কম্পিউটার': 'desktop pc',
-    # Camera aliases
+    # Camera aliases — longer/more-specific entries MUST come before shorter ones
+    # because resolve_category_from_message iterates longest-key-first.
+    'cctv camera': 'CCTV Camera',
+    'security camera': 'CCTV Camera',
     'hidden camera': 'IP Camera',
     'হিডেন ক্যামেরা': 'IP Camera',
     'hidden cam': 'IP Camera',
     'spy camera': 'IP Camera',
+    'web camera': 'Webcam',
+    'ip camera': 'IP Camera',
     'spy cam': 'IP Camera',
     'cctv': 'CCTV Camera',
     'সিসিটিভি': 'CCTV Camera',
-    'security camera': 'CCTV Camera',
-    'ip camera': 'IP Camera',
-    'camera': 'Camera',
-    'ক্যামেরা': 'Camera',
     'webcam': 'Webcam',
-    'web camera': 'Webcam',
+    'ক্যামেরা': 'DSLR Camera',
 }
+
+# Pre-sorted alias keys (longest first) — computed once at module load.
+# resolve_category_from_message uses this to avoid re-sorting on every call.
+_SORTED_ALIAS_KEYS = sorted(_CATEGORY_ALIASES, key=len, reverse=True)
 
 
 def resolve_category(text: str, categories: List[Dict]) -> str:
@@ -194,7 +199,7 @@ def resolve_category_from_message(message: str, categories: List[Dict]) -> str:
     tl = message.lower()
 
     # Check multi-word aliases first (longest match wins), then single tokens
-    for alias_key in sorted(_CATEGORY_ALIASES, key=len, reverse=True):
+    for alias_key in _SORTED_ALIAS_KEYS:
         if alias_key in tl:
             result = resolve_category(_CATEGORY_ALIASES[alias_key], categories)
             if result:

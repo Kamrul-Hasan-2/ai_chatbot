@@ -73,6 +73,21 @@ def _boot() -> None:
 
 _boot()
 
+# ── Advance payment signals (module-level, synced with _ADVANCE_PAYMENT_SIGNALS) ─
+_ADVANCE_SIGNALS = frozenset({
+    'অগ্রিম', 'agrim', 'ogrim', 'ogram', 'আগাম', 'আগে টাকা', 'আগে পেমেন্ট',
+    'আগে দিতে হবে', 'আগে দিতে হয়', 'আগে পাঠাতে হবে',
+    'upfront', 'prepaid', 'prepay', 'advance', 'advance pay', 'advance dite',
+    'age taka', 'age payment', 'age dite', 'age pathate',
+})
+
+# ── Self-reference words that carry no question intent ────────────────────────
+_BARE_SELF_REF = frozenset({
+    'aita', 'eta', 'oita', 'eita', 'ita', 'this', 'it',
+    'এটা', 'এইটা', 'ওইটা', 'ওটা',
+    '1', '2', '3', '১', '২', '৩',
+})
+
 # ── Blocked automated message guard ──────────────────────────────────────────
 
 _BLOCKED_PHRASES = [
@@ -202,11 +217,6 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         # ── Advance payment intercept ────────────────────────────────────────
         # Groq often mislabels "অগ্রিম টাকা দিতে হবে?" as product_search.
         # Catch it deterministically before Groq.
-        _ADVANCE_SIGNALS = (
-            'অগ্রিম', 'agrim', 'ogrim', 'ogram', 'ogrim', 'আগাম', 'আগে টাকা', 'আগে পেমেন্ট',
-            'upfront', 'prepaid', 'prepay', 'advance pay', 'advance dite',
-            'age taka', 'age payment', 'age dite', 'age pathate',
-        )
         if any(s in message.lower() for s in _ADVANCE_SIGNALS):
             from services.intent_handlers_service import handle_delivery as _hd
             _adv_ctx = normalize_payload(prev_ctx)
@@ -407,11 +417,6 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                 # Don't save bare self-reference words ("aita", "eta", "oita") as the
                 # pending question — they carry no intent and cause spec-fallback failures.
                 if detail.get('intent') == 'product_clarification':
-                    _BARE_SELF_REF = {
-                        'aita', 'eta', 'oita', 'eita', 'ita', 'this', 'it',
-                        'এটা', 'এইটা', 'ওইটা', 'ওটা',
-                        '1', '2', '3', '১', '২', '৩',
-                    }
                     _msg_self = message.strip().lower().rstrip('.?!।')
                     if _msg_self not in _BARE_SELF_REF:
                         set_pending_question(user_id, message)
