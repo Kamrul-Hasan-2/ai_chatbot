@@ -761,10 +761,20 @@ def handle_clarification_selection(user_id: str, message: str,
             'buy', ic, link_buttons=buttons
         )
 
+    # No pending question — user just selected a product without asking anything specific.
+    # Show a product card with title, price, and a link button.
+    if not pending_question or pending_question.strip() in ('1', '2', '3', '১', '২', '৩'):
+        price = selected.get('price', '')
+        lines = [f"স্যার, এই প্রোডাক্টটি পেয়েছি:", "", f"📦 {title}"]
+        if price:
+            lines.append(f"💰 মূল্য: {price}")
+        lines.append(LOOP_BACK)
+        return _ok('\n'.join(lines), 'product_link', ic, link_buttons=buttons)
+
     # Default: spec query — handles ram/display/battery/full-spec/any other detail
     ctx = {'category': selected.get('category', ''), 'brand': '', 'title': title}
     return handle_product_spec_query(ctx, user_id,
-                                     pending_question or message,
+                                     pending_question,
                                      groq_client, groq_model)
 
 
