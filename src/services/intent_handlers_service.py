@@ -999,8 +999,15 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
         '4g', '5g', 'wifi', 'bluetooth',
         # Battery / camera (mobiles)
         'mah', 'mp', 'megapixel', 'camera',
+        # Accessories / peripherals — prevent "laptop stand" matching laptop category page
+        'stand', 'bag', 'case', 'cover', 'sleeve', 'skin', 'holder',
+        'cooling pad', 'cooler', 'fan', 'hub', 'dock', 'docking',
+        'charger', 'adapter', 'cable', 'mouse', 'keyboard', 'headphone',
+        'earphone', 'speaker', 'microphone', 'webcam', 'light', 'lamp',
+        'table', 'desk', 'arm', 'mount', 'wall mount',
         # Bangla
         'গেমিং', 'র‍্যাম', 'প্রসেসর', 'ব্যাটারি', 'ক্যামেরা',
+        'স্ট্যান্ড', 'ব্যাগ', 'কভার', 'চার্জার', 'কুলার',
     )
     _msg_l = (message or '').lower()
     _cat_l = (ctx.get('category') or '').lower()
