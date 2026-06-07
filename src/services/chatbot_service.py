@@ -404,8 +404,19 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
             if detail:
                 # When the followup handler asks the user to pick a product by number,
                 # save the original message so the selection turn can answer WHAT was asked.
+                # Don't save bare self-reference words ("aita", "eta", "oita") as the
+                # pending question — they carry no intent and cause spec-fallback failures.
                 if detail.get('intent') == 'product_clarification':
-                    set_pending_question(user_id, message)
+                    _BARE_SELF_REF = {
+                        'aita', 'eta', 'oita', 'eita', 'ita', 'this', 'it',
+                        'এটা', 'এইটা', 'ওইটা', 'ওটা',
+                        '1', '2', '3', '১', '২', '৩',
+                    }
+                    _msg_self = message.strip().lower().rstrip('.?!।')
+                    if _msg_self not in _BARE_SELF_REF:
+                        set_pending_question(user_id, message)
+                    else:
+                        set_pending_question(user_id, '')
                 _observe_and_save(user_id, profile, message, detail.get('intent', ''), prev_ctx)
                 return _build_response(user_id, detail, ChatMode.AI, AI_ACTIVE_STATUS,
                                        (datetime.now() - start_time).total_seconds(),
