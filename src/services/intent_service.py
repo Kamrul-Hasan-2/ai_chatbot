@@ -119,6 +119,20 @@ _CATEGORY_ALIASES = {
     'পিসি': 'desktop pc',
     'computer': 'desktop pc',
     'কম্পিউটার': 'desktop pc',
+    # Camera aliases
+    'hidden camera': 'IP Camera',
+    'হিডেন ক্যামেরা': 'IP Camera',
+    'hidden cam': 'IP Camera',
+    'spy camera': 'IP Camera',
+    'spy cam': 'IP Camera',
+    'cctv': 'CCTV Camera',
+    'সিসিটিভি': 'CCTV Camera',
+    'security camera': 'CCTV Camera',
+    'ip camera': 'IP Camera',
+    'camera': 'Camera',
+    'ক্যামেরা': 'Camera',
+    'webcam': 'Webcam',
+    'web camera': 'Webcam',
 }
 
 
@@ -179,7 +193,12 @@ def resolve_category_from_message(message: str, categories: List[Dict]) -> str:
         return ''
     tl = message.lower()
 
-    # Check aliases first — handles short tokens like "tv", "ac", "fridge"
+    # Check multi-word aliases first (longest match wins), then single tokens
+    for alias_key in sorted(_CATEGORY_ALIASES, key=len, reverse=True):
+        if alias_key in tl:
+            result = resolve_category(_CATEGORY_ALIASES[alias_key], categories)
+            if result:
+                return result
     for tok in tl.split():
         alias = _CATEGORY_ALIASES.get(tok.strip())
         if alias:
