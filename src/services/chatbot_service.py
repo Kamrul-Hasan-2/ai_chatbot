@@ -88,6 +88,50 @@ _BARE_SELF_REF = frozenset({
     '1', '2', '3', '১', '২', '৩',
 })
 
+# ── Shop/showroom physical-visit signals ──────────────────────────────────────
+# A buyer asking "ami ki apnader shop e eshe dekhe nite parbo?" (can I come to
+# your shop and see in person?) carries NO location word, so the seller_query
+# downgrade can miss it and Groq may hand the buyer to a sales agent. We catch
+# (shop/showroom word) + (physical-visit verb) deterministically before Groq.
+# Both sets are substring-matched against message.lower(); validated collision-
+# free against genuine seller-onboarding phrasings.
+_SHOP_WORDS = frozenset({
+    'shop', 'শপ', 'dokan', 'দোকান', 'dukan', 'দুকান', 'store',
+    'showroom', 'শোরুম', 'show room', 'শো রুম',
+    'outlet', 'আউটলেট', 'office', 'অফিস',
+})
+_VISIT_SIGNALS = frozenset({
+    'eshe', 'এসে', 'ashbo', 'asbo', 'আসবো', 'ashbe', 'asbe',
+    'ashle', 'asle', 'আসলে',
+    'dekhe nite', 'দেখে নিতে', 'dekhte', 'দেখতে', 'দেখার', 'dekhe nibo',
+    'jete', 'jabo', 'যেতে', 'যাবো', 'giye', 'গিয়ে',
+    'visit', 'ভিজিট', 'come to', 'come and', 'come by', 'come over', 'come visit',
+    'serashori', 'সরাসরি', 'nijer chokhe', 'in person',
+})
+
+# ── Product authenticity (genuine vs fake) signals ────────────────────────────
+# "apnader product asol na nokol?" (are your products genuine or fake?) is a
+# trust question. BDStall hosts many independent sellers, so we can't promise
+# every single unit is genuine — we answer reassuringly but honestly tell the
+# buyer to verify before buying. Substring-matched against message.lower().
+# Bare 'asol'/'original' are deliberately excluded — they collide with price
+# questions ("asol dam koto", "original price") — so we key off the unambiguous
+# fake-side words plus the explicit "asol na nokol" phrasings.
+_AUTHENTICITY_SIGNALS = frozenset({
+    'nokol', 'নকল', 'nokal', 'nakol',
+    'duplicate', 'ডুপ্লিকেট', 'duplicat',
+    'fake', 'ফেক',
+    'vejal', 'ভেজাল', 'bhejal',
+    'master copy', '1st copy', 'first copy', 'copy product',
+    'genuine', 'authentic',
+    'asol na nokol', 'asol naki nokol', 'asol naki fake',
+    'আসল না নকল', 'নকল না আসল', 'real or fake', 'real naki fake',
+})
+
+_AUTHENTICITY_RESPONSE = (
+    "স্যার, আমাদের এখানের সকল প্রোডাক্টই ভালো, তবে কেনার আগে অবশ্যই দেখে নিবেন।"
+)
+
 # ── Blocked automated message guard ──────────────────────────────────────────
 
 _BLOCKED_PHRASES = [
@@ -249,6 +293,44 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                                        ChatMode.AI, AI_ACTIVE_STATUS,
                                        (datetime.now() - start_time).total_seconds(),
                                        user_message=message, profile=profile)
+
+        # ── Shop/showroom visit intercept ────────────────────────────────────
+        # "ami ki apnader shop e eshe dekhe nite parbo?" (can I come to your shop
+        # in person?) has no location word, so the seller_query downgrade can miss
+        # it and Groq may hand the buyer to a sales agent. Catch (shop word) +
+        # (physical-visit verb) deterministically before Groq → online-platform
+        # answer. BDStall is online-only, so there is never a shop to visit.
+        _msg_l_shop = message.lower()
+        if (any(w in _msg_l_shop for w in _SHOP_WORDS)
+                and any(v in _msg_l_shop for v in _VISIT_SIGNALS)):
+            from services.intent_handlers_service import _SHOWROOM_RESPONSE
+            _sv_ctx = normalize_payload(prev_ctx)
+            _observe_and_save(user_id, profile, message, 'faq_showroom', {})
+            return _build_response(
+                user_id,
+                {'response': _SHOWROOM_RESPONSE + LOOP_BACK,
+                 'intent': 'faq_showroom', 'intent_content': _sv_ctx, 'products': []},
+                ChatMode.AI, AI_ACTIVE_STATUS,
+                (datetime.now() - start_time).total_seconds(),
+                user_message=message, profile=profile)
+
+        # ── Product authenticity intercept ───────────────────────────────────
+        # "apnader product asol na nokol?" (genuine or fake?). Catch it before
+        # Groq — otherwise it gets mislabelled as product_search (and re-shows
+        # cached products) or routed to the product-detail followup. Fixed
+        # reassure-but-verify reply; never hands off to a human.
+        _msg_l_auth = message.lower()
+        if any(s in _msg_l_auth for s in _AUTHENTICITY_SIGNALS):
+            _auth_ctx = normalize_payload(prev_ctx)
+            _observe_and_save(user_id, profile, message, 'faq_authenticity', {})
+            return _build_response(
+                user_id,
+                {'response': _AUTHENTICITY_RESPONSE,
+                 'intent': 'faq_authenticity', 'intent_content': _auth_ctx,
+                 'products': []},
+                ChatMode.AI, AI_ACTIVE_STATUS,
+                (datetime.now() - start_time).total_seconds(),
+                user_message=message, profile=profile)
 
         # Deterministic greeting intercept — short hi/hello/salam messages should
         # never depend on Groq. Without this a Groq outage hands every new user
@@ -667,10 +749,13 @@ def _dispatch(intent: str, ctx: Dict, user_id: str, message: str,
     if intent == 'seller_query':
         msg_l = (message or '').lower()
         _BUYER_LOCATION_SIGNALS = (
-            'কোথায়', 'kothay', 'kothai', 'where',
+            'কোথায়', 'kothay', 'kuthay', 'kothai', 'where',
             'কোন জায়গায়', 'kon jaygay', 'kon jayga',
+            'koi', 'কই', 'কোই',
         )
-        if any(s in msg_l for s in _BUYER_LOCATION_SIGNALS):
+        _is_shop_visit = (any(w in msg_l for w in _SHOP_WORDS)
+                          and any(v in msg_l for v in _VISIT_SIGNALS))
+        if any(s in msg_l for s in _BUYER_LOCATION_SIGNALS) or _is_shop_visit:
             from services.intent_handlers_service import _SHOWROOM_RESPONSE
             ic = normalize_payload(prev_ctx or load_context(user_id))
             return {'response': _SHOWROOM_RESPONSE + LOOP_BACK,

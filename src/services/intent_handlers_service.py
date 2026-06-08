@@ -403,7 +403,9 @@ _WARRANTY_RESPONSE = (
 
 _SHOWROOM_WORDS = {
     'showroom', 'show room', 'শোরুম', 'শো রুম', 'office', 'অফিস',
-    'address', 'ঠিকানা', 'location', 'লোকেশন', 'kothay', 'কোথায়',
+    'address', 'ঠিকানা', 'location', 'লোকেশন', 'kothay', 'kuthay', 'কোথায়',
+    'dokan', 'দোকান', 'shop', 'শপ', 'dukan', 'দুকান', 'store',
+    'koi', 'কই', 'কোই',
 }
 
 _SHOWROOM_RESPONSE = (
