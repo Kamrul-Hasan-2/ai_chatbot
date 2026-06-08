@@ -148,8 +148,10 @@ def _do_search(keywords: str, price_max: Optional[int],
         data = resp.json()
         if not data.get('getListingItem') or len(data['getListingItem']) < 2:
             return {'products_found': 0, 'products': []}
-        total = data['getListingItem'][0]
+        total = int(data['getListingItem'][0] or 0)
         raw   = data['getListingItem'][1] or []
+        if total == 0 or not raw:
+            return {'products_found': 0, 'products': []}
         top = raw[:15]
         products = [{
             'title':          p.get('ListingTitle', 'N/A'),
@@ -158,8 +160,8 @@ def _do_search(keywords: str, price_max: Optional[int],
             'discount':       p.get('ListingDiscountPercentage', 0),
             'url':            p.get('ListingURL', ''),
             'image':          p.get('ListingThumbAvator', ''),
-        } for p in top]
-        return {'products_found': len(top), 'total_products': total, 'products': products}
+        } for p in top if isinstance(p, dict)]
+        return {'products_found': len(products), 'total_products': total, 'products': products}
     except Exception as e:
         logger.error("_do_search failed: %s", e)
         return {'products_found': 0, 'products': []}
