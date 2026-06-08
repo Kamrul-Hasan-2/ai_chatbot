@@ -101,8 +101,8 @@ _SHOP_WORDS = frozenset({
     'outlet', 'আউটলেট', 'office', 'অফিস',
 })
 _VISIT_SIGNALS = frozenset({
-    'eshe', 'এসে', 'ese', 'esye', 'eshey', 'eshe', 'ashbo', 'asbo', 'আসবো',
-    'ashbe', 'asbe', 'ashle', 'asle', 'আসলে',
+    'eshe', 'এসে', 'ese', 'esye', 'eshey', 'eashe', 'eashey', 'ashe',
+    'ashbo', 'asbo', 'আসবো', 'ashbe', 'asbe', 'ashle', 'asle', 'আসলে',
     'dekhe nite', 'দেখে নিতে', 'dekhte', 'দেখতে', 'দেখার', 'dekhe nibo',
     'jete', 'jabo', 'যেতে', 'যাবো', 'giye', 'গিয়ে',
     'visit', 'ভিজিট', 'come to', 'come and', 'come by', 'come over', 'come visit',
@@ -134,6 +134,27 @@ _AUTHENTICITY_SIGNALS = frozenset({
 
 _AUTHENTICITY_RESPONSE = (
     "স্যার, আমাদের এখানের সকল প্রোডাক্টই ভালো, তবে কেনার আগে অবশ্যই দেখে নিবেন।"
+)
+
+# ── Payment-method / cash-on-delivery signals ─────────────────────────────────
+# "cash on delivery hobe?", "kivabe payment korbo?", "bkash e dewa jabe?" asked
+# OUTSIDE an order flow. Groq mislabels these as buy/product_search and replies
+# "which model do you want?". We answer the payment question deterministically
+# before Groq. (Inside an order flow these are handled by order_handler's
+# interruption guard, which runs earlier.) Substring-matched against
+# message.lower(); 'cod' is matched word-bounded so "code"/"barcode" don't hit.
+_PAYMENT_SIGNALS = frozenset({
+    'cash on delivery', 'ক্যাশ অন ডেলিভারি', 'ক্যাশ অন', 'c.o.d',
+    'hate peye', 'haate peye', 'hate pe taka', 'হাতে পেয়ে',
+    'payment', 'পেমেন্ট', 'pay korbo', 'pay korte',
+    'bkash', 'বিকাশ', 'nagad', 'নগদ',
+    'online payment', 'অনলাইন পেমেন্ট',
+    'taka kivabe dibo', 'kivabe taka dibo', 'taka kibhabe dibo',
+})
+
+_PAYMENT_RESPONSE = (
+    "স্যার, ঢাকার ভেতরে পণ্য হাতে পেয়ে টাকা দিতে পারবেন (ক্যাশ অন ডেলিভারি)। "
+    "ঢাকার বাইরে শুধু অগ্রিম পেমেন্ট প্রযোজ্য।"
 )
 
 # ── Blocked automated message guard ──────────────────────────────────────────
@@ -273,6 +294,24 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
             return _build_response(user_id, _adv_result, ChatMode.AI, AI_ACTIVE_STATUS,
                                    (datetime.now() - start_time).total_seconds(),
                                    user_message=message, profile=profile)
+
+        # ── Payment-method / cash-on-delivery intercept ──────────────────────
+        # "cash on delivery hobe?", "bkash e payment kora jabe?" outside an order
+        # flow. Groq sends these to buy/product_search and answers "which model?".
+        # Answer the payment question deterministically before Groq.
+        _msg_l_pay = message.lower()
+        if (any(s in _msg_l_pay for s in _PAYMENT_SIGNALS)
+                or re.search(r'\bcod\b', _msg_l_pay)):
+            _pay_ctx = normalize_payload(prev_ctx)
+            _observe_and_save(user_id, profile, message, 'faq_payment', {})
+            return _build_response(
+                user_id,
+                {'response': _PAYMENT_RESPONSE,
+                 'intent': 'faq_payment', 'intent_content': _pay_ctx,
+                 'products': []},
+                ChatMode.AI, AI_ACTIVE_STATUS,
+                (datetime.now() - start_time).total_seconds(),
+                user_message=message, profile=profile)
 
         # ── Order status lookup intercept ────────────────────────────────────
         # Catch messages like "order status 17805593641", "অর্ডার চেক 17805…",
