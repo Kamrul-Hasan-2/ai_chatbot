@@ -177,6 +177,58 @@ def _is_price_negotiation(message: str) -> bool:
     return any(s in msg for s in _PRICE_NEGOTIATE_SIGNALS)
 
 
+# ── Mid-order info-question interruptions ─────────────────────────────────────
+# While we're collecting order fields, a buyer often pauses to ask an unrelated
+# info question — "delivery koto din?", "cash on delivery hobe?", "eta ki
+# nokol?", "warranty ase?". Without this guard the freeform parser swallows the
+# question as a name/address and the half-built order gets corrupted. We answer
+# the question with a short fixed reply and re-show the SAME prompt, keeping every
+# already-collected field intact — exactly like the price-negotiation handler.
+#
+# Signals are substring-matched. Words that commonly appear in real names/areas
+# (e.g. "notun" → "Notun Bazar", "used") are deliberately excluded to avoid
+# false-triggering on a legitimate form value.
+_INTERRUPTION_REPLIES = (
+    # Payment/COD must be checked BEFORE delivery — "cash on delivery" contains
+    # the word "delivery" and would otherwise match the delivery-timing answer.
+    (('cash on delivery', 'ক্যাশ অন', 'hate peye', 'hate pe taka', 'payment',
+      'পেমেন্ট', 'bkash', 'বিকাশ', 'nagad', 'নগদ', 'kivabe dibo', 'kibhabe taka'),
+     "স্যার, ঢাকার ভেতরে পণ্য হাতে পেয়ে টাকা দিতে পারবেন (ক্যাশ অন ডেলিভারি)। "
+     "ঢাকার বাইরে শুধু অগ্রিম পেমেন্ট প্রযোজ্য।"),
+    (('delivery', 'ডেলিভারি', 'courier', 'কুরিয়ার', 'koto din', 'kotodin',
+      'koy din', 'koydin', 'kobe pabo', 'kobe asbe', 'kobe dibe'),
+     "স্যার, ঢাকার ভেতরে ১-২ কার্যদিবস এবং ঢাকার বাইরে ২-৫ কার্যদিবসে ডেলিভারি হয়। "
+     "চার্জ ঢাকায় ৬০-৮০৳, ঢাকার বাইরে ১২০-১৫০৳।"),
+    (('warranty', 'ওয়ারেন্টি', 'warenty', 'warrenty', 'guarantee', 'গ্যারান্টি',
+      'garanti'),
+     "স্যার, ওয়ারেন্টি প্রোডাক্ট ও বিক্রেতাভেদে ভিন্ন হয় — বিস্তারিত প্রোডাক্ট পেজে দেখে নিন।"),
+    (('nokol', 'নকল', 'fake', 'ফেক', 'duplicate', 'genuine', 'vejal', 'ভেজাল',
+      'asol na nokol'),
+     "স্যার, আমাদের এখানের সকল প্রোডাক্টই ভালো, তবে কেনার আগে অবশ্যই দেখে নিবেন।"),
+    (('return', 'ফেরত', 'refund', 'রিফান্ড'),
+     "স্যার, পণ্যে সমস্যা থাকলে রিটার্ন পলিসি অনুযায়ী ফেরত বা পরিবর্তনের সুযোগ আছে।"),
+    (('condition', 'কন্ডিশন', 'refurbish', 'refurbished'),
+     "স্যার, প্রোডাক্টের কন্ডিশন প্রোডাক্ট পেজে উল্লেখ থাকে — সেখানে দেখে নিতে পারেন।"),
+)
+
+
+def _order_interruption_reply(message: str) -> Optional[str]:
+    """Return a fixed info answer if the message is a mid-order question, else None.
+
+    A message carrying a mobile number is treated as form data (never an
+    interruption) so "amar number 017..., delivery koto?" still fills the form.
+    """
+    msg = _normalize_token(message)
+    if not msg:
+        return None
+    if _parse_mobile(message):
+        return None
+    for signals, reply in _INTERRUPTION_REPLIES:
+        if any(s in msg for s in signals):
+            return reply
+    return None
+
+
 def _is_confirm(message: str) -> bool:
     msg = _normalize_token(message).rstrip('.!?।,')
     if not msg:
@@ -552,13 +604,6 @@ def continue_order_flow(user_id: str, message: str) -> Optional[Dict]:
         clear_order_flow(user_id)
         return None
 
-    # Product-search escape: user sent a product query ("hp laptop ase",
-    # "samsung phone lagbe") instead of filling the order form. They've
-    # abandoned the previous order — clear state and fall through to Groq.
-    if _is_product_search_escape(message):
-        clear_order_flow(user_id)
-        return None
-
     if _is_cancel(message):
         clear_order_flow(user_id)
         return _ok(
@@ -579,6 +624,26 @@ def continue_order_flow(user_id: str, message: str) -> Optional[Dict]:
         else:
             tail = _prompt_collect(title)
         return _ok(intro + "\n\n" + tail, 'order_price_fixed')
+
+    # Info-question interruption mid-order — answer briefly and re-show the
+    # current prompt without losing any collected field (same model as the
+    # price-negotiation handler above). Runs BEFORE the product-search escape so
+    # an info question that mentions the product category ("ei laptop ki nokol?")
+    # gets answered instead of abandoning the half-built order.
+    _intr_reply = _order_interruption_reply(message)
+    if _intr_reply:
+        if state.get('step') == STEP_CONFIRM:
+            tail = _prompt_confirm(state)
+        else:
+            tail = _prompt_collect(state.get('product_title', ''))
+        return _ok(_intr_reply + "\n\n" + tail, 'order_interruption')
+
+    # Product-search escape: user sent a product query ("hp laptop ase",
+    # "samsung phone lagbe") instead of filling the order form. They've
+    # abandoned the previous order — clear state and fall through to Groq.
+    if _is_product_search_escape(message):
+        clear_order_flow(user_id)
+        return None
 
     step = state['step']
 

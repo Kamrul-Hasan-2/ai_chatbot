@@ -101,12 +101,16 @@ _SHOP_WORDS = frozenset({
     'outlet', 'আউটলেট', 'office', 'অফিস',
 })
 _VISIT_SIGNALS = frozenset({
-    'eshe', 'এসে', 'ashbo', 'asbo', 'আসবো', 'ashbe', 'asbe',
-    'ashle', 'asle', 'আসলে',
+    'eshe', 'এসে', 'ese', 'esye', 'eshey', 'eshe', 'ashbo', 'asbo', 'আসবো',
+    'ashbe', 'asbe', 'ashle', 'asle', 'আসলে',
     'dekhe nite', 'দেখে নিতে', 'dekhte', 'দেখতে', 'দেখার', 'dekhe nibo',
     'jete', 'jabo', 'যেতে', 'যাবো', 'giye', 'গিয়ে',
     'visit', 'ভিজিট', 'come to', 'come and', 'come by', 'come over', 'come visit',
     'serashori', 'সরাসরি', 'nijer chokhe', 'in person',
+    # Buy-at-shop phrasings ("apnader shop e kinte parbo?") — only ever evaluated
+    # together with a _SHOP_WORDS hit, so these can't false-trigger on a plain
+    # "ami laptop kinte chai" product search.
+    'kinte', 'kinbo', 'kena', 'kinte parbo', 'কিনতে', 'কিনবো', 'কিনব', 'কেনা',
 })
 
 # ── Product authenticity (genuine vs fake) signals ────────────────────────────
