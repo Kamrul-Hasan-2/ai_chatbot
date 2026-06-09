@@ -901,6 +901,94 @@ _REJECTION_PHRASES = {
 }
 
 
+# ── No-category keyword-search fallback ───────────────────────────────────────
+# When Groq/the resolver can't map a message to a known category but the user
+# clearly named a product ("voltage protector 3 pin", "3 pin socket"), search
+# the BDStall API by free-text keywords instead of repeatedly asking which
+# category. Only ask for the category when no meaningful product word remains.
+_GENERIC_SEARCH_WORDS = frozenset({
+    'product', 'products', 'item', 'kinbo', 'kinte', 'kine', 'kinba', 'chai',
+    'chacchi', 'lagbe', 'lagbe', 'dekhao', 'dekhan', 'dekhabo', 'dorkar',
+    'darkar', 'ache', 'ase', 'achhe', 'kono', 'kichu', 'amar', 'ami', 'apnar',
+    'apni', 'price', 'dam', 'daam', 'koto', 'kemon', 'nibo', 'nigbo', 'order',
+    'moddhe', 'modde', 'moddhye', 'modhe', 'vitor', 'bhitor', 'vetore', 'taka',
+    'budget', 'jonno', 'jonni', 'ektu', 'bolen', 'bolun', 'din', 'egula',
+    'egulo', 'oigula', 'oigulo', 'egla',
+    'প্রোডাক্ট', 'কিছু', 'কিনবো', 'কিনতে', 'লাগবে', 'চাই', 'দরকার', 'দাম',
+    'কত', 'কেমন', 'মধ্যে', 'ভিতরে', 'টাকা', 'বাজেট', 'জন্য', 'একটু', 'এগুলো',
+})
+_BUDGET_TOKEN_RE = re.compile(r'^[\d,]+(k|hazar|tk|taka|৳|হাজার)?$', re.IGNORECASE)
+_SEARCH_NOISE_RE = re.compile(
+    r'এই\s*(?:প্রোডাক্ট|product)\s*(?:টি|টা)?\s*(?:কি)?\s*(?:আছে|নেই|নাই)?\??'
+    r'|(?:প্রোডাক্ট|product)\s*(?:টি|টা)'
+    r'|(?:কি)?\s*(?:আছে|নেই|নাই|ache|ase|achhe)\s*(?:কি|ki)?'
+    r'|পাওয়া\s*যাবে|powa\s*jabe'
+    r'|[?]+|।',
+    re.IGNORECASE,
+)
+
+
+def _clean_product_keywords(message: str) -> str:
+    if not message:
+        return ''
+    txt = _SEARCH_NOISE_RE.sub(' ', message)
+    return re.sub(r'\s+', ' ', txt).strip()
+
+
+def _meaningful_search_tokens(kw: str) -> List[str]:
+    out = []
+    for t in kw.split():
+        tl = t.lower().strip('.,?!।')
+        if len(tl) < 3 or tl in _GENERIC_SEARCH_WORDS or _BUDGET_TOKEN_RE.match(tl):
+            continue
+        out.append(t)
+    return out
+
+
+def _search_without_category(ctx: Dict, user_id: str, message: str) -> Optional[Dict]:
+    """Free-text product search when no category resolved.
+
+    Returns a product-listing response, or None so the caller falls back to
+    asking the user which category they want.
+    """
+    kw = _build_keywords(ctx) or _clean_product_keywords(message)
+    tokens = _meaningful_search_tokens(kw)
+    if not tokens:
+        return None
+
+    price_max = ctx.get('price_max')
+    price_min = ctx.get('price_min')
+    # Try the full phrase first; if nothing, retry with the two longest tokens
+    # (usually the core product noun, e.g. "voltage protector"), dropping a
+    # possibly-misspelled brand token like "Tpoa".
+    attempts = [' '.join(tokens)]
+    if len(tokens) >= 2:
+        core = ' '.join(sorted(tokens, key=len, reverse=True)[:2])
+        if core not in attempts:
+            attempts.append(core)
+
+    result = None
+    used_kw = ''
+    for attempt in attempts:
+        result = search_products(attempt, price_max, price_min)
+        if result['products_found'] == 0 and (price_max or price_min):
+            result = search_products(attempt)
+        if result['products_found'] > 0:
+            used_kw = attempt
+            break
+
+    if not result or result['products_found'] == 0:
+        return None
+
+    products = result['products']
+    set_search_pool(user_id, used_kw, products)
+    set_product_context(user_id, products[:5])
+    text, buttons = _format_listing(products[:3])
+    ic = intent_to_normalized(ctx)
+    return _ok("স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:\n\n" + text,
+               'product_search', ic, products=products, link_buttons=buttons)
+
+
 def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
     logger.info("handle_product_search ctx=%s", {k: ctx.get(k) for k in ('category','brand','title','price_min','price_max')})
 
@@ -987,6 +1075,12 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
         return condition_result
 
     if not ctx.get('category'):
+        # The user may have named a product whose category didn't resolve
+        # ("voltage protector 3 pin", "3 pin socket"). Try a free-text keyword
+        # search before falling back to asking which category they want.
+        fallback = _search_without_category(ctx, user_id, message)
+        if fallback is not None:
+            return fallback
         return _ask_category(ctx, user_id)
 
     price_max = ctx.get('price_max')
