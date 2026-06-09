@@ -779,20 +779,48 @@ def _process_user_message(
     # Always save the bot turn so history has no gaps. For silent turns
     # (human-mode, automated-template blocked) save a single space so the
     # API accepts the record while the conversation thread stays intact.
+    # Silent/empty turns must NOT carry intent_content — otherwise a blank bot
+    # row persists stale context (e.g. old laptop context during a human
+    # handoff) and pollutes next-turn context loading. (review finding #5)
     bot_save_text = response_text or ' '
+    bot_intent_content = (intent_content
+                          if (response_text and isinstance(intent_content, dict))
+                          else None)
     bot_saved = save_chat_message(
         user_id=user_id,
         sender_type=2,
         message=bot_save_text,
         user_name=resolved_user_name,
-        intent_content=intent_content if isinstance(intent_content, dict) else None
+        intent_content=bot_intent_content
     )
     if not bot_saved:
+        # Bot turn is the source of truth for next-turn DB context — retry once
+        # before giving up so a transient API hiccup doesn't drop context. (#2)
         logger.warning(
-            "[PIPELINE] bot response not persisted source=%s user_id=%s",
-            source,
-            user_id
+            "[PIPELINE] bot response not persisted, retrying once source=%s user_id=%s",
+            source, user_id
         )
+        bot_saved = save_chat_message(
+            user_id=user_id,
+            sender_type=2,
+            message=bot_save_text,
+            user_name=resolved_user_name,
+            intent_content=bot_intent_content
+        )
+        if not bot_saved:
+            logger.error(
+                "[PIPELINE] bot response not persisted after retry source=%s user_id=%s",
+                source, user_id
+            )
+
+    # Freshly saved turns must be visible on the next message — drop the per-user
+    # history/intent caches so the next turn reloads from the DB rather than a
+    # stale 60s-cached copy. (review finding #2)
+    try:
+        from services.api_client_service import invalidate_user_cache
+        invalidate_user_cache(user_id)
+    except Exception as _e:
+        logger.warning("invalidate_user_cache failed user_id=%s: %s", user_id, _e)
 
     logger.info(
         "[PIPELINE] platform=%s source=%s user_id=%s mode=%s intent=%s has_response=%s visitor_saved=%s bot_saved=%s",
@@ -809,6 +837,15 @@ def _process_user_message(
     # Always include user_name and platform_id in API response when known.
     result['user_name'] = resolved_user_name
     result['platform_id'] = platform_id
+
+    # Surface persistence status so callers don't treat a lost bot turn as a full
+    # success — DB history is the source of truth for next-turn context. (#4)
+    result['save_status'] = {
+        'visitor_saved': bool(visitor_saved),
+        'bot_saved':     bool(bot_saved),
+    }
+    if not (visitor_saved and bot_saved):
+        result['degraded'] = True
 
     return result
 

@@ -158,8 +158,8 @@ def handle_buy(ctx: Dict, user_id: str, message: str) -> Dict:
     prev_products = get_product_context(user_id)
     if not prev_products and not ctx.get('category'):
         return _ok(
-            "স্যার, আপনি কোন মডেল কিনতে চান? "
-            "মডেল এর নাম বা ক্যাটাগরি বললে আমি এখনই দেখিয়ে দিতে পারি।",
+            "স্যার, আপনি কোন প্রোডাক্টটি কিনতে চান? "
+            "প্রোডাক্ট/মডেলের নাম অথবা প্রোডাক্ট লিংকটি দিন, আমি এখনই দেখিয়ে দিচ্ছি।",
             'buy', ic
         )
     # Category known but no cached products — search first, then show buy instructions
@@ -217,23 +217,25 @@ def handle_comparison(ctx: Dict, user_id: str, message: str) -> Dict:
     ic = intent_to_normalized(ctx)
     prev_products = get_product_context(user_id)
     if prev_products:
-        top = prev_products[0]
-        title = top.get('title', '')
-        price = top.get('price', '')
-        url = top.get('url', '')
-        # Avoid asserting "this is the best" — we can't know that.
-        # Show the top result and let the user decide based on reviews.
-        lines = ["স্যার, দেখানো প্রোডাক্টগুলোর মধ্যে এটি একটি ভালো অপশন হতে পারে:", ""]
-        if title:
-            lines.append(f"📦 {title}")
-        if price:
-            lines.append(f"💰 মূল্য: {price}")
+        # Don't crown a "best" / "good option" — we can't judge that for the user.
+        # List the shown options neutrally with their prices and invite the user
+        # to compare specs/reviews and pick. (review finding #9)
+        lines = ["স্যার, দেখানো প্রোডাক্টগুলোর স্পেসিফিকেশন, রিভিউ ও রেটিং দেখে "
+                 "আপনার প্রয়োজন অনুযায়ী পছন্দেরটি বেছে নিতে পারেন:", ""]
+        for i, p in enumerate(prev_products[:3], 1):
+            title = p.get('title', '')
+            price = p.get('price', '')
+            if not title:
+                continue
+            line = f"{i}. 📦 {title}"
+            if price:
+                line += f" — 💰 {price}"
+            lines.append(line)
         lines.append("")
-        lines.append("রিভিউ ও রেটিং দেখে পছন্দ হলে অর্ডার করতে পারেন।")
+        lines.append("কোন দুটি প্রোডাক্ট তুলনা করতে চান বললে আমি স্পেসিফিকেশন তথ্য দিতে পারি।")
         lines.append(LOOP_BACK)
-        buttons = [{'text': 'প্রোডাক্ট দেখুন', 'url': url, 'title': title,
-                    'price': price}] if url else _comparison_buttons(ctx)
-        return _ok('\n'.join(lines), 'comparison', ic, link_buttons=buttons)
+        return _ok('\n'.join(lines), 'comparison', ic,
+                   link_buttons=_comparison_buttons(ctx))
     # No cached products — if we know the category, surface a real search result.
     if ctx.get('category'):
         return handle_product_search(ctx, user_id, message)
@@ -876,6 +878,41 @@ def _is_more_request(message: str) -> bool:
         if wl == msg or msg.startswith(wl + ' ') or msg.endswith(' ' + wl) or f' {wl} ' in f' {msg} ':
             return True
     return False
+
+
+def handle_show_more(ctx: Dict, user_id: str) -> Optional[Dict]:
+    """Pagination for 'aro dekhan' / 'show more'. Returns the next slice from the
+    cached search pool; if the pool is exhausted it repeats the last shown
+    products rather than handing off. Returns None only when nothing was ever
+    shown (no pool and no cached products) so the caller can fall through. (bug #3)
+    """
+    ic = intent_to_normalized(ctx)
+    pool, _pool_key, _offset = get_search_pool(user_id)
+    if pool:
+        next_off = advance_search_offset(user_id, by=3)
+        slice_ = pool[next_off:next_off + 3]
+        if slice_:
+            set_product_context(user_id, slice_)
+            text, buttons = _format_listing(slice_)
+            return _ok("স্যার, আরও কিছু প্রোডাক্ট দেখুন:\n\n" + text,
+                       'product_search', ic, products=slice_, link_buttons=buttons)
+        # Pool exhausted — repeat what we last showed instead of handing off.
+        cached = get_product_context(user_id)
+        if cached:
+            text, buttons = _format_listing(cached[:3])
+            return _ok("স্যার, এই মুহূর্তে এই প্রোডাক্টগুলোই পাওয়া যাচ্ছে:\n\n" + text,
+                       'product_search', ic, products=cached[:3], link_buttons=buttons)
+        return _ok(
+            "স্যার, এই ক্যাটাগরিতে আর প্রোডাক্ট পাওয়া যাচ্ছে না। "
+            "বাজেট বা ক্যাটাগরি একটু পরিবর্তন করে দেখুন।" + LOOP_BACK,
+            'no_more_products', ic)
+    # No pool but products are cached → repeat them.
+    cached = get_product_context(user_id)
+    if cached:
+        text, buttons = _format_listing(cached[:3])
+        return _ok("স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:\n\n" + text,
+                   'product_search', ic, products=cached[:3], link_buttons=buttons)
+    return None
 
 
 def _build_category_button_label(category_name: str) -> str:

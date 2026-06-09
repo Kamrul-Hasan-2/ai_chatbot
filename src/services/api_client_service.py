@@ -175,24 +175,32 @@ def fetch_history(user_id: str) -> str:
     if cached and (now - cached[0]) < _HISTORY_TTL:
         return cached[1]
     text = _fetch_history_raw(user_id)
+    # _fetch_history_raw returns None on an API failure (non-2xx / exception).
+    # Don't cache failures — that would blank out history for the next 60s.
+    # Reuse a stale cached value if we have one, otherwise return empty.
+    if text is None:
+        return cached[1] if cached else ''
     _history_cache[user_id] = (now, text)
     return text
 
 
-def _fetch_history_raw(user_id: str) -> str:
+def _fetch_history_raw(user_id: str) -> Optional[str]:
+    """Return history text, or None on an API failure (so the caller skips caching)."""
     if not user_id:
         return ''
     url = f"{HISTORY_URL.rstrip('/')}?user_id={user_id}&limit={HISTORY_LIMIT}&key={API_KEY}"
     try:
         resp = requests.get(url, timeout=8)
         if not (200 <= resp.status_code < 300):
-            return ''
+            logger.warning("fetch_history non-2xx user_id=%s status=%s body=%s",
+                           user_id, resp.status_code, (resp.text or '')[:200])
+            return None
         payload = resp.json() if resp.text else {}
         lines = _normalize_history(payload)
         return '\n'.join(lines).strip()
     except Exception as e:
         logger.warning("fetch_history failed: %s", e)
-        return ''
+        return None
 
 
 def _normalize_history(payload: Any) -> List[str]:
@@ -200,7 +208,8 @@ def _normalize_history(payload: Any) -> List[str]:
     if isinstance(payload, list):
         candidates = payload
     elif isinstance(payload, dict):
-        for k in ['data', 'messages', 'history', 'chat_history', 'conversation', 'result']:
+        for k in ['data', 'messages', 'history', 'chat_history',
+                  'chatbot_history', 'conversation', 'result']:
             v = payload.get(k)
             if isinstance(v, list):
                 candidates = v
@@ -244,14 +253,16 @@ def fetch_intent_from_history(user_id: str) -> Dict:
     try:
         resp = requests.get(url, timeout=8)
         if not (200 <= resp.status_code < 300):
-            _intent_cache[user_id] = (now, {})
-            return {}
+            logger.warning("fetch_intent_from_history non-2xx user_id=%s status=%s body=%s",
+                           user_id, resp.status_code, (resp.text or '')[:200])
+            return {}   # don't cache a failure
         data = resp.json() if resp.text else {}
         candidates: List = []
         if isinstance(data, list):
             candidates = data
         elif isinstance(data, dict):
-            for k in ['data', 'messages', 'history', 'chat_history', 'conversation', 'result']:
+            for k in ['data', 'messages', 'history', 'chat_history',
+                      'chatbot_history', 'conversation', 'result']:
                 v = data.get(k)
                 if isinstance(v, list):
                     candidates = v
@@ -272,10 +283,12 @@ def fetch_intent_from_history(user_id: str) -> Dict:
             if isinstance(ic, dict):
                 _intent_cache[user_id] = (now, ic)
                 return ic
+        # Successful response but no bot intent_content found — safe to cache empty.
+        _intent_cache[user_id] = (now, {})
+        return {}
     except Exception as e:
         logger.warning("fetch_intent_from_history failed: %s", e)
-    _intent_cache[user_id] = (now, {})
-    return {}
+        return {}   # don't cache a failure
 
 
 # ── Delivery template ─────────────────────────────────────────────────────────
@@ -426,6 +439,11 @@ def fetch_condition_template(product_id: str) -> Optional[str]:
 def save_message(user_id: str, sender_type: int, message: str,
                  user_name: Optional[str] = None,
                  intent_content: Optional[Dict] = None) -> bool:
+    # DEPRECATED / UNUSED in the live request path. The production save path is
+    # controllers.chat_controller.save_chat_message() — every webhook/HTTP route
+    # calls that one. Do NOT add behaviour here expecting it to run in prod;
+    # apply such changes to save_chat_message instead. Kept only for ad-hoc/test
+    # callers. See review finding #14 (duplicate save implementations).
     if not message:
         return False
     payload: Dict[str, Any] = {
