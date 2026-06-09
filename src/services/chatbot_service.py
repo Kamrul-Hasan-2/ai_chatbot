@@ -136,6 +136,33 @@ _AUTHENTICITY_RESPONSE = (
     "স্যার, আমাদের এখানের সকল প্রোডাক্টই ভালো, তবে কেনার আগে অবশ্যই দেখে নিবেন।"
 )
 
+# ── Order-status inquiry (existing order) signals ─────────────────────────────
+# "Bai akta order chilo", "amar order ta kothay", "order korechilam status ki?"
+# are buyers asking about an EXISTING order. With an order number we look it up;
+# without one we ask for the order ID and remember we're waiting (_AWAITING_…)
+# so the NEXT message — the bare ID — routes straight to the lookup, instead of
+# handing the buyer to a human. We require an order word AND a past/status
+# marker, and EXCLUDE future buy markers ("order korbo", "kivabe order dibo"),
+# so purchase-process questions are NOT swallowed here.
+_ORDER_WORDS = ('order', 'অর্ডার', 'অডার', 'ordar', 'ordr')
+_ORDER_EXISTING_MARKERS = (
+    'chilo', 'silo', 'chilam', 'silam', 'korechilam', 'korsilam', 'disilam',
+    'diyechilam', 'dilam', 'korechi', 'korsi', 'disi', 'diyechi',
+    'kothay', 'kuthay', 'koi', 'kobe pabo', 'kobe asbe', 'kobe debe',
+    'koidur', 'koto dur', 'status', 'obostha', 'khobor', 'ki holo', 'ki hoilo',
+    'pai nai', 'paini', 'pai ni', 'peyechi', 'ase nai',
+    'ছিল', 'ছিলো', 'করেছিলাম', 'দিয়েছিলাম', 'কোথায়', 'অবস্থা', 'স্ট্যাটাস', 'খবর',
+)
+_ORDER_BUY_MARKERS = (
+    'korbo', 'korte chai', 'korte chacchi', 'dibo', 'dite chai', 'kibhabe',
+    'kivabe', 'kibabe', 'kemne', 'kinbo', 'kinte chai',
+    'করব', 'করতে চাই', 'দিব', 'কিভাবে', 'কিনব',
+)
+_AWAITING_ORDER_ID_INTENT = 'awaiting_order_id'
+_ASK_ORDER_ID_RESPONSE = (
+    "স্যার, আপনার অর্ডার আইডিটি দিন, আমি অর্ডার স্ট্যাটাসটি জানিয়ে দিচ্ছি।"
+)
+
 # ── Payment-method / cash-on-delivery signals ─────────────────────────────────
 # "cash on delivery hobe?", "kivabe payment korbo?", "bkash e dewa jabe?" asked
 # OUTSIDE an order flow. Groq mislabels these as buy/product_search and replies
@@ -314,10 +341,14 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                 user_message=message, profile=profile)
 
         # ── Order status lookup intercept ────────────────────────────────────
-        # Catch messages like "order status 17805593641", "অর্ডার চেক 17805…",
-        # "track order 17805…" before Groq sends them to the generic delivery
-        # FAQ. Requires a status-related keyword AND an order-no-shaped number
-        # so a plain price or phone number doesn't accidentally trigger it.
+        # Catch buyers asking about an EXISTING order before Groq sends them to
+        # the generic delivery FAQ or (worse) a human handoff. Two paths:
+        #   1. Our previous reply asked for the order ID → treat the order-no in
+        #      this message as the lookup key.
+        #   2. The message references an existing order (an explicit status
+        #      phrase, OR an order word + a past/status marker but NOT a future
+        #      buy marker). With an order number → look it up; without one → ask
+        #      for the order ID and remember we're waiting.
         _ORDER_STATUS_SIGNALS = (
             'order status', 'order track', 'track order', 'order check',
             'order kothay', 'order koi', 'order id', 'order no',
@@ -326,16 +357,50 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
             'check my order', 'where is my order', 'status of my order',
         )
         _msg_l_os = message.lower()
-        if any(s in _msg_l_os for s in _ORDER_STATUS_SIGNALS):
+
+        def _lookup_order_status():
+            """Run the lookup; return a built response or None if no order-no."""
             os_ctx = normalize_payload(prev_ctx)
             os_result = handle_order_status(os_ctx, user_id, message)
-            if os_result is not None:
-                _observe_and_save(user_id, profile, message,
-                                  os_result.get('intent', 'order_status'), {})
-                return _build_response(user_id, os_result,
-                                       ChatMode.AI, AI_ACTIVE_STATUS,
-                                       (datetime.now() - start_time).total_seconds(),
-                                       user_message=message, profile=profile)
+            if os_result is None:
+                return None
+            _observe_and_save(user_id, profile, message,
+                              os_result.get('intent', 'order_status'), {})
+            return _build_response(user_id, os_result,
+                                   ChatMode.AI, AI_ACTIVE_STATUS,
+                                   (datetime.now() - start_time).total_seconds(),
+                                   user_message=message, profile=profile)
+
+        # Path 1 — we previously asked for the order ID. Any order-no in this
+        # reply is the lookup key. If there's no valid number we fall through so
+        # a topic change ("thik ache pore dibo") is handled normally.
+        if get_last_intent(user_id) == _AWAITING_ORDER_ID_INTENT:
+            _await_resp = _lookup_order_status()
+            if _await_resp is not None:
+                return _await_resp
+
+        # Path 2 — order-status inquiry detection.
+        _is_order_inquiry = (
+            any(w in _msg_l_os for w in _ORDER_WORDS)
+            and any(m in _msg_l_os for m in _ORDER_EXISTING_MARKERS)
+            and not any(b in _msg_l_os for b in _ORDER_BUY_MARKERS)
+        )
+        if any(s in _msg_l_os for s in _ORDER_STATUS_SIGNALS) or _is_order_inquiry:
+            _os_resp = _lookup_order_status()
+            if _os_resp is not None:
+                return _os_resp
+            # No order number present — ask for the order ID and remember we're
+            # waiting so the next message (the bare ID) routes straight to lookup.
+            _observe_and_save(user_id, profile, message,
+                              _AWAITING_ORDER_ID_INTENT, {})
+            return _build_response(
+                user_id,
+                {'response': _ASK_ORDER_ID_RESPONSE,
+                 'intent': _AWAITING_ORDER_ID_INTENT,
+                 'intent_content': normalize_payload(prev_ctx), 'products': []},
+                ChatMode.AI, AI_ACTIVE_STATUS,
+                (datetime.now() - start_time).total_seconds(),
+                user_message=message, profile=profile)
 
         # ── Shop/showroom visit intercept ────────────────────────────────────
         # "ami ki apnader shop e eshe dekhe nite parbo?" (can I come to your shop
