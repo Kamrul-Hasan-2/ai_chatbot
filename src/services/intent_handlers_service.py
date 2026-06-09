@@ -285,6 +285,19 @@ def _format_order_status(data: Dict) -> str:
     order_no   = str(data.get('OrderNo') or '').strip()
     status_raw = str(data.get('status') or '').strip()
 
+    # Friendly, full-sentence message per status (instead of a bare label).
+    _STATUS_MESSAGE = {
+        'pending':    'স্যার, আপনার অর্ডারটি এখনো নিশ্চিত হয়নি, গ্রহণের অপেক্ষায় রয়েছে।',
+        'submitted':  'স্যার, আপনার অর্ডারটি সফলভাবে গ্রহণ করা হয়েছে এবং বর্তমানে প্রসেসিংয়ে আছে।',
+        'processing': 'স্যার, আপনার অর্ডারটি বর্তমানে প্রক্রিয়াধীন রয়েছে।',
+        'confirmed':  'স্যার, আপনার অর্ডারটি নিশ্চিত করা হয়েছে এবং শীঘ্রই পাঠানো হবে।',
+        'shipped':    'স্যার, আপনার অর্ডারটি পাঠানো হয়েছে এবং শীঘ্রই আপনার কাছে পৌঁছে যাবে।',
+        'delivered':  'স্যার, আপনার অর্ডারটি সফলভাবে ডেলিভারি সম্পন্ন হয়েছে। ধন্যবাদ।',
+        'cancelled':  'স্যার, আপনার অর্ডারটি বাতিল করা হয়েছে।',
+        'canceled':   'স্যার, আপনার অর্ডারটি বাতিল করা হয়েছে।',
+        'returned':   'স্যার, আপনার অর্ডারটি ফেরত নেওয়া হয়েছে।',
+    }
+    # Bangla label fallback when the status is unknown to the message map.
     _STATUS_BN = {
         'pending':    'অপেক্ষমাণ',
         'submitted':  'গৃহীত',
@@ -296,13 +309,18 @@ def _format_order_status(data: Dict) -> str:
         'canceled':   'বাতিল',
         'returned':   'ফেরত',
     }
-    status_bn = _STATUS_BN.get(status_raw.lower(), status_raw)
+    key = status_raw.lower()
+    status_message = _STATUS_MESSAGE.get(key)
+    if not status_message and status_raw:
+        status_bn = _STATUS_BN.get(key, status_raw)
+        status_message = f"স্যার, আপনার অর্ডারের বর্তমান স্ট্যাটাস: {status_bn}।"
 
     lines = ["🧾 আপনার অর্ডারের তথ্য:", ""]
     if order_no:
         lines.append(f"অর্ডার নম্বর: {order_no}")
-    if status_bn:
-        lines.append(f"স্ট্যাটাস: {status_bn}")
+    if status_message:
+        lines.append("")
+        lines.append(status_message)
     return '\n'.join(lines)
 
 
