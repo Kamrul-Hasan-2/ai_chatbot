@@ -163,6 +163,35 @@ _ASK_ORDER_ID_RESPONSE = (
     "স্যার, আপনার অর্ডার আইডিটি দিন, আমি অর্ডার স্ট্যাটাসটি জানিয়ে দিচ্ছি।"
 )
 
+# ── Picture / image reference signals ─────────────────────────────────────────
+# The bot cannot read images. A pure image attachment is handled in the webhook
+# controller, but when a buyer ALSO types a line like "পিকচার দিয়েছি" that text
+# reaches Groq and produces a garbled technical-advice reply. Catch a picture
+# reference deterministically and ask for the product name + model in text.
+# _PICTURE_WORDS are substring-matched but ONLY trigger together with a sent
+# marker (so "ছবি তোলার ক্যামেরা" stays a product search); a message that is
+# purely a picture word (exact match in _PICTURE_STANDALONE) also triggers.
+_PICTURE_WORDS = (
+    'পিকচার', 'ছবি', 'ছবিটা', 'ফটো', 'স্ক্রিনশট',
+    'picture', 'image', 'photo', 'foto', 'chobi', 'screenshot', 'screen shot',
+)
+_PICTURE_SENT_MARKERS = (
+    'দিয়েছি', 'দিলাম', 'দিছি', 'দিয়েছিলাম', 'পাঠিয়েছি', 'পাঠালাম', 'পাঠাইছি',
+    'পাঠিয়েছিলাম', 'উপরে', 'উপরের', 'দিলাম',
+    'diyechi', 'diechi', 'dilam', 'dichi', 'disi', 'pathiyechi', 'pathalam',
+    'pathaichi', 'pathailam', 'send korechi', 'send korlam', 'send dilam',
+    'sent', 'upore', 'uporer', 'attach',
+)
+_PICTURE_STANDALONE = frozenset({
+    'পিকচার', 'ছবি', 'ছবিটা', 'ফটো', 'স্ক্রিনশট',
+    'picture', 'pic', 'pics', 'image', 'img', 'photo', 'foto', 'chobi',
+    'screenshot', 'screen shot',
+})
+_PICTURE_RESPONSE = (
+    "স্যার, আপনি কোন প্রোডাক্টটি কিনতে চাচ্ছেন? "
+    "দয়া করে প্রোডাক্টটির নাম এবং মডেল বলুন।"
+)
+
 # ── Payment-method / cash-on-delivery signals ─────────────────────────────────
 # "cash on delivery hobe?", "kivabe payment korbo?", "bkash e dewa jabe?" asked
 # OUTSIDE an order flow. Groq mislabels these as buy/product_search and replies
@@ -435,6 +464,30 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                 user_id,
                 {'response': _AUTHENTICITY_RESPONSE,
                  'intent': 'faq_authenticity', 'intent_content': _auth_ctx,
+                 'products': []},
+                ChatMode.AI, AI_ACTIVE_STATUS,
+                (datetime.now() - start_time).total_seconds(),
+                user_message=message, profile=profile)
+
+        # ── Picture / image reference intercept ──────────────────────────────
+        # "পিকচার দিয়েছি" / "ছবি পাঠিয়েছি" / "pic dilam" — the bot can't read
+        # images, so Groq turns these into a garbled technical-advice reply. Ask
+        # for the product name + model in text instead. Trigger when the message
+        # is purely a picture word, OR a picture word co-occurs with a "sent"
+        # marker (so a camera search like "ছবি তোলার ক্যামেরা" is NOT caught).
+        _msg_l_pic = message.lower()
+        _msg_pic_stripped = _msg_l_pic.strip().rstrip('.?!।, ')
+        _has_pic_ref = (any(w in _msg_l_pic for w in _PICTURE_WORDS)
+                        or bool(re.search(r'\b(pic|pics|img|imgs)\b', _msg_l_pic)))
+        _has_pic_sent = any(s in _msg_l_pic for s in _PICTURE_SENT_MARKERS)
+        if (_msg_pic_stripped in _PICTURE_STANDALONE
+                or (_has_pic_ref and _has_pic_sent)):
+            _pic_ctx = normalize_payload(prev_ctx)
+            _observe_and_save(user_id, profile, message, 'faq_picture', {})
+            return _build_response(
+                user_id,
+                {'response': _PICTURE_RESPONSE,
+                 'intent': 'faq_picture', 'intent_content': _pic_ctx,
                  'products': []},
                 ChatMode.AI, AI_ACTIVE_STATUS,
                 (datetime.now() - start_time).total_seconds(),

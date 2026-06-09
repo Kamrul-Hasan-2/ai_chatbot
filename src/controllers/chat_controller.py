@@ -1340,7 +1340,7 @@ def messenger_webhook():
                     if image_received:
                         if send_facebook_message(
                             sender_id,
-                            "স্যার, কোন ক্যাটাগরি এবং মডেল সম্পর্কে জানতে চাচ্ছেন? একটু বলুন।"
+                            "স্যার, আপনি কোন প্রোডাক্টটি কিনতে চাচ্ছেন? দয়া করে প্রোডাক্টটির নাম এবং মডেল বলুন।"
                         ):
                             replied_count += 1
                         processed_count += 1
