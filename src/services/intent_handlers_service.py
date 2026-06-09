@@ -269,8 +269,13 @@ def _extract_order_no(message: str) -> str:
     for token in runs:
         if len(token) < 8:
             continue
-        # Exclude Bangladeshi mobile pattern (01XXXXXXXXX) — that's not an order
+        # Exclude Bangladeshi mobile numbers in any common form — they're not
+        # order numbers: 01XXXXXXXXX (11), 8801XXXXXXXXX (13), 008801… (15).
         if len(token) == 11 and token.startswith('01'):
+            continue
+        if len(token) == 13 and token.startswith('8801'):
+            continue
+        if len(token) == 15 and token.startswith('008801'):
             continue
         return token
     return ''
@@ -284,6 +289,12 @@ def _format_order_status(data: Dict) -> str:
     """
     order_no   = str(data.get('OrderNo') or '').strip()
     status_raw = str(data.get('status') or '').strip()
+
+    # Guard: a payload with neither an order number nor a status would render an
+    # empty card — tell the user to verify the order number instead.
+    if not order_no and not status_raw:
+        return ("দুঃখিত স্যার, অর্ডারের তথ্য পড়তে পারিনি। "
+                "অনুগ্রহ করে অর্ডার নম্বরটি যাচাই করে আবার পাঠান।")
 
     # Friendly, full-sentence message per status (instead of a bare label).
     _STATUS_MESSAGE = {
@@ -312,8 +323,12 @@ def _format_order_status(data: Dict) -> str:
     key = status_raw.lower()
     status_message = _STATUS_MESSAGE.get(key)
     if not status_message and status_raw:
-        status_bn = _STATUS_BN.get(key, status_raw)
-        status_message = f"স্যার, আপনার অর্ডারের বর্তমান স্ট্যাটাস: {status_bn}।"
+        if key in _STATUS_BN:
+            status_message = f"স্যার, আপনার অর্ডারের বর্তমান স্ট্যাটাস: {_STATUS_BN[key]}।"
+        else:
+            # Unknown status — never echo the raw English value to a Bangla user.
+            status_message = ("স্যার, আপনার অর্ডারটি গ্রহণ করা হয়েছে। সর্বশেষ "
+                              "স্ট্যাটাস জানতে অনুগ্রহ করে কিছুক্ষণ পর আবার চেক করুন।")
 
     lines = ["🧾 আপনার অর্ডারের তথ্য:", ""]
     if order_no:
@@ -419,12 +434,28 @@ _WARRANTY_RESPONSE = (
 )
 
 
-_SHOWROOM_WORDS = {
-    'showroom', 'show room', 'শোরুম', 'শো রুম', 'office', 'অফিস',
-    'address', 'ঠিকানা', 'location', 'লোকেশন', 'kothay', 'kuthay', 'কোথায়',
-    'dokan', 'দোকান', 'shop', 'শপ', 'dukan', 'দুকান', 'store',
-    'koi', 'কই', 'কোই',
-}
+# Latin tokens are whole-word matched so 'shop'/'store'/'office' don't fire on
+# 'shopping'/'restore'/'officer'; Banglish postpositions are space-separated
+# ("shop e", "store e") so \b still matches them. Bangla tokens stay substring
+# so attached suffixes ("দোকানে", "শোরুমে") still match. Bare 'koi' (the fish /
+# generic "where") is dropped from Latin — a shop word already co-occurs.
+_SHOWROOM_LATIN = frozenset({
+    'showroom', 'show room', 'office', 'address', 'location',
+    'kothay', 'kuthay', 'dokan', 'shop', 'dukan', 'store',
+})
+_SHOWROOM_BANGLA = (
+    'শোরুম', 'শো রুম', 'অফিস', 'ঠিকানা', 'লোকেশন', 'কোথায়',
+    'দোকান', 'শপ', 'দুকান', 'কই', 'কোই',
+)
+_SHOWROOM_LATIN_RE = re.compile(
+    r'\b(?:' + '|'.join(re.escape(w) for w in _SHOWROOM_LATIN) + r')\b'
+)
+
+
+def _has_showroom_word(msg_lower: str) -> bool:
+    if any(w in msg_lower for w in _SHOWROOM_BANGLA):
+        return True
+    return bool(_SHOWROOM_LATIN_RE.search(msg_lower))
 
 _SHOWROOM_RESPONSE = (
     "স্যার, BDStall একটি অনলাইন ই-কমার্স প্ল্যাটফর্ম। এখানে অসংখ্য ক্রেতা ও "
@@ -507,7 +538,7 @@ def handle_faq(ctx: Dict, user_id: str, message: str, faq_db: List) -> Dict:
         return _handle_property_query(user_id, message, ic)
     if any(w in msg_lower for w in _WARRANTY_WORDS):
         return _ok(_WARRANTY_RESPONSE + LOOP_BACK, 'faq_warranty', ic)
-    if any(w in msg_lower for w in _SHOWROOM_WORDS):
+    if _has_showroom_word(msg_lower):
         return _ok(_SHOWROOM_RESPONSE + LOOP_BACK, 'faq_showroom', ic)
     faq = search_faq(message, faq_db)
     if faq:
@@ -921,7 +952,9 @@ _BUDGET_TOKEN_RE = re.compile(r'^[\d,]+(k|hazar|tk|taka|৳|হাজার)?$',
 _SEARCH_NOISE_RE = re.compile(
     r'এই\s*(?:প্রোডাক্ট|product)\s*(?:টি|টা)?\s*(?:কি)?\s*(?:আছে|নেই|নাই)?\??'
     r'|(?:প্রোডাক্ট|product)\s*(?:টি|টা)'
-    r'|(?:কি)?\s*(?:আছে|নেই|নাই|ache|ase|achhe)\s*(?:কি|ki)?'
+    r'|(?:কি\s*)?(?:আছে|নেই|নাই)(?:\s*কি)?'   # Bangla available-question filler
+    r'|\b(?:ache|ase|achhe|ki)\b'             # Banglish — word-bounded so "case",
+                                              # "cache", "apache", "kinbo" survive
     r'|পাওয়া\s*যাবে|powa\s*jabe'
     r'|[?]+|।',
     re.IGNORECASE,
@@ -2020,7 +2053,7 @@ def handle_fallback(ctx: Dict, user_id: str, message: str,
         ic = intent_to_normalized(ctx)
         return _ok(_WARRANTY_RESPONSE + LOOP_BACK, 'faq_warranty', ic)
     # Showroom / address / location questions get the fixed response
-    if any(w in msg_lower for w in _SHOWROOM_WORDS):
+    if _has_showroom_word(msg_lower):
         ic = intent_to_normalized(ctx)
         return _ok(_SHOWROOM_RESPONSE + LOOP_BACK, 'faq_showroom', ic)
     # If products were shown, handle product-specific questions

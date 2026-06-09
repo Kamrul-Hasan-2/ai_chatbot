@@ -101,16 +101,16 @@ _SHOP_WORDS = frozenset({
     'outlet', 'আউটলেট', 'office', 'অফিস',
 })
 _VISIT_SIGNALS = frozenset({
-    'eshe', 'এসে', 'ese', 'esye', 'eshey', 'eashe', 'eashey', 'ashe',
+    # Unambiguous physical come/go verbs only. NOTE: do NOT add buy verbs
+    # (kinte/kinbo/kena) or the bare see-verbs (dekhte/dekhe) — combined with the
+    # common _SHOP_WORDS 'office'/'store'/'dokan'/'shop' they hijack ordinary buy
+    # messages ("office er jonno laptop kinbo/dekhte chai") into the showroom
+    # reply. Every real shop-visit message also carries a come/go verb below.
+    'eshe', 'এসে', 'esye', 'eshey', 'eashe', 'eashey',
     'ashbo', 'asbo', 'আসবো', 'ashbe', 'asbe', 'ashle', 'asle', 'আসলে',
-    'dekhe nite', 'দেখে নিতে', 'dekhte', 'দেখতে', 'দেখার', 'dekhe nibo',
     'jete', 'jabo', 'যেতে', 'যাবো', 'giye', 'গিয়ে',
     'visit', 'ভিজিট', 'come to', 'come and', 'come by', 'come over', 'come visit',
     'serashori', 'সরাসরি', 'nijer chokhe', 'in person',
-    # Buy-at-shop phrasings ("apnader shop e kinte parbo?") — only ever evaluated
-    # together with a _SHOP_WORDS hit, so these can't false-trigger on a plain
-    # "ami laptop kinte chai" product search.
-    'kinte', 'kinbo', 'kena', 'kinte parbo', 'কিনতে', 'কিনবো', 'কিনব', 'কেনা',
 })
 
 # ── Product authenticity (genuine vs fake) signals ────────────────────────────
@@ -151,7 +151,12 @@ _ORDER_EXISTING_MARKERS = (
     'kothay', 'kuthay', 'koi', 'kobe pabo', 'kobe asbe', 'kobe debe',
     'koidur', 'koto dur', 'status', 'obostha', 'khobor', 'ki holo', 'ki hoilo',
     'pai nai', 'paini', 'pai ni', 'peyechi', 'ase nai',
+    # "show me / view this order" — only ever evaluated next to an order word.
+    'dekhao', 'dekhe dao', 'dekhe den', 'dekhte chai', 'dekhte chacchi',
+    'dekhbo', 'dekhte', 'check koro', 'check kor',
     'ছিল', 'ছিলো', 'করেছিলাম', 'দিয়েছিলাম', 'কোথায়', 'অবস্থা', 'স্ট্যাটাস', 'খবর',
+    'দেখাও', 'দেখে দাও', 'দেখে দেন', 'দেখান', 'দেখতে চাই', 'দেখতে চাচ্ছি',
+    'দেখব', 'দেখবো', 'দেখতে',
 )
 _ORDER_BUY_MARKERS = (
     'korbo', 'korte chai', 'korte chacchi', 'dibo', 'dite chai', 'kibhabe',
@@ -176,11 +181,13 @@ _PICTURE_WORDS = (
     'picture', 'image', 'photo', 'foto', 'chobi', 'screenshot', 'screen shot',
 )
 _PICTURE_SENT_MARKERS = (
+    # Bare ambiguous fragments removed (disi/dichi/sent/attach/upore) — combined
+    # with a picture word they false-fired on camera/photo searches.
     'দিয়েছি', 'দিলাম', 'দিছি', 'দিয়েছিলাম', 'পাঠিয়েছি', 'পাঠালাম', 'পাঠাইছি',
-    'পাঠিয়েছিলাম', 'উপরে', 'উপরের', 'দিলাম',
-    'diyechi', 'diechi', 'dilam', 'dichi', 'disi', 'pathiyechi', 'pathalam',
+    'পাঠিয়েছিলাম', 'উপরের',
+    'diyechi', 'diechi', 'dilam', 'pathiyechi', 'pathalam',
     'pathaichi', 'pathailam', 'send korechi', 'send korlam', 'send dilam',
-    'sent', 'upore', 'uporer', 'attach',
+    'attach korechi', 'attach korlam', 'uporer',
 )
 _PICTURE_STANDALONE = frozenset({
     'পিকচার', 'ছবি', 'ছবিটা', 'ফটো', 'স্ক্রিনশট',
@@ -211,6 +218,30 @@ _BUSINESS_INQUIRY_SIGNALS = (
 _BUSINESS_INQUIRY_RESPONSE = (
     "স্যার, ব্যবসায়িক বা পার্টনারশিপ সংক্রান্ত বিষয়ে আমাদের একজন "
     "প্রতিনিধি শীঘ্রই আপনার সাথে যোগাযোগ করবেন।"
+)
+
+# ── Suggestion / "which is best" request signals ──────────────────────────────
+# "তুমি সাজেশন দিতে পারো?", "কোনটা ভালো হবে সুপার শপের জন্য?", "konta valo",
+# "recommend korben?" — as a Virtual Assistant the bot must not pick a "best"
+# product or give a personal suggestion; it offers information instead. Caught
+# before Groq so these aren't re-routed to a category landing page or the buy
+# flow ("konta kinbo" otherwise hits the buy intercept). Phrases only (never
+# bare 'valo'/'best') so plain searches like "valo laptop dekhao" aren't caught.
+_SUGGESTION_SIGNALS = (
+    'সাজেশন', 'সাজেস্ট', 'সাজেশান', 'পরামর্শ', 'উপদেশ',
+    'কোনটা ভালো', 'কোনটি ভালো', 'কোনটা ভাল', 'কোনটি ভাল', 'কোনটা বেস্ট',
+    'সেরা কোনটা', 'সেরা কোনটি', 'কোনটা নিবো', 'কোনটা নেবো', 'কোনটা কিনবো',
+    'কোনটা সবচেয়ে', 'কোনটি সেরা', 'কোনটা ভালো হবে',
+    'suggestion', 'suggest', 'sajeshon', 'sajession', 'sagestion',
+    'recommend', 'recommendation', 'poramorsho', 'poramorso',
+    'konta valo', 'konti valo', 'kunta valo', 'konta bhalo', 'konti bhalo',
+    'kon ta valo', 'konta nibo', 'konta nebo', 'konta kinbo', 'konta best',
+    'best konta', 'best konti', 'sera konta', 'sera konti', 'konta beshi valo',
+    'which is better', 'which one is better', 'which is best', 'which one is best',
+    'which should i', 'recommend me', 'any suggestion', 'your suggestion',
+)
+_SUGGESTION_RESPONSE = (
+    "স্যার, আমি Virtual Assistant, তাই সাজেশন নয়, তথ্যভিত্তিক সহায়তা দিতে পারি।"
 )
 
 # ── Payment-method / cash-on-delivery signals ─────────────────────────────────
@@ -429,10 +460,14 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
             if _await_resp is not None:
                 return _await_resp
 
-        # Path 2 — order-status inquiry detection.
+        # Path 2 — order-status inquiry detection. An order word plus either an
+        # order-number-shaped digit run (≥8 ASCII/Bangla digits) OR a past/
+        # status/"show me" marker — but never a buy marker — is a status inquiry.
+        _has_order_no_shape = bool(re.search(r'[\d০-৯]{8,}', message))
         _is_order_inquiry = (
             any(w in _msg_l_os for w in _ORDER_WORDS)
-            and any(m in _msg_l_os for m in _ORDER_EXISTING_MARKERS)
+            and (_has_order_no_shape
+                 or any(m in _msg_l_os for m in _ORDER_EXISTING_MARKERS))
             and not any(b in _msg_l_os for b in _ORDER_BUY_MARKERS)
         )
         if any(s in _msg_l_os for s in _ORDER_STATUS_SIGNALS) or _is_order_inquiry:
@@ -448,6 +483,23 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                 {'response': _ASK_ORDER_ID_RESPONSE,
                  'intent': _AWAITING_ORDER_ID_INTENT,
                  'intent_content': normalize_payload(prev_ctx), 'products': []},
+                ChatMode.AI, AI_ACTIVE_STATUS,
+                (datetime.now() - start_time).total_seconds(),
+                user_message=message, profile=profile)
+
+        # ── Suggestion / "which is best" intercept ───────────────────────────
+        # The bot is a Virtual Assistant and must not pick a "best" product or
+        # give a personal suggestion — it offers information instead. Caught
+        # before Groq (and before the buy intercept, which would otherwise grab
+        # "konta kinbo") so these don't get a category page or buy flow.
+        _msg_l_sug = message.lower()
+        if any(s in _msg_l_sug for s in _SUGGESTION_SIGNALS):
+            _sug_ctx = normalize_payload(prev_ctx)
+            _observe_and_save(user_id, profile, message, 'suggestion', {})
+            return _build_response(
+                user_id,
+                {'response': _SUGGESTION_RESPONSE + LOOP_BACK,
+                 'intent': 'suggestion', 'intent_content': _sug_ctx, 'products': []},
                 ChatMode.AI, AI_ACTIVE_STATUS,
                 (datetime.now() - start_time).total_seconds(),
                 user_message=message, profile=profile)
