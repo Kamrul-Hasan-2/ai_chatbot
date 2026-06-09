@@ -192,6 +192,27 @@ _PICTURE_RESPONSE = (
     "দয়া করে প্রোডাক্টটির নাম এবং মডেল বলুন।"
 )
 
+# ── Business / partnership inquiry signals ────────────────────────────────────
+# "Apnara j kono company r share/land/apartment sell koren naki leads share
+# koren" — a B2B / lead-sharing / partnership question. Groq catches the
+# "apartment sell" fragment and dumps apartment listings. These terms are
+# unambiguously business-to-business (no buyer searching for a flat/land would
+# use them), so we hand the inquiry to a human representative before Groq.
+_BUSINESS_INQUIRY_SIGNALS = (
+    'leads share', 'lead share', 'leads den', 'lead den', 'leads diben',
+    'leads koren', 'lead koren', 'leads provide', 'lead provide',
+    'leads sharing', 'lead sharing', 'lead generation',
+    'affiliate', 'affiliation', 'reseller', 're-seller',
+    'dealership', 'dealer hote', 'distributor', 'distributorship',
+    'partnership', 'partner hote', 'franchise', 'b2b',
+    'company share', 'companyr share', 'company r share', 'kompanir share',
+    'shares sell', 'share sell koren', 'stock share', 'equity',
+)
+_BUSINESS_INQUIRY_RESPONSE = (
+    "স্যার, ব্যবসায়িক বা পার্টনারশিপ সংক্রান্ত বিষয়ে আমাদের একজন "
+    "প্রতিনিধি শীঘ্রই আপনার সাথে যোগাযোগ করবেন।"
+)
+
 # ── Payment-method / cash-on-delivery signals ─────────────────────────────────
 # "cash on delivery hobe?", "kivabe payment korbo?", "bkash e dewa jabe?" asked
 # OUTSIDE an order flow. Groq mislabels these as buy/product_search and replies
@@ -492,6 +513,16 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                 ChatMode.AI, AI_ACTIVE_STATUS,
                 (datetime.now() - start_time).total_seconds(),
                 user_message=message, profile=profile)
+
+        # ── Business / partnership inquiry intercept ─────────────────────────
+        # B2B / lead-sharing / partnership questions ("leads share koren?",
+        # "companyr share sell koren?") get mislabelled as product_search and
+        # dump apartment/land listings. Hand them to a human before Groq.
+        _msg_l_biz = message.lower()
+        if any(s in _msg_l_biz for s in _BUSINESS_INQUIRY_SIGNALS):
+            _observe_and_save(user_id, profile, message, 'seller_query', {})
+            return _handoff(user_id, 'seller_query',
+                            _BUSINESS_INQUIRY_RESPONSE, start_time)
 
         # Deterministic greeting intercept — short hi/hello/salam messages should
         # never depend on Groq. Without this a Groq outage hands every new user
