@@ -1534,7 +1534,10 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
         # spec query signals — caught here so they don't fall to technical_advice
         'ram', 'gb', 'storage', 'memory', 'processor', 'cpu', 'battery', 'mah',
         'display', 'screen', 'camera', 'mp', 'os', 'weight', 'configuration',
+        'ssd', 'hdd', 'hard disk', 'hard drive',
         'র‍্যাম', 'প্রসেসর', 'ব্যাটারি', 'ডিসপ্লে', 'ক্যামেরা',
+        # NOTE: bare 'ase' removed — it substring-matches case/please/purchase.
+        # "ssd ase" still passes this gate via the 'ssd' signal above.
     ]
     if not any(s in msg for s in signals):
         return None
@@ -1552,6 +1555,7 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
         _SIGNAL_ONLY_WORDS = {
             'ache', 'ase', 'available', 'stock', 'আছে', 'কি', 'ki', 'pabo',
             'hobe', 'paoa', 'jabe', 'আপনাদের', 'apnader', 'কাছে', 'kache',
+            'ssd', 'hdd', 'hard', 'disk', 'drive',
         }
         # Any followup signal word (warranty/spec/price/color/etc.) is also not a
         # product noun — without this, "warrenty ase" was treated as a new product

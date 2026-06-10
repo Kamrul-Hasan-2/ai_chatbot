@@ -267,6 +267,44 @@ _PAYMENT_RESPONSE = (
 
 # ── Blocked automated message guard ──────────────────────────────────────────
 
+_STORAGE_DRIVE_TERMS = (
+    'ssd', 'hdd', 'hard disk', 'hard drive', 'nvme', 'm.2', 'sata ssd',
+)
+# Search-intent signals. Single Latin tokens are word-bounded (so 'dam' won't
+# match 'damage', 'show' won't match 'showroom', 'chai' won't match 'chair');
+# phrases and Bangla terms keep substring matching.
+_STORAGE_DRIVE_SEARCH_SIGNALS = (
+    'drive', 'external', 'portable', 'lagbe', 'chai', 'kinbo', 'kinte',
+    'dekhan', 'dekhao', 'show', 'price', 'dam',
+    'দাম', 'কিনতে', 'কিনব', 'লাগবে', 'চাই', 'দেখান', 'দেখাও',
+)
+# A damaged / return / complaint message about a drive is NOT a search — it must
+# reach the complaint flow, not clear state and run a product search.
+_STORAGE_COMPLAINT_SIGNALS = (
+    'nosto', 'noshto', 'নষ্ট', 'damage', 'problem', 'সমস্যা',
+    'refund', 'return', 'ferot', 'ferat', 'ফেরত',
+    'broken', 'bhanga', 'ভাঙা', 'kaj kore na', 'kaj korche na',
+)
+
+
+def _is_storage_drive_search(message: str) -> bool:
+    """True when SSD/HDD wording means a drive product search — not a laptop spec
+    question, and not a complaint about a drive."""
+    msg = (message or '').lower()
+    if not any(term in msg for term in _STORAGE_DRIVE_TERMS):
+        return False
+    # Damaged/return/complaint about a drive → let the complaint flow handle it.
+    if any(c in msg for c in _STORAGE_COMPLAINT_SIGNALS):
+        return False
+    for sig in _STORAGE_DRIVE_SEARCH_SIGNALS:
+        if (' ' in sig) or any(ord(ch) > 127 for ch in sig):
+            if sig in msg:                                    # phrase / Bangla
+                return True
+        elif re.search(r'\b' + re.escape(sig) + r'\b', msg):  # word-bounded Latin
+            return True
+    return False
+
+
 _BLOCKED_PHRASES = [
     'bdstall.com-এ আপনাকে স্বাগতম',
     'আপনার মেসেজ এর জন্য ধন্যবাদ',
@@ -730,6 +768,21 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         # flow) instead of being misread as a stray product question.
         from repositories.state_repository import get_product_context as _gpc_early
         _cached_products_early = _gpc_early(user_id)
+        if _cached_products_early and _is_storage_drive_search(message):
+            clear_product_state(user_id)
+            set_session_category(user_id, '')
+            storage_result = handle_product_search(
+                {'category': '', 'brand': '', 'title': '',
+                 'price_max': None, 'price_min': None},
+                user_id,
+                message,
+            )
+            _observe_and_save(user_id, profile, message,
+                              storage_result.get('intent', 'product_search'),
+                              {})
+            return _build_response(user_id, storage_result, ChatMode.AI, AI_ACTIVE_STATUS,
+                                   (datetime.now() - start_time).total_seconds(),
+                                   user_message=message, profile=profile)
         product_url = (get_product_url(user_id)
                        or prev_ctx.get('product_url', '')
                        or (_cached_products_early[0].get('url', '')
