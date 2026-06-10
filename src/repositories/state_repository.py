@@ -66,6 +66,9 @@ def _load_local_state() -> None:
         _user_profile.update(state.get('user_profile') or {})
         _knowledge_count.update(state.get('user_knowledge_count') or {})
         _order_flow.update(state.get('user_order_flow') or {})
+        # Persisted so a restart between "which product?" and the user's "1"
+        # doesn't lose what was being asked (buy/spec/condition). (#5)
+        _pending_question.update(state.get('user_pending_question') or {})
     except Exception as e:
         logger.warning("_load_local_state failed: %s", e)
 
@@ -81,6 +84,7 @@ def _save_local_state() -> None:
                 'user_profile':          _user_profile,
                 'user_knowledge_count':  _knowledge_count,
                 'user_order_flow':       _order_flow,
+                'user_pending_question': _pending_question,
             }
             fd, tmp = tempfile.mkstemp(dir=os.path.dirname(_STATE_FILE), suffix='.tmp')
             try:
@@ -157,11 +161,15 @@ def get_last_intent(user_id: str) -> str:
 def set_pending_question(user_id: str, question: str) -> None:
     """Save the message that triggered a product_clarification prompt."""
     _pending_question[user_id] = question
+    _save_local_state()
 
 
 def get_pending_question(user_id: str) -> str:
     """Return and clear the pending question (one-shot — consumed on read)."""
-    return _pending_question.pop(user_id, '')
+    val = _pending_question.pop(user_id, '')
+    if val:
+        _save_local_state()
+    return val
 
 
 def set_pending_budget(user_id: str, ctx: Dict) -> None:

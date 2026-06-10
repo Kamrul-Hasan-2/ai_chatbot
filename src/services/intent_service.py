@@ -328,6 +328,20 @@ def _validate_groq(parsed: Dict) -> Dict[str, Any]:
     }
 
 
+def _msg_has_any(msg: str, words) -> bool:
+    """Match a word-set against msg. Single Latin tokens are matched on word
+    boundaries so short words like 'hi' don't match inside 'shipping'/'this'/
+    'which'; multi-word phrases and Bangla (non-ASCII) terms keep substring
+    matching (Bangla takes attached suffixes that \\b would miss). (#3)"""
+    for w in words:
+        if (' ' in w) or any(ord(c) > 127 for c in w):
+            if w in msg:
+                return True
+        elif re.search(r'\b' + re.escape(w) + r'\b', msg):
+            return True
+    return False
+
+
 def _fallback_intent(message: str) -> Dict[str, Any]:
     budget = extract_budget_range(message)
     msg = message.lower().strip()
@@ -378,23 +392,23 @@ def _fallback_intent(message: str) -> Dict[str, Any]:
     }
 
     intent = 'unknown'
-    if any(w in msg for w in _GREETING_WORDS):
+    if _msg_has_any(msg, _GREETING_WORDS):
         intent = 'greeting'
-    elif any(w in msg for w in _GOODBYE_WORDS):
+    elif _msg_has_any(msg, _GOODBYE_WORDS):
         intent = 'goodbye'
-    elif any(w in msg for w in _THANKS_WORDS):
+    elif _msg_has_any(msg, _THANKS_WORDS):
         intent = 'thanks'
-    elif any(w in msg for w in _EXIT_WORDS):
+    elif _msg_has_any(msg, _EXIT_WORDS):
         intent = 'exit'
-    elif any(w in msg for w in _DELIVERY_WORDS):
+    elif _msg_has_any(msg, _DELIVERY_WORDS):
         intent = 'delivery'
-    elif any(w in msg for w in _BUY_WORDS):
+    elif _msg_has_any(msg, _BUY_WORDS):
         intent = 'buy'
-    elif any(w in msg for w in _COMPARISON_WORDS):
+    elif _msg_has_any(msg, _COMPARISON_WORDS):
         intent = 'comparison'
-    elif any(w in msg for w in _SEARCH_WORDS):
+    elif _msg_has_any(msg, _SEARCH_WORDS):
         intent = 'product_search'
-    elif any(w in msg for w in _PRICE_WORDS):
+    elif _msg_has_any(msg, _PRICE_WORDS):
         intent = 'price_query'
 
     # Extract brand from message for product intents
@@ -419,7 +433,11 @@ def _fallback_intent(message: str) -> Dict[str, Any]:
         },
         'missing': [],
         'is_followup': False,
-        'confidence': 0.3,
+        # A matched keyword carries enough signal to be handled by the fallback;
+        # only a truly unmatched message stays low so the strict gate hands it
+        # off. Without this, fallback delivery/thanks/goodbye/buy (conf 0.3, no
+        # entity) get handed to a human during a Groq outage. (#2)
+        'confidence': 0.6 if intent != 'unknown' else 0.3,
     }
 
 

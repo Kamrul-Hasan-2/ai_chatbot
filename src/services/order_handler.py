@@ -90,6 +90,15 @@ _CONFIRM_WORDS = {
     'করুন', 'place korun',
 }
 
+# A negation anywhere in a confirm-step reply ("not ok", "ok na", "address ok na",
+# "thik na") means the user is REJECTING, not confirming — never place an order
+# on it. (review finding #1)
+_NEGATION_WORDS = {
+    'na', 'nah', 'no', 'nope', 'not', 'নাহ', 'না', 'nai', 'নাই', 'nei', 'নেই',
+    'hobe na', 'হবে না', 'হবেনা', 'hobena', 'thik na', 'ঠিক না', 'thik nai',
+    'lagbe na', 'লাগবে না', 'thik hoy nai', 'cancel',
+}
+
 
 # ── Response builder ──────────────────────────────────────────────────────────
 
@@ -229,14 +238,22 @@ def _order_interruption_reply(message: str) -> Optional[str]:
     return None
 
 
+def _word_match(msg: str, w: str) -> bool:
+    """Whole-word / whole-phrase match — avoids mid-word substring hits like
+    'ok' inside 'nokol' or 'address ok na'."""
+    return f' {w} ' in f' {msg} '
+
+
 def _is_confirm(message: str) -> bool:
     msg = _normalize_token(message).rstrip('.!?।,')
     if not msg:
         return False
-    for w in _CONFIRM_WORDS:
-        if msg == w or msg.startswith(w + ' ') or msg.endswith(' ' + w) or w in msg:
-            return True
-    return False
+    # Reject first: a negation anywhere means the user is NOT confirming. (#1)
+    if any(_word_match(msg, n) for n in _NEGATION_WORDS):
+        return False
+    # Whole-word confirm match (no substring), so "address ok na" / "not ok"
+    # can never place an order. (#1)
+    return any(_word_match(msg, w) for w in _CONFIRM_WORDS)
 
 
 _BN_DIGIT_MAP = str.maketrans('০১২৩৪৫৬৭৮৯', '0123456789')

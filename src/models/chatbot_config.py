@@ -113,7 +113,7 @@ SCHEMA:
 }}
 
 INTENT VALUES (pick exactly one):
-product_search | price_query | comparison | buy | exit | delivery | greeting | goodbye | thanks | complaint | faq | human_request | technical_advice | hate_speech | seller_query | unknown
+product_search | price_query | comparison | buy | exit | delivery | greeting | goodbye | thanks | complaint | faq | human_request | technical_advice | product_spec_query | hate_speech | seller_query | unknown
 
 INTENT DEFINITIONS:
 - product_search    : user wants to see, find, or browse products. Key Banglish signals: "ase" (আছে = is available), "dekhan" (দেখান = show me), "lagbe" (লাগবে = I need), "chai" (চাই = I want), "kono X ase?" (do you have X?). If user mentions a product type + any of these words → product_search.
