@@ -36,7 +36,6 @@ from repositories.state_repository import (
     set_session_category, get_session_category,
     load_user_profile, save_user_profile,
     set_pending_question, get_pending_question,
-    reload_user_state,
 )
 from services.intent_service import (
     detect_intent, merge_context,
@@ -343,27 +342,6 @@ def _observe_and_save(user_id: str, profile, message: str,
 
 # ── Main entry ────────────────────────────────────────────────────────────────
 
-# ── Fresh-search signals (bypass cached-product detail follow-up) ─────────────
-# A clear "find me products" verb means a NEW search, not a question about the
-# product already on screen — so it must NOT be answered from the cached product
-# URL. Pagination ("aro dekhao") is excluded so it still continues. (finding #12)
-_FRESH_SEARCH_VERBS = (
-    'dekhao', 'dekhan', 'দেখাও', 'দেখান', 'lagbe', 'লাগবে',
-    'khujchi', 'khujtesi', 'khujtechi', 'খুঁজছি', 'খুঁজতেছি',
-    'search', 'show me', 'notun', 'নতুন',
-)
-_MORE_WORDS = (
-    'aro', 'aru', 'আরো', 'আরও', 'more', 'next', 'arekta', 'আরেকটা',
-)
-
-
-def _is_fresh_search_msg(message: str) -> bool:
-    ml = (message or '').lower()
-    if any(w in ml for w in _MORE_WORDS):
-        return False
-    return any(v in ml for v in _FRESH_SEARCH_VERBS)
-
-
 def process_message(user_id: str, message: str) -> Dict[str, Any]:
     start_time = datetime.now()
     logger.info("user=%s msg=%r", user_id, message)
@@ -373,11 +351,6 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
     profile = load_user_profile(user_id)
 
     try:
-        # Cross-worker convergence: refresh this user's locally-cached state from
-        # the shared store before processing, so a product list shown by another
-        # worker is visible here. Best-effort mitigation. (review finding #6)
-        reload_user_state(user_id)
-
         # ── STEP 1: load_context (single DB round-trip for the whole request) ──
         prev_ctx = load_context(user_id)
 
@@ -749,29 +722,6 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                                                    (datetime.now() - start_time).total_seconds(),
                                                    user_message=message, profile=profile)
 
-        # ── "Show more" / pagination intercept (bug #3) ──────────────────────
-        # "aro dekhan" / "show more" after products were shown → page through the
-        # cached search pool (or repeat cached products) instead of letting the
-        # detail-followup/Groq mislabel it into an unknown handoff. Pre-Groq so it
-        # can't be missed. Skipped when the message carries a budget (a digit) or
-        # a new category — those are refinements/new searches for Groq to handle.
-        from repositories.state_repository import (get_search_pool as _gsp_more,
-                                                   get_product_context as _gpc_more)
-        from services.intent_handlers_service import (_is_more_request as _imr,
-                                                      handle_show_more)
-        _pool_more = _gsp_more(user_id)[0]
-        if (_imr(message)
-                and not re.search(r'\d', message)
-                and not resolve_category_from_message(message, _categories)
-                and (_pool_more or _gpc_more(user_id))):
-            _more_res = handle_show_more(normalize_payload(prev_ctx), user_id)
-            if _more_res is not None:
-                _observe_and_save(user_id, profile, message,
-                                  _more_res.get('intent', 'product_search'), {})
-                return _build_response(user_id, _more_res, ChatMode.AI, AI_ACTIVE_STATUS,
-                                       (datetime.now() - start_time).total_seconds(),
-                                       user_message=message, profile=profile)
-
         # Product detail follow-up.
         # Fire when either: (a) a specific product URL was pinned via set_product_url,
         # or (b) products from a search result are cached — use the first result's URL.
@@ -784,10 +734,7 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                        or prev_ctx.get('product_url', '')
                        or (_cached_products_early[0].get('url', '')
                            if _cached_products_early else ''))
-        # Skip the cached-product follow-up when the message is a clear NEW search
-        # ("laptop dekhao", "ac lagbe") so it isn't answered from the stale product.
-        # Pagination ("aro dekhao") is preserved. (review finding #12)
-        if product_url and not _is_fresh_search_msg(message):
+        if product_url:
             detail = handle_product_detail_followup(prev_ctx, user_id, message, product_url,
                                                      _groq_client, GROQ_ANSWER_MODEL)
             if detail:
@@ -859,20 +806,9 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         _conf = float(groq_result.get('confidence') or 0.0)
         _has_entity = any(groq_result['entities'].get(k) for k in
                           ('category', 'brand', 'title', 'price_max', 'price_min'))
-        # Safe follow-up intents can lean on an existing category context instead
-        # of handing off on low confidence — e.g. "mobile dekhan" then "price
-        # koto?". 'unknown' is intentionally excluded so a random message still
-        # hands off and never silently searches products. (bug #2)
-        _SAFE_FOLLOWUP_INTENTS = {'price_query', 'product_search',
-                                  'comparison', 'technical_advice'}
-        _ctx_category = (get_session_category(user_id)
-                         or prev_ctx.get('category') or prev_ctx.get('cat', ''))
-        _safe_inherit = (groq_result['intent'] in _SAFE_FOLLOWUP_INTENTS
-                         and bool(_ctx_category))
-        if (not _safe_inherit
-                and (groq_result['intent'] == 'unknown'
-                     or (_conf < 0.55 and not _has_entity
-                         and not groq_result.get('is_followup')))):
+        if (groq_result['intent'] == 'unknown'
+                or (_conf < 0.55 and not _has_entity
+                    and not groq_result.get('is_followup'))):
             logger.info("Strict handoff — intent=%s conf=%.2f entities=%s",
                         groq_result['intent'], _conf, groq_result['entities'])
             try:
@@ -916,13 +852,6 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
             # Wipe the old category from prev_ctx so merge can't inherit it
             for _k in ('category', 'cat', 'prev_cat'):
                 prev_ctx[_k] = ''
-            # Drop carried-over budget too. Wiping the category above disables
-            # merge_context's own category-switch reset (it needs prev_category),
-            # so the old price would otherwise bleed into the new category. A
-            # budget stated in THIS message lives in groq entities and survives
-            # the merge; only the inherited budget is cleared. (bug #1)
-            for _k in ('price_max', 'price_min', 'prev_price_max', 'prev_price_min'):
-                prev_ctx[_k] = None
 
         # Intent change: when the current intent differs from the last bot turn,
         # treat the previous conversation context as not applicable. Drop cached
