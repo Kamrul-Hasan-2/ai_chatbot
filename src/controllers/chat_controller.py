@@ -7,6 +7,8 @@ import sys
 import logging
 import json
 import re
+import hmac
+import hashlib
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -65,6 +67,11 @@ SAVE_MESSAGE_API_KEY = os.getenv('SAVE_MESSAGE_API_KEY', 'mkh677ddd2sxxkkdjff')
 PAGE_ACCESS_TOKEN = os.getenv('PAGE_ACCESS_TOKEN', '')
 VERIFY_TOKEN = os.getenv('VERIFY_TOKEN', 'my_verify_token_12345')
 FACEBOOK_GRAPH_API_VERSION = os.getenv('FACEBOOK_GRAPH_API_VERSION', 'v25.0')
+# Facebook App Secret — used to verify the X-Hub-Signature-256 HMAC on incoming
+# webhook events so forged requests are rejected. SET THIS IN PRODUCTION to turn
+# verification on; while unset, verification is skipped (with a warning) so a
+# missing env var can't take the webhook offline. (security fix #2)
+MESSENGER_APP_SECRET = os.getenv('MESSENGER_APP_SECRET', os.getenv('FB_APP_SECRET', ''))
 MESSENGER_USER_NAME_CACHE = {}
 # Sender IDs confirmed as FB Lite (button template failed at least once).
 # Persisted to a JSON file so restarts don't forget Lite users.
@@ -1287,11 +1294,38 @@ def verify_webhook():
     return 'Forbidden', 403
 
 
+def _verify_fb_signature() -> bool:
+    """Verify the webhook's X-Hub-Signature-256 against HMAC-SHA256 of the RAW
+    body keyed by the Facebook app secret, so forged requests are rejected. (#2)
+
+    Returns True when valid. If MESSENGER_APP_SECRET is not configured, returns
+    True with a warning — an unset env var must not take the webhook offline; set
+    the secret to enforce. Uses constant-time comparison.
+    """
+    if not MESSENGER_APP_SECRET:
+        logger.warning("[WEBHOOK] MESSENGER_APP_SECRET not set — signature "
+                       "verification DISABLED (set it to enforce).")
+        return True
+    header = request.headers.get('X-Hub-Signature-256', '')
+    if not header.startswith('sha256='):
+        return False
+    expected = 'sha256=' + hmac.new(
+        MESSENGER_APP_SECRET.encode('utf-8'),
+        request.get_data(),          # raw body — must hash bytes, not parsed JSON
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected, header)
+
+
 @app.route('/webhook', methods=['POST'])
 @app.route('/chatbot/webhook', methods=['POST'])
 def messenger_webhook():
     """Handle incoming Facebook Messenger events using the simple chatbot flow."""
     try:
+        # Reject forged events before doing any work. (#2)
+        if not _verify_fb_signature():
+            logger.warning("[WEBHOOK] Rejected: invalid/missing X-Hub-Signature-256")
+            return jsonify({"status": "forbidden"}), 403
         data = request.get_json() or {}
         logger.info("[WEBHOOK] Payload received: %s", json.dumps(data, ensure_ascii=False)[:1000])
 

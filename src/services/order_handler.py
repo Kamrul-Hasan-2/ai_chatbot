@@ -726,12 +726,14 @@ def continue_order_flow(user_id: str, message: str) -> Optional[Dict]:
             city_id=state.get('city_id', ''),
             area_id=state.get('area_id', ''),
         )
-        clear_order_flow(user_id)
         product_url = state.get('product_url', '')
         buttons = ([{'text': 'প্রোডাক্ট দেখুন', 'url': product_url,
                      'title': state.get('product_title', '')}]
                    if product_url else [])
         if result.get('success'):
+            # Clear the flow ONLY after a confirmed order — otherwise a transient
+            # API failure below would wipe the user's whole collected order. (#1)
+            clear_order_flow(user_id)
             order_no = (result.get('order_no') or '').strip()
             order_id = (result.get('order_id') or '').strip()
             order_ref = order_no or order_id
@@ -750,10 +752,13 @@ def continue_order_flow(user_id: str, message: str) -> Optional[Dict]:
             return _ok('\n'.join(lines) + LOOP_BACK, 'order_placed',
                        link_buttons=buttons)
 
+        # Order NOT placed (timeout / 5xx / API error). Keep the flow at
+        # STEP_CONFIRM so the user can retry with "হ্যাঁ" without re-entering
+        # name / mobile / address / city / area / qty. (#1)
         msg_err = result.get('message') or 'অর্ডার এখন প্রক্রিয়া করা যাচ্ছে না।'
         return _ok(
             f"দুঃখিত স্যার, অর্ডার সম্পন্ন হয়নি: {msg_err}\n\n"
-            "একটু পরে আবার চেষ্টা করুন অথবা প্রোডাক্ট পেজে গিয়ে সরাসরি অর্ডার করুন।"
+            "আবার চেষ্টা করতে \"হ্যাঁ\" লিখুন, অথবা বাতিল করতে \"বাতিল\" লিখুন।"
             + LOOP_BACK,
             'order_failed', link_buttons=buttons
         )

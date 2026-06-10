@@ -477,7 +477,9 @@ class TestOrderFlow:
         continue_order_flow(UID, full_reply)
         result = continue_order_flow(UID, 'হ্যাঁ')
         assert result['intent'] == 'order_failed'
-        assert not is_in_order_flow(UID)
+        # On a transient API failure the flow is PRESERVED at STEP_CONFIRM so the
+        # user can retry with "হ্যাঁ" without re-entering everything. (fix #1)
+        assert is_in_order_flow(UID)
 
     def test_product_search_mid_order_clears_flow(self, mock_areas, mock_cities):
         start_order_flow(UID, SAMPLE_PRODUCT)

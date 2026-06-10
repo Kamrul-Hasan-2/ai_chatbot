@@ -12,7 +12,7 @@ backlog = 2048
 # This chatbot keeps per-user mode/context in in-memory dicts.
 # With multiple workers, conversation state can split across processes and behave inconsistently.
 # Keep default at 1 unless state is moved to shared storage (Redis/DB).
-workers = int(os.getenv('GUNICORN_WORKERS', '1'))
+workers = int(os.getenv('GUNICORN_WORKERS', '1')) // never change this to more than 1 then there will be bug
 worker_class = os.getenv('GUNICORN_WORKER_CLASS', 'sync')
 worker_connections = int(os.getenv('GUNICORN_WORKER_CONNECTIONS', '200'))
 timeout = 120
