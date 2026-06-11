@@ -351,6 +351,31 @@ def _match_area(text: str, areas: List[Dict], city_id: str) -> Optional[Dict]:
     return best
 
 
+# Replies that are conversational acks/negations — never an area name.
+_AREA_ACK_TOKENS = frozenset({
+    'ok', 'okay', 'hmm', 'hm', 'hum', 'huh', 'acha', 'accha', 'achha',
+    'thik', 'thik ache', 'thik ase', 'acha thik ase', 'yes', 'no', 'na',
+    'haa', 'hae', 'ji', 'jee', 'আচ্ছা', 'ঠিক আছে', 'হুম', 'হ্যাঁ', 'না', 'জি',
+})
+
+
+def _is_plausible_area(text: str) -> bool:
+    """Sanity-gate for accepting an UNMATCHED area name (stored with null id).
+
+    The smart single-missing follow-up feeds the WHOLE reply here, so questions,
+    multi-line texts, long sentences and bare acks ("ok", "stock ase?") must be
+    rejected — those re-prompt instead of becoming the recorded area.
+    """
+    raw = (text or '').strip()
+    if not raw or '\n' in raw or '?' in raw:
+        return False
+    t = _normalize_token(raw).rstrip('.!।,')
+    if not t or len(t) > 40 or t in _AREA_ACK_TOKENS:
+        return False
+    # Needs at least one Latin or Bangla LETTER (Bangla digits ০-৯ excluded).
+    return bool(re.search(r'[A-Za-zঀ-৥ৰ-৿]', t))
+
+
 # ── Combined-reply parser ─────────────────────────────────────────────────────
 
 # Map label keywords (lowercase) → canonical field name
@@ -445,12 +470,26 @@ def _parse_freeform(text: str) -> Dict[str, str]:
     return out
 
 
+# "পরিমাণ ১" without a colon — buyers often drop the colon on the qty line.
+# Line-anchored so a house number inside the address ("বাসা সংখ্যা ১২") can
+# never be misread as qty; only a line that STARTS with a qty label matches.
+# 'সংখ্যা' is deliberately absent — it's the generic word for "number".
+_QTY_INLINE_RE = re.compile(
+    r'^\s*(?:পরিমাণ|কয়টি|qty|quantity|koyti)\s*[:=]?\s*([০-৯\d]{1,2})(?![০-৯\d])',
+    re.MULTILINE,
+)
+
+
 def _extract_fields(text: str) -> Dict[str, str]:
     """Combine labelled + freeform parsing. Labels win when both present."""
     labelled = _parse_labelled_lines(text)
     freeform = _parse_freeform(text)
     out = dict(freeform)
     out.update(labelled)  # labelled overrides freeform guesses
+    if 'qty' not in out:
+        m = _QTY_INLINE_RE.search(text or '')
+        if m:
+            out['qty'] = m.group(1)
     return out
 
 
@@ -489,12 +528,18 @@ def _validate_and_resolve(
         if match:
             state['city_id']   = match['city_id']
             state['city_name'] = match['city_name']
+            state.pop('city_unmatched', None)
             # When city changes, drop any previously-resolved area — it may
             # belong to the old city.
             if state.get('area_city_id') and state['area_city_id'] != match['city_id']:
                 state.pop('area_id', None)
                 state.pop('area_name', None)
                 state.pop('area_city_id', None)
+        else:
+            # The buyer explicitly named a district we don't recognise. Never
+            # silently keep the old one — flag it so জেলা is re-asked (the flag
+            # clears on the next successful match).
+            state['city_unmatched'] = raw_city
 
     # Area (only resolvable once city is known)
     raw_area = extracted.get('area', '').strip()
@@ -504,6 +549,30 @@ def _validate_and_resolve(
             state['area_id']      = match['area_id']
             state['area_name']    = match['area_name']
             state['area_city_id'] = match['city_id']
+        else:
+            city_match = _match_city(raw_area, cities)
+            if (city_match
+                    and _normalize_token(raw_area) ==
+                        (city_match.get('city_name') or '').strip().lower()
+                    and str(city_match['city_id']) != str(state['city_id'])):
+                # The buyer typed a DISTRICT name at the area prompt — that's
+                # a জেলা correction, not an area. Switch city, re-ask the area.
+                state['city_id']   = city_match['city_id']
+                state['city_name'] = city_match['city_name']
+                state.pop('city_unmatched', None)
+                state.pop('area_id', None)
+                state.pop('area_name', None)
+                state.pop('area_city_id', None)
+            elif _is_plausible_area(raw_area):
+                # Area not in BDStall's list for this city (e.g. "Baraipara"
+                # under Chittagong). Re-asking loops forever — no respelling
+                # will ever match — so accept the typed name with area_id null.
+                # The name is appended to the address at place-order time.
+                state['area_id']      = None
+                state['area_name']    = raw_area
+                state['area_city_id'] = state['city_id']
+            # Junk (acks, questions, long texts) falls through — এলাকা stays
+            # missing and the buyer is re-prompted.
 
     # Qty
     raw_qty = extracted.get('qty', '').strip()
@@ -519,9 +588,11 @@ def _validate_and_resolve(
         missing.append('মোবাইল (01XXXXXXXXX)')
     if not (state.get('address') and len(state['address']) >= 2):
         missing.append('ঠিকানা')
-    if not state.get('city_id'):
+    if not state.get('city_id') or state.get('city_unmatched'):
         missing.append('জেলা')
-    if not state.get('area_id'):
+    # Key-presence check: an unmatched area is stored as area_id=None (sent as
+    # null to the API) and counts as provided — only a never-given area is missing.
+    if 'area_id' not in state:
         missing.append('এলাকা')
     if not state.get('qty'):
         missing.append('পরিমাণ')
@@ -530,11 +601,20 @@ def _validate_and_resolve(
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
 
-def _prompt_collect(product_title: str = '') -> str:
-    head = (f"স্যার, আপনি \"{product_title}\" অর্ডার করতে চান। নিচের সব তথ্য "
-            "একসাথে দিন:\n\n"
-            if product_title else
-            "স্যার, অর্ডারের জন্য নিচের সব তথ্য একসাথে দিন:\n\n")
+def _prompt_collect(product_title: str = '', product_url: str = '') -> str:
+    if product_title:
+        head = f"স্যার, আপনি \"{product_title}\" অর্ডার করতে চান।\n\n"
+        if product_url:
+            head += (
+                f"🔗 প্রোডাক্ট লিংক: {product_url}\n\n"
+                "অনুগ্রহ করে উপরের লিংকে ক্লিক করে ওয়েবসাইটে গিয়ে "
+                "\"Buy Now\" বাটনে ক্লিক করে সরাসরি অর্ডার করুন। অথবা "
+                "আমাদের মাধ্যমে অর্ডার করতে চাইলে নিচের সব তথ্য একসাথে দিন:\n\n"
+            )
+        else:
+            head += "নিচের সব তথ্য একসাথে দিন:\n\n"
+    else:
+        head = "স্যার, অর্ডারের জন্য নিচের সব তথ্য একসাথে দিন:\n\n"
     template = (
         "নাম: <আপনার পূর্ণ নাম>\n"
         "মোবাইল: 017XXXXXXXX\n"
@@ -547,12 +627,22 @@ def _prompt_collect(product_title: str = '') -> str:
     return head + template
 
 
-def _prompt_missing(missing: List[str], state: Dict) -> str:
+def _prompt_missing(missing: List[str], state: Dict,
+                    areas: Optional[List[Dict]] = None) -> str:
     head = "স্যার, নিচের তথ্যগুলো এখনো বাকি বা সঠিক হয়নি:\n\n"
     bullets = '\n'.join(f"• {m}" for m in missing)
     hint = ''
     if 'এলাকা' in missing and state.get('city_name'):
-        hint = f"\n\n({state['city_name']}-এর এলাকার নাম দিন, যেমন: Mirpur, Dhanmondi)"
+        # Example areas must come from the SELECTED city's list — a hardcoded
+        # "Mirpur, Dhanmondi" misleads buyers outside Dhaka.
+        examples = ''
+        if areas and state.get('city_id'):
+            names = [a.get('area_name') for a in areas
+                     if str(a.get('city_id')) == str(state['city_id'])
+                     and a.get('area_name')]
+            examples = ', '.join(names[:2])
+        example_part = f", যেমন: {examples}" if examples else ''
+        hint = f"\n\n({state['city_name']}-এর এলাকার নাম দিন{example_part})"
     elif 'জেলা' in missing:
         hint = "\n\n(যেমন: Dhaka, Chittagong, Khulna)"
     return head + bullets + hint + "\n\nঅনুগ্রহ করে এগুলো লিখে পাঠান।"
@@ -602,7 +692,7 @@ def start_order_flow(user_id: str, product: Dict) -> Dict:
         'listing_id':    listing_id,
     }
     set_order_flow(user_id, state)
-    return _ok(_prompt_collect(title), 'order_collect')
+    return _ok(_prompt_collect(title, url), 'order_collect')
 
 
 def continue_order_flow(user_id: str, message: str) -> Optional[Dict]:
@@ -639,7 +729,7 @@ def continue_order_flow(user_id: str, message: str) -> Optional[Dict]:
         if state.get('step') == STEP_CONFIRM:
             tail = _prompt_confirm(state)
         else:
-            tail = _prompt_collect(title)
+            tail = _prompt_collect(title, state.get('product_url', ''))
         return _ok(intro + "\n\n" + tail, 'order_price_fixed')
 
     # Info-question interruption mid-order — answer briefly and re-show the
@@ -652,7 +742,8 @@ def continue_order_flow(user_id: str, message: str) -> Optional[Dict]:
         if state.get('step') == STEP_CONFIRM:
             tail = _prompt_confirm(state)
         else:
-            tail = _prompt_collect(state.get('product_title', ''))
+            tail = _prompt_collect(state.get('product_title', ''),
+                                   state.get('product_url', ''))
         return _ok(_intr_reply + "\n\n" + tail, 'order_interruption')
 
     # Product-search escape: user sent a product query ("hp laptop ase",
@@ -704,23 +795,46 @@ def continue_order_flow(user_id: str, message: str) -> Optional[Dict]:
         set_order_flow(user_id, state)
 
         if missing:
-            return _ok(_prompt_missing(missing, state), 'order_collect')
+            return _ok(_prompt_missing(missing, state, areas), 'order_collect')
 
         state['step'] = STEP_CONFIRM
         set_order_flow(user_id, state)
         return _ok(_prompt_confirm(state), 'order_confirm')
 
     if step == STEP_CONFIRM:
+        # Labelled lines at the confirm step are FIELD CORRECTIONS ("জেলা:
+        # Dhaka", "পরিমাণ: 2") — re-validate them instead of stonewalling on
+        # হ্যাঁ/বাতিল, which would force a full restart to fix one field.
+        corrections = _parse_labelled_lines(message)
+        if corrections:
+            cities = fetch_city_list()
+            areas  = fetch_area_list()
+            if cities and areas:
+                state, missing = _validate_and_resolve(state, corrections, cities, areas)
+                if missing:
+                    state['step'] = STEP_COLLECT
+                    set_order_flow(user_id, state)
+                    return _ok(_prompt_missing(missing, state, areas), 'order_collect')
+                set_order_flow(user_id, state)
+                return _ok(_prompt_confirm(state), 'order_confirm')
         if not _is_confirm(message):
             return _ok(
                 "স্যার, অর্ডার নিশ্চিত করতে \"হ্যাঁ\" লিখুন, "
                 "অথবা বাতিল করতে \"বাতিল\" লিখুন।",
                 'order_confirm'
             )
+        # An unmatched area has area_id=None and its name exists only in chat
+        # state — the order payload has no area_name field, so carry the typed
+        # area inside the address or it never reaches the seller.
+        address = state.get('address', '')
+        area_name = state.get('area_name', '')
+        if (state.get('area_id') is None and area_name
+                and area_name.lower() not in address.lower()):
+            address = f"{address}, {area_name}" if address else area_name
         result = place_order(
             name=state.get('name', ''),
             mobile=state.get('mobile', ''),
-            address=state.get('address', ''),
+            address=address,
             listing_id=state.get('listing_id', ''),
             qty=state.get('qty', 1),
             city_id=state.get('city_id', ''),

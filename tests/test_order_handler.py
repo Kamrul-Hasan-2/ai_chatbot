@@ -302,6 +302,69 @@ class TestValidateAndResolve:
         state, missing = _validate_and_resolve(state, extracted, SAMPLE_CITIES, SAMPLE_AREAS)
         assert state.get('area_id') == '20'
 
+    def test_unmatched_area_accepted_as_null(self):
+        # "Baraipara" is not in Chittagong's area list — accept the typed name
+        # with area_id=None (sent as null) instead of re-asking forever.
+        state = {'city_id': '2', 'city_name': 'Chittagong'}
+        extracted = {'name': 'Anik', 'mobile': '01850813967',
+                     'address': 'Chandgaon thana', 'area': 'Baraipara', 'qty': '1'}
+        state, missing = _validate_and_resolve(state, extracted, SAMPLE_CITIES, SAMPLE_AREAS)
+        assert missing == []
+        assert state['area_id'] is None
+        assert state['area_name'] == 'Baraipara'
+
+    def test_area_never_given_still_missing(self):
+        state = {'city_id': '1', 'city_name': 'Dhaka'}
+        _, missing = _validate_and_resolve(state, {}, SAMPLE_CITIES, SAMPLE_AREAS)
+        assert 'এলাকা' in missing
+
+    def test_city_change_drops_unmatched_area(self):
+        state = {'city_id': '2', 'city_name': 'Chittagong'}
+        state, _ = _validate_and_resolve(state, {'area': 'Baraipara'},
+                                         SAMPLE_CITIES, SAMPLE_AREAS)
+        assert state['area_id'] is None
+        state, missing = _validate_and_resolve(state, {'city': 'Dhaka'},
+                                               SAMPLE_CITIES, SAMPLE_AREAS)
+        assert 'area_id' not in state
+        assert 'এলাকা' in missing
+
+    def test_junk_not_accepted_as_area(self):
+        # Acks, questions, and long multi-line texts must NOT become the area —
+        # they re-prompt (only plausible names get the null-id acceptance).
+        for junk in ('ok', 'hmm', 'আচ্ছা', 'stock ase?', 'না',
+                     'vai amar basha onek dure shohor theke\napnara ki jaben'):
+            state = {'city_id': '2', 'city_name': 'Chittagong'}
+            state, missing = _validate_and_resolve(state, {'area': junk},
+                                                   SAMPLE_CITIES, SAMPLE_AREAS)
+            assert 'area_id' not in state, f'junk accepted: {junk!r}'
+            assert 'এলাকা' in missing
+
+    def test_city_name_at_area_prompt_is_city_correction(self):
+        # Typing a district name where the area was expected is a জেলা
+        # correction — switch city and re-ask the area.
+        state = {'city_id': '2', 'city_name': 'Chittagong'}
+        state, missing = _validate_and_resolve(state, {'area': 'Dhaka'},
+                                               SAMPLE_CITIES, SAMPLE_AREAS)
+        assert state['city_id'] == '1'
+        assert state['city_name'] == 'Dhaka'
+        assert 'area_id' not in state
+        assert 'এলাকা' in missing
+
+    def test_unmatched_city_reported_not_silently_kept(self):
+        # An explicit জেলা we don't recognise must re-ask জেলা, not silently
+        # keep the old city (which would place a wrong-city order).
+        state = {'name': 'Rahim', 'mobile': '01711111111', 'address': 'House 5',
+                 'city_id': '1', 'city_name': 'Dhaka', 'qty': 1,
+                 'area_id': '10', 'area_name': 'Mirpur', 'area_city_id': '1'}
+        state, missing = _validate_and_resolve(state, {'city': 'Coxbazar'},
+                                               SAMPLE_CITIES, SAMPLE_AREAS)
+        assert 'জেলা' in missing
+        # A later valid জেলা clears the flag
+        state, missing = _validate_and_resolve(state, {'city': 'Khulna'},
+                                               SAMPLE_CITIES, SAMPLE_AREAS)
+        assert 'জেলা' not in missing
+        assert state['city_name'] == 'Khulna'
+
 
 class TestMatchCity:
     def test_exact_name(self):
@@ -344,6 +407,14 @@ class TestOrderFlow:
         assert result['intent'] == 'order_collect'
         assert 'নাম' in result['response']
         assert is_in_order_flow(UID)
+
+    def test_start_flow_prompt_includes_product_link(self, mock_areas, mock_cities):
+        result = start_order_flow(UID, SAMPLE_PRODUCT)
+        assert SAMPLE_PRODUCT['url'] in result['response']
+        assert 'Buy Now' in result['response']
+        # Link comes first, then the website option, then the form
+        assert result['response'].index(SAMPLE_PRODUCT['url']) < \
+               result['response'].index('নাম:')
 
     def test_start_flow_missing_listing_id(self, mock_areas, mock_cities):
         bad_product = {'title': 'Test', 'url': 'https://www.bdstall.com/details/no-id/'}
@@ -480,6 +551,105 @@ class TestOrderFlow:
         # On a transient API failure the flow is PRESERVED at STEP_CONFIRM so the
         # user can retry with "হ্যাঁ" without re-entering everything. (fix #1)
         assert is_in_order_flow(UID)
+
+    @patch('services.order_handler.place_order')
+    def test_unmatched_area_full_flow_sends_null_area(self, mock_place, mock_areas, mock_cities):
+        # Screenshot bug: জেলা Chittagong + এলাকা Baraipara (not in the API list)
+        # looped on the এলাকা re-prompt forever. Now it must reach confirm and
+        # place the order with area_id=None (JSON null).
+        mock_place.return_value = {'success': True, 'message': 'ok',
+                                   'order_no': '555', 'order_id': '5'}
+        start_order_flow(UID, SAMPLE_PRODUCT)
+        full_reply = (
+            "নাম: আনিক\n"
+            "মোবাইল : ০১৮৫০৮১৩৯৬৭\n"
+            "ঠিকানা : চট্টগ্রাম এর চাঁদগাঁও থানার বাড়াইপাড়া এলাকায়।\n"
+            "জেলা: Chittagong\n"
+            "এলাকা: Baraipara\n"
+            "পরিমাণ: ১"
+        )
+        result = continue_order_flow(UID, full_reply)
+        assert result['intent'] == 'order_confirm'   # no এলাকা loop
+        assert 'Baraipara' in result['response']
+        result = continue_order_flow(UID, 'হ্যাঁ')
+        assert result['intent'] == 'order_placed'
+        assert mock_place.call_args.kwargs['area_id'] is None
+        # The typed area must reach BDStall — the payload has no area_name
+        # field, so it travels appended to the address.
+        assert 'Baraipara' in mock_place.call_args.kwargs['address']
+
+    @patch('services.order_handler.place_order')
+    def test_qty_without_colon_parsed(self, mock_place, mock_areas, mock_cities):
+        # The screenshot form ends with "পরিমাণ ১" (no colon) — it must still
+        # parse as qty so a fresh order doesn't loop on পরিমাণ.
+        mock_place.return_value = {'success': True, 'message': 'ok',
+                                   'order_no': '556', 'order_id': '6'}
+        start_order_flow(UID, SAMPLE_PRODUCT)
+        full_reply = (
+            "নাম: আনিক\n"
+            "মোবাইল : ০১৮৫০৮১৩৯৬৭\n"
+            "ঠিকানা : চট্টগ্রাম এর চাঁদগাঁও থানার বাড়াইপাড়া এলাকায়।\n"
+            "জেলা: Chittagong\n"
+            "এলাকা: Baraipara\n"
+            "পরিমাণ ১"
+        )
+        result = continue_order_flow(UID, full_reply)
+        assert result['intent'] == 'order_confirm'
+        result = continue_order_flow(UID, 'হ্যাঁ')
+        assert result['intent'] == 'order_placed'
+        assert mock_place.call_args.kwargs['qty'] == 1
+        assert mock_place.call_args.kwargs['area_id'] is None
+
+    def test_qty_inline_not_taken_from_address(self, mock_areas, mock_cities):
+        # "বাসা সংখ্যা ১২" is a HOUSE number — it must never become qty=12.
+        out = _extract_fields(
+            "নাম: Rahim\nমোবাইল: 01711111111\n"
+            "ঠিকানা: বাসা সংখ্যা ১২, Road 5\nজেলা: Dhaka\nএলাকা: Mirpur"
+        )
+        assert 'qty' not in out
+
+    def test_junk_reply_at_area_prompt_reprompts(self, mock_areas, mock_cities):
+        # Single-missing-field follow-up feeds the whole reply as the area —
+        # an ack like "ok" must re-prompt, not become the recorded area.
+        from repositories.state_repository import set_order_flow
+        set_order_flow(UID, {
+            'step': STEP_COLLECT, 'product_title': 'Watch',
+            'product_url': SAMPLE_PRODUCT['url'], 'listing_id': '27344',
+            'name': 'Rahim', 'mobile': '01711111111', 'address': 'House 5',
+            'city_id': '2', 'city_name': 'Chittagong', 'qty': 1,
+        })
+        result = continue_order_flow(UID, 'ok')
+        assert result['intent'] == 'order_collect'
+        assert 'এলাকা' in result['response']
+
+    @patch('services.order_handler.place_order')
+    def test_labelled_correction_at_confirm_step(self, mock_place, mock_areas, mock_cities):
+        # At the confirm step, "পরিমাণ: 3" is a field correction — update and
+        # re-show the summary instead of demanding হ্যাঁ/বাতিল.
+        mock_place.return_value = {'success': True, 'order_no': '777', 'order_id': '7'}
+        start_order_flow(UID, SAMPLE_PRODUCT)
+        continue_order_flow(UID, (
+            "নাম: Rahim\nমোবাইল: 01711111111\nঠিকানা: House 5\n"
+            "জেলা: Dhaka\nএলাকা: Mirpur\nপরিমাণ: 1"
+        ))
+        result = continue_order_flow(UID, 'পরিমাণ: 3')
+        assert result['intent'] == 'order_confirm'
+        assert 'পরিমাণ: 3' in result['response']
+        result = continue_order_flow(UID, 'হ্যাঁ')
+        assert mock_place.call_args.kwargs['qty'] == 3
+
+    def test_area_hint_uses_selected_city_areas(self, mock_areas, mock_cities):
+        # When এলাকা is still missing, the example areas must come from the
+        # selected city's list — not the hardcoded Dhaka pair.
+        start_order_flow(UID, SAMPLE_PRODUCT)
+        reply_no_area = (
+            "নাম: Rahim\nমোবাইল: 01711111111\nঠিকানা: House 5\n"
+            "জেলা: Chittagong\nপরিমাণ: 1"
+        )
+        result = continue_order_flow(UID, reply_no_area)
+        assert result['intent'] == 'order_collect'
+        assert 'Agrabad' in result['response']
+        assert 'Mirpur' not in result['response']
 
     def test_product_search_mid_order_clears_flow(self, mock_areas, mock_cities):
         start_order_flow(UID, SAMPLE_PRODUCT)
