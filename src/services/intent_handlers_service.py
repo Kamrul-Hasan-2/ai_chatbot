@@ -968,11 +968,102 @@ def _clean_product_keywords(message: str) -> str:
     return re.sub(r'\s+', ' ', txt).strip()
 
 
+# ── Bangla → English search-term translation ─────────────────────────────────
+# The BDStall search index is English-only. A Bangla query like "ডাবল ইলেক্ট্রিক
+# চুলা" gets no real match and the API responds with unrelated fallback listings
+# (flats, fishing bait...). Translate the common product words before searching.
+# Replacement is BOUNDARY-AWARE (per the signal-set collision rule): a Bangla key
+# matches only as a whole word — never inside a longer Bangla word, so 'খাট' (bed)
+# can't fire inside 'খাটি' (genuine) and 'বাতি' (light) can't fire inside 'বাতিল'
+# (cancel) — optionally consuming a common noun suffix ('চুলার'/'খাটটা' → bare
+# noun). Latin (Banglish) keys are word-bounded so 'batti' can't fire inside
+# 'batting'. Longer keys win ('লাইটার' → lighter, never 'লাইট' → light).
+_BN_SEARCH_TERMS = {
+    # cooking / kitchen
+    'রাইস কুকার': 'rice cooker', 'প্রেসার কুকার': 'pressure cooker',
+    'ওয়াশিং মেশিন': 'washing machine', 'সেলাই মেশিন': 'sewing machine',
+    'চুলা': 'stove', 'চুলো': 'stove', 'কুকার': 'cooker', 'কেটলি': 'kettle',
+    'ওভেন': 'oven', 'মাইক্রোওয়েভ': 'microwave', 'ব্লেন্ডার': 'blender',
+    'মিক্সার': 'mixer', 'গ্রাইন্ডার': 'grinder',
+    # qualifiers
+    'ডাবল': 'double', 'সিঙ্গেল': 'single', 'ইলেক্ট্রিক': 'electric',
+    'ইলেকট্রিক': 'electric', 'বৈদ্যুতিক': 'electric', 'গ্যাসের': 'gas',
+    'গ্যাস': 'gas', 'ইন্ডাকশন': 'induction', 'ফ্যান্সি': 'fancy',
+    # home appliances / electronics
+    'ফ্যান': 'fan', 'পাখা': 'fan', 'হিটার': 'heater', 'গিজার': 'geyser',
+    'আয়রন': 'iron', 'ইস্ত্রি': 'iron', 'জেনারেটর': 'generator',
+    'পাম্প': 'pump', 'মোটর': 'motor', 'ব্যাটারি': 'battery',
+    'চার্জার': 'charger', 'লাইটার': 'lighter', 'লাইট': 'light',
+    'বাল্ব': 'bulb', 'বাতি': 'light', 'স্যাটেলাইট': 'satellite',
+    'স্পিকার': 'speaker', 'হেডফোন': 'headphone', 'ইয়ারফোন': 'earphone',
+    'মাউস': 'mouse', 'কিবোর্ড': 'keyboard', 'মনিটর': 'monitor',
+    'প্রিন্টার': 'printer', 'রাউটার': 'router', 'ঘড়ি': 'watch',
+    'সুইচ': 'switch', 'তালা': 'lock', 'ট্রিমার': 'trimmer', 'ড্রিল': 'drill',
+    # furniture / vehicles
+    'খাট': 'bed', 'চেয়ার': 'chair', 'টেবিল': 'table', 'সোফা': 'sofa',
+    'আলমারি': 'wardrobe', 'ম্যাট্রেস': 'mattress',
+    'মোটরসাইকেল': 'motorcycle', 'সাইকেল': 'cycle', 'বাইক': 'bike',
+    # common Banglish spellings
+    'chula': 'stove', 'chulha': 'stove', 'pakha': 'fan', 'ghori': 'watch',
+    'istiri': 'iron', 'batti': 'light',
+}
+_BN_TRANSLATE_KEYS = sorted(
+    (k for k in _BN_SEARCH_TERMS if any(ord(c) > 127 for c in k)),
+    key=len, reverse=True)
+_LATIN_TRANSLATE_KEYS = sorted(
+    (k for k in _BN_SEARCH_TERMS if not any(ord(c) > 127 for c in k)),
+    key=len, reverse=True)
+# Common noun suffixes that may follow a matched key ('চুলার', 'খাটটা', 'টেবিলে');
+# any OTHER trailing Bangla character means a different word — no match.
+_BN_TRANSLATE_RE = re.compile(
+    r'(?<![ঀ-৿])('
+    + '|'.join(re.escape(k) for k in _BN_TRANSLATE_KEYS)
+    + r')(?:গুলো|গুলা|খানা|টার|ের|টা|টি|টে|তে|ে|র)?(?![ঀ-৿])'
+)
+_LATIN_TRANSLATE_RE = re.compile(
+    r'\b('
+    + '|'.join(re.escape(k) for k in _LATIN_TRANSLATE_KEYS)
+    + r')\b'
+)
+
+
+def _translate_bn_search_terms(text: str) -> str:
+    if not text:
+        return ''
+    out = _BN_TRANSLATE_RE.sub(lambda m: f' {_BN_SEARCH_TERMS[m.group(1)]} ', text)
+    out = _LATIN_TRANSLATE_RE.sub(lambda m: f' {_BN_SEARCH_TERMS[m.group(1)]} ', out)
+    return re.sub(r'\s+', ' ', out).strip()
+
+
+def _results_match_query(kw: str, products: List[Dict]) -> bool:
+    """Guard against the search API returning unrelated fallback listings.
+
+    The API never returns zero for an unmatchable term — it falls back to
+    random listings (e.g. a flat and fishing bait for "electric stove").
+    Require at least one Latin query token (≥3 chars) to appear in one of the
+    top titles. Bangla tokens can't be compared against the English titles,
+    so a query with no Latin tokens is trusted as-is.
+    """
+    q_tokens = {t for t in re.findall(r'[a-z0-9]{3,}', (kw or '').lower())
+                if t not in _GENERIC_SEARCH_WORDS}
+    if not q_tokens:
+        return True
+    for p in products[:5]:
+        title = (p.get('title') or '').lower()
+        if any(t in title for t in q_tokens):
+            return True
+    return False
+
+
 def _meaningful_search_tokens(kw: str) -> List[str]:
     out = []
     for t in kw.split():
         tl = t.lower().strip('.,?!।')
         if len(tl) < 3 or tl in _GENERIC_SEARCH_WORDS or _BUDGET_TOKEN_RE.match(tl):
+            continue
+        # Orphan suffix/conjunct fragments start with a Bangla combining mark
+        # ('্সি', 'ের') — never a real word; drop them.
+        if re.match(r'[ঁ-ঃ়া-্ৗ]', tl):
             continue
         out.append(t)
     return out
@@ -985,8 +1076,16 @@ def _search_without_category(ctx: Dict, user_id: str, message: str) -> Optional[
     asking the user which category they want.
     """
     kw = _build_keywords(ctx) or _clean_product_keywords(message)
+    kw = _translate_bn_search_terms(kw)
     tokens = _meaningful_search_tokens(kw)
     if not tokens:
+        return None
+    # A query with no Latin token left after translation can neither be matched
+    # by the English-only index (it falls back to UNRELATED listings) nor be
+    # relevance-checked against the English titles — ask the category instead
+    # of risking the junk fallback.
+    if not any(re.search(r'[a-z0-9]{3}', t.lower()) for t in tokens):
+        logger.info("untranslatable Bangla search %r — asking category", kw)
         return None
 
     price_max = ctx.get('price_max')
@@ -1006,6 +1105,9 @@ def _search_without_category(ctx: Dict, user_id: str, message: str) -> Optional[
         result = search_products(attempt, price_max, price_min)
         if result['products_found'] == 0 and (price_max or price_min):
             result = search_products(attempt)
+        if result['products_found'] > 0 and not _results_match_query(attempt, result['products']):
+            logger.info("search results irrelevant for %r — treating as none", attempt)
+            result = {'products_found': 0, 'products': []}
         if result['products_found'] > 0:
             used_kw = attempt
             break
@@ -1043,15 +1145,29 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
                    r'\?\?|\?|।)')
         spec_text = re.sub(_FILLER, ' ', msg_lower).strip()
         spec_text = re.sub(r'\s+', ' ', spec_text).strip().rstrip('র ের এর ের').strip()
+        spec_text = _translate_bn_search_terms(spec_text)
         category = ctx.get('category', '')
         price_max = ctx.get('price_max')
         price_min = ctx.get('price_min')
         search_kw = f"{spec_text} {category}".strip() if spec_text else category
         ic = intent_to_normalized(ctx)
+        # Pure-Bangla terms can't be matched by the English-only index — the API
+        # falls back to unrelated listings. Skip straight to the no-products reply.
+        if search_kw and not re.search(r'[a-z0-9]{3}', search_kw.lower()):
+            logger.info("rejection-path: untranslatable Bangla %r — no search", search_kw)
+            search_kw = ''
         if search_kw:
             result = search_products(search_kw, price_max, price_min)
             if result['products_found'] == 0 and (price_max or price_min):
                 result = search_products(search_kw)  # retry without budget
+            # Junk-fallback guard: only when the spec itself carries Latin tokens
+            # (a category-only search may legitimately return titles without the
+            # category word, so it is not judged here).
+            if (result['products_found'] > 0
+                    and re.search(r'[a-z0-9]{3}', spec_text.lower())
+                    and not _results_match_query(search_kw, result['products'])):
+                logger.info("rejection-path results irrelevant for %r — treating as none", search_kw)
+                result = {'products_found': 0, 'products': []}
             if result['products_found'] > 0:
                 products = result['products']
                 set_search_pool(user_id, search_kw, products)
