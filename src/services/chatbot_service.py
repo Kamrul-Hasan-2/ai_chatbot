@@ -136,6 +136,29 @@ _AUTHENTICITY_RESPONSE = (
     "স্যার, আমাদের এখানের সকল প্রোডাক্টই ভালো, তবে কেনার আগে অবশ্যই দেখে নিবেন।"
 )
 
+# ── Product review / rating inquiry signals ───────────────────────────────────
+# "eitar review ki?", "review jante chai", "rating kemon", "product er review
+# dekhte chai" — the bot can't summarise reviews; it points the buyer to the
+# product page where the reviews & ratings live. Latin tokens are word-bounded so
+# 'review'/'rating' never fire inside another word; Bangla terms stay substring so
+# attached suffixes ("রিভিউটা", "রেটিংটা") still match. (per signal-set collision rule)
+_REVIEW_LATIN = frozenset({
+    'review', 'reviews', 'rivew', 'riview', 'rivu', 'rebhio', 'rebhiu',
+    'rating', 'ratings',
+})
+_REVIEW_BANGLA = (
+    'রিভিউ', 'রিভিও', 'রেটিং', 'মতামত',
+)
+_REVIEW_LATIN_RE = re.compile(
+    r'\b(?:' + '|'.join(re.escape(w) for w in _REVIEW_LATIN) + r')\b'
+)
+
+
+def _has_review_word(msg_lower: str) -> bool:
+    if any(w in msg_lower for w in _REVIEW_BANGLA):
+        return True
+    return bool(_REVIEW_LATIN_RE.search(msg_lower))
+
 # ── Order-status inquiry (existing order) signals ─────────────────────────────
 # "Bai akta order chilo", "amar order ta kothay", "order korechilam status ki?"
 # are buyers asking about an EXISTING order. With an order number we look it up;
@@ -575,6 +598,48 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                 user_id,
                 {'response': _AUTHENTICITY_RESPONSE,
                  'intent': 'faq_authenticity', 'intent_content': _auth_ctx,
+                 'products': []},
+                ChatMode.AI, AI_ACTIVE_STATUS,
+                (datetime.now() - start_time).total_seconds(),
+                user_message=message, profile=profile)
+
+        # ── Product review / rating intercept ────────────────────────────────
+        # "eitar review koto?", "review jante chai", "rating kemon" — the bot
+        # doesn't summarise reviews; it sends the buyer to the product page where
+        # the reviews & ratings are shown. Fills the name + link from the most
+        # recently discussed (cached) product; if nothing is cached we ask which
+        # product. Runs before the product-detail followup so review questions
+        # aren't answered as spec queries.
+        _msg_l_rev = message.lower()
+        if _has_review_word(_msg_l_rev):
+            from repositories.state_repository import get_product_context as _gpc_rev
+            _rev_ctx = normalize_payload(prev_ctx)
+            _rev_products = _gpc_rev(user_id)
+            if _rev_products:
+                _rev_top = _rev_products[0]
+                _rev_title = (_rev_top.get('title') or 'এই প্রোডাক্ট')[:60]
+                _rev_url = _rev_top.get('url', '')
+                _rev_buttons = ([{'text': 'প্রোডাক্ট দেখুন', 'url': _rev_url,
+                                  'title': _rev_title}] if _rev_url else [])
+                _rev_text = (f"স্যার, {_rev_title} এই প্রোডাক্টের রিভিউ দেখতে "
+                             "প্রোডাক্ট পেজে ভিজিট করুন।")
+                _observe_and_save(user_id, profile, message, 'product_review', {})
+                return _build_response(
+                    user_id,
+                    {'response': _rev_text, 'intent': 'product_review',
+                     'intent_content': _rev_ctx, 'products': [],
+                     'link_buttons': _rev_buttons},
+                    ChatMode.AI, AI_ACTIVE_STATUS,
+                    (datetime.now() - start_time).total_seconds(),
+                    user_message=message, profile=profile)
+            # No product in context — ask which product the review is for.
+            _observe_and_save(user_id, profile, message, 'product_review', {})
+            return _build_response(
+                user_id,
+                {'response': ("স্যার, আপনি কোন প্রোডাক্টের রিভিউ দেখতে চান? "
+                              "প্রোডাক্টটির নাম বলুন, আমি প্রোডাক্ট পেজের লিংক "
+                              "দিয়ে দিচ্ছি।"),
+                 'intent': 'product_review', 'intent_content': _rev_ctx,
                  'products': []},
                 ChatMode.AI, AI_ACTIVE_STATUS,
                 (datetime.now() - start_time).total_seconds(),
