@@ -108,6 +108,59 @@ class TestTranslateBnSearchTerms:
         assert _translate_bn_search_terms('টেবিলের দাম') .startswith('table')
         assert _translate_bn_search_terms('ব্যাটারির দাম').startswith('battery')
 
+    # ── New entries: TV box, photostat, crimping ──────────────────────────────
+
+    def test_smart_tv_box_phrase(self):
+        out = _translate_bn_search_terms('স্মার্ট টিভি বক্স')
+        assert 'smart tv box' in out
+
+    def test_tv_box_phrase(self):
+        out = _translate_bn_search_terms('টিভি বক্স')
+        assert 'tv box' in out
+
+    def test_smart_tv_phrase(self):
+        out = _translate_bn_search_terms('স্মার্ট টিভি')
+        assert 'smart tv' in out
+
+    def test_tivi_standalone(self):
+        assert 'tv' in _translate_bn_search_terms('টিভি')
+
+    def test_box_standalone(self):
+        assert 'box' in _translate_bn_search_terms('বক্স')
+
+    def test_smartphone_not_smart_box(self):
+        # 'স্মার্টফোন' must translate to smartphone, not trigger 'স্মার্ট টিভি' etc.
+        out = _translate_bn_search_terms('স্মার্টফোন')
+        assert 'smartphone' in out
+        assert 'tv' not in out
+
+    def test_photostat_translated(self):
+        out = _translate_bn_search_terms('ফটোস্ট্যাট')
+        assert 'photocopier' in out
+
+    def test_photostat_misspelling(self):
+        out = _translate_bn_search_terms('ফেটোস্ট্যাট')
+        assert 'photocopier' in out
+
+    def test_copy_machine_phrase(self):
+        out = _translate_bn_search_terms('কপি মেশিন')
+        assert 'photocopier' in out
+
+    def test_photostat_copy_machine_full(self):
+        out = _translate_bn_search_terms('ফেটোস্ট্যাট কপি মেশিন')
+        assert 'photocopier' in out
+
+    def test_climpting_misspelling(self):
+        # 'climpting' (misspelling of crimping) should be mapped to 'crimping'
+        out = _translate_bn_search_terms('climpting tools')
+        assert 'crimping' in out
+        assert 'climpting' not in out
+
+    def test_crimping_search_not_regression(self):
+        # 'crimping' itself (correctly spelled) must survive unchanged
+        out = _translate_bn_search_terms('crimping tools')
+        assert 'crimping' in out
+
 
 class TestResultsMatchQuery:
     def test_garbage_results_rejected(self):

@@ -1003,9 +1003,21 @@ _BN_SEARCH_TERMS = {
     'খাট': 'bed', 'চেয়ার': 'chair', 'টেবিল': 'table', 'সোফা': 'sofa',
     'আলমারি': 'wardrobe', 'ম্যাট্রেস': 'mattress',
     'মোটরসাইকেল': 'motorcycle', 'সাইকেল': 'cycle', 'বাইক': 'bike',
+    # TV / streaming
+    'স্মার্ট টিভি বক্স': 'smart tv box', 'টিভি বক্স': 'tv box',
+    'স্মার্ট টিভি': 'smart tv', 'স্মার্টফোন': 'smartphone',
+    'টিভি': 'tv', 'বক্স': 'box',
+    # photostat / copy machine
+    'ফটোস্ট্যাট': 'photocopier', 'ফেটোস্ট্যাট': 'photocopier',
+    'ফটোকপি': 'photocopier', 'কপি মেশিন': 'photocopier',
+    'কপিয়ার': 'copier',
+    # measurements
+    'ইঞ্চি': 'inch',
     # common Banglish spellings
     'chula': 'stove', 'chulha': 'stove', 'pakha': 'fan', 'ghori': 'watch',
     'istiri': 'iron', 'batti': 'light',
+    # Banglish misspellings
+    'climpting': 'crimping',
 }
 _BN_TRANSLATE_KEYS = sorted(
     (k for k in _BN_SEARCH_TERMS if any(ord(c) > 127 for c in k)),
@@ -1411,14 +1423,31 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
         )
 
     products = result['products']
+    # Relevance guard: the BDStall search API falls back to random listings when
+    # the query doesn't match anything. Block those junk results the same way
+    # _search_without_category does.  Only fires when the keyword carries Latin
+    # tokens; pure-category or pure-Bangla queries are trusted as-is.
+    if not _results_match_query(keywords, products):
+        logger.info("main-path relevance guard rejected results for %r", keywords)
+        label = ' '.join(v for v in [
+            ctx.get('brand', ''), ctx.get('title', ''), ctx.get('category', '')
+        ] if v)
+        return _ok(
+            f"দুঃখিত স্যার, এই মুহূর্তে {label} স্টকে নেই। "
+            "স্টক আপডেটের জন্য আমাদের ওয়েবসাইট ফলো করুন: 👉 www.bdstall.com"
+            + LOOP_BACK,
+            'no_products_found', ic
+        )
     # Cache the full pool (up to 15) for "more" rotation
     set_search_pool(user_id, current_key, products)
     set_product_context(user_id, products[:5])
     text, buttons = _format_listing(products[:3])
     title_kw = (ctx.get('title') or '').lower().strip()
-    # Warn if specific model/type requested but results don't match
+    # Warn if specific model/type requested but results don't match; only say
+    # "বাজেটে" when a price limit was actually applied.
     if title_kw and not any(title_kw in p.get('title', '').lower() for p in products):
-        header = f"স্যার, এই বাজেটে '{ctx.get('title')}' পাওয়া যায়নি। কাছাকাছি অপশন:\n\n"
+        budget_phrase = 'এই বাজেটে ' if (price_max or price_min) else ''
+        header = f"স্যার, {budget_phrase}'{ctx.get('title')}' পাওয়া যায়নি। কাছাকাছি অপশন:\n\n"
     elif price_max and price_min:
         header = f"স্যার, ৳{price_min:,} - ৳{price_max:,} বাজেটে এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
     elif price_max:
