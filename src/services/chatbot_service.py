@@ -173,11 +173,18 @@ _ORDER_EXISTING_MARKERS = (
     'diyechilam', 'dilam', 'korechi', 'korsi', 'disi', 'diyechi',
     'kothay', 'kuthay', 'koi', 'kobe pabo', 'kobe asbe', 'kobe debe',
     'koidur', 'koto dur', 'status', 'obostha', 'khobor', 'ki holo', 'ki hoilo',
-    'pai nai', 'paini', 'pai ni', 'peyechi', 'ase nai',
+    'pai nai', 'paini', 'pai ni', 'peyechi', 'ase nai', 'ase ni', 'aseni',
+    'asena', 'asche na', 'elo na', 'elona',
     # "show me / view this order" — only ever evaluated next to an order word.
     'dekhao', 'dekhe dao', 'dekhe den', 'dekhte chai', 'dekhte chacchi',
     'dekhbo', 'dekhte', 'check koro', 'check kor',
     'ছিল', 'ছিলো', 'করেছিলাম', 'দিয়েছিলাম', 'কোথায়', 'অবস্থা', 'স্ট্যাটাস', 'খবর',
+    # present-perfect "placed / gave" — Bangla script (Banglish covered above)
+    'দিয়েছি', 'করেছি', 'দিছি', 'কিনেছি',
+    # "hasn't arrived / hasn't been received yet" — common delivery complaint words
+    'আসে নি', 'আসেনি', 'আসে নাই', 'আসেনাই', 'আসছে না', 'আসছে নি',
+    'এখনো আসেনি', 'এখনও আসেনি', 'এখনো পাইনি', 'এখনও পাইনি',
+    'পাই নি', 'পাইনি', 'পায়নি', 'পাই নাই', 'পাইনাই', 'পেলাম না', 'আসলো না',
     'দেখাও', 'দেখে দাও', 'দেখে দেন', 'দেখান', 'দেখতে চাই', 'দেখতে চাচ্ছি',
     'দেখব', 'দেখবো', 'দেখতে',
 )
