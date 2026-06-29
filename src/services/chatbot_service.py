@@ -154,6 +154,30 @@ _REVIEW_LATIN_RE = re.compile(
 )
 
 
+def _is_contact_submission(message: str) -> bool:
+    """True when the message is essentially just a BD phone number + label words.
+
+    "আমার কন্টাক্ট নাম্বার ০১৩১৫৯২৮১৬১" → True.
+    "Samsung phone 01712345678 price koto" → False (has non-label content).
+    """
+    if not _BD_MOBILE_RE.search(message):
+        return False
+    remaining = _BD_MOBILE_RE.sub(' ', message)
+    remaining = _CONTACT_LABEL_RE.sub(' ', remaining)
+    remaining = re.sub(r'[\s.,?!।:;+\-()০-৯0-9]+', '', remaining)
+    return len(remaining) <= 3
+
+
+def _is_bare_price_query(message: str) -> bool:
+    """True when the message is ONLY a price question — no product name.
+
+    "Prices?" → True.  "Samsung phone price" → False (has product token).
+    """
+    cleaned = re.sub(r'[?!।.,\'"]+', '', (message or '').lower()).strip()
+    tokens = cleaned.split()
+    return bool(tokens) and all(t in _BARE_PRICE_WORDS for t in tokens)
+
+
 def _has_review_word(msg_lower: str) -> bool:
     if any(w in msg_lower for w in _REVIEW_BANGLA):
         return True
@@ -250,6 +274,24 @@ _BUSINESS_INQUIRY_RESPONSE = (
     "প্রতিনিধি শীঘ্রই আপনার সাথে যোগাযোগ করবেন।"
 )
 
+# ── Contact-number submission detection ───────────────────────────────────────
+# "আমার কন্টাক্ট নাম্বার ০১৩১৫৯২৮১৬১" — customer submitting their phone in
+# response to a property/seller request. Groq reads "আমার" as "আম" (mango) and
+# fires a Mango category search. Catch messages whose only content is a BD
+# mobile number plus label words (নাম্বার, কন্টাক্ট, আমার, my, …).
+_BD_MOBILE_RE = re.compile(
+    r'(?:\+?880)?(?:0|০)(?:1|১)[০-৯0-9]{9}'
+)
+_CONTACT_LABEL_RE = re.compile(
+    r'(?:আমার|আমর|amar|amr|my|ei|এই|এটা|eta|holo|হলো|হল|'
+    r'contact|কন্টাক্ট|কনট্যাক্ট|kontakt|'
+    r'number|নাম্বার|নম্বর|nambar|nombor|num|no|'
+    r'phone|ফোন|mobile|মোবাইল|'
+    r'dichi|দিচ্ছি|dilam|দিলাম|din|নিন|nilen|নিলেন|'
+    r'is|are)',
+    re.IGNORECASE | re.UNICODE,
+)
+
 # ── Suggestion / "which is best" request signals ──────────────────────────────
 # "তুমি সাজেশন দিতে পারো?", "কোনটা ভালো হবে সুপার শপের জন্য?", "konta valo",
 # "recommend korben?" — as a Virtual Assistant the bot must not pick a "best"
@@ -334,6 +376,29 @@ def _is_storage_drive_search(message: str) -> bool:
             return True
     return False
 
+
+# Bare price queries ("Prices?", "দাম কত?", "koto taka?") with no product
+# name reach Groq and get random category hallucinations. Intercept them when
+# words are ONLY price-query tokens so "Samsung phone price" still routes to
+# product search (has product name).
+_BARE_PRICE_WORDS = frozenset({
+    'price', 'prices', 'দাম', 'dam', 'taka', 'টাকা', 'কত', 'কতো', 'koto',
+})
+
+# Emoji-only messages (e.g. 😡 Messenger reactions) must not reach Groq;
+# Groq labels them as hate_speech and fires the "ভদ্র ভাষায়" warning.
+_EMOJI_ONLY_RE = re.compile(
+    r'^[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U0001F000-\U0001F2FF'
+    r'\U0001FA00-\U0001FAFF\U00002702-\U000027B0\s]+$'
+)
+
+# "Samsung A53 5G price?" — the trailing "price?" is a price-inquiry word, not a
+# budget spec. Strip it before sending to Groq so it doesn't get mistaken for a
+# price_max (Groq sometimes reads "price" or nearby numbers like "6" GB as a budget).
+_PRICE_INQUIRY_SUFFIX_RE = re.compile(
+    r'\s*\b(?:price|prices|দাম|dam|কত|koto)\s*\??\s*$',
+    re.IGNORECASE | re.UNICODE,
+)
 
 _BLOCKED_PHRASES = [
     'bdstall.com-এ আপনাকে স্বাগতম',
@@ -458,6 +523,22 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                                        ChatMode.AI, AI_ACTIVE_STATUS,
                                        (datetime.now() - start_time).total_seconds(),
                                        user_message=message, profile=profile)
+
+        # ── Emoji-only / reaction intercept ──────────────────────────────────
+        # A lone emoji (e.g. 😡 as a Messenger reaction) is NOT hate_speech;
+        # Groq labels it that way and fires "ভদ্র ভাষায়", which insults a
+        # customer who was simply expressing frustration via a reaction.
+        if _EMOJI_ONLY_RE.match(message.strip()):
+            _emj_ctx = normalize_payload(prev_ctx)
+            _observe_and_save(user_id, profile, message, 'emoji_reaction', {})
+            return _build_response(
+                user_id,
+                {'response': "স্যার, কোনো সাহায্য লাগলে বলুন।" + LOOP_BACK,
+                 'intent': 'emoji_reaction', 'intent_content': _emj_ctx,
+                 'products': []},
+                ChatMode.AI, AI_ACTIVE_STATUS,
+                (datetime.now() - start_time).total_seconds(),
+                user_message=message, profile=profile)
 
         # ── Advance payment intercept ────────────────────────────────────────
         # Groq often mislabels "অগ্রিম টাকা দিতে হবে?" as product_search.
@@ -652,6 +733,48 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                 (datetime.now() - start_time).total_seconds(),
                 user_message=message, profile=profile)
 
+        # ── Bare price query intercept ───────────────────────────────────────
+        # "Prices?" / "দাম কত?" with no product name → Groq hallucinates a
+        # random category (e.g. Microsoft Office). If products are in context,
+        # show their prices; otherwise ask which product the buyer means.
+        if _is_bare_price_query(message):
+            from repositories.state_repository import get_product_context as _gpc_price
+            _price_ctx = normalize_payload(prev_ctx)
+            _price_products = _gpc_price(user_id)
+            if _price_products:
+                _price_lines = []
+                _price_buttons = []
+                for _pp in _price_products[:3]:
+                    _pp_title = (_pp.get('title') or '')[:55]
+                    _pp_price = _pp.get('price') or ''
+                    _pp_url   = _pp.get('url', '')
+                    _price_lines.append(f"• {_pp_title}: {_pp_price}")
+                    if _pp_url:
+                        _price_buttons.append({'text': _pp_title[:30],
+                                               'url': _pp_url, 'title': _pp_title})
+                _price_text = ("স্যার, এই প্রোডাক্টগুলোর দাম:\n\n"
+                               + '\n'.join(_price_lines) + LOOP_BACK)
+                _observe_and_save(user_id, profile, message, 'price_query', {})
+                return _build_response(
+                    user_id,
+                    {'response': _price_text, 'intent': 'price_query',
+                     'intent_content': _price_ctx, 'products': [],
+                     'link_buttons': _price_buttons},
+                    ChatMode.AI, AI_ACTIVE_STATUS,
+                    (datetime.now() - start_time).total_seconds(),
+                    user_message=message, profile=profile)
+            # No products in context — ask which product.
+            _observe_and_save(user_id, profile, message, 'price_query', {})
+            return _build_response(
+                user_id,
+                {'response': ("স্যার, কোন প্রোডাক্টের দাম জানতে চান? "
+                              "প্রোডাক্টের নাম বলুন।" + LOOP_BACK),
+                 'intent': 'price_query', 'intent_content': _price_ctx,
+                 'products': []},
+                ChatMode.AI, AI_ACTIVE_STATUS,
+                (datetime.now() - start_time).total_seconds(),
+                user_message=message, profile=profile)
+
         # ── Picture / image reference intercept ──────────────────────────────
         # "পিকচার দিয়েছি" / "ছবি পাঠিয়েছি" / "pic dilam" — the bot can't read
         # images, so Groq turns these into a garbled technical-advice reply. Ask
@@ -685,6 +808,17 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
             _observe_and_save(user_id, profile, message, 'seller_query', {})
             return _handoff(user_id, 'seller_query',
                             _BUSINESS_INQUIRY_RESPONSE, start_time)
+
+        # ── Contact-number submission intercept ──────────────────────────────
+        # "আমার কন্টাক্ট নাম্বার ০১৩১৫৯২৮১৬১" — customer submitting their
+        # phone in response to a seller/property request. Groq extracts 'আম'
+        # (mango) from 'আমার' and fires a Mango search. Catch it before Groq.
+        if _is_contact_submission(message):
+            _observe_and_save(user_id, profile, message, 'seller_query', {})
+            return _handoff(
+                user_id, 'seller_query',
+                "স্যার, আপনার নাম্বার পাওয়া গেছে। আমাদের একজন প্রতিনিধি শীঘ্রই আপনার সাথে যোগাযোগ করবেন।",
+                start_time)
 
         # Deterministic greeting intercept — short hi/hello/salam messages should
         # never depend on Groq. Without this a Groq outage hands every new user
@@ -881,7 +1015,10 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         # ── STEP 2: detect_intent ────────────────────────────────────────────
         history     = fetch_history(user_id)
         cat_names   = [c['category_name'] for c in _categories]
-        groq_result = detect_intent(message, history, prev_ctx,
+        # Strip trailing price-inquiry words before Groq to prevent it from
+        # reading "price?" (or nearby spec numbers like "6" GB) as a budget.
+        _groq_msg = _PRICE_INQUIRY_SUFFIX_RE.sub('', message).strip() or message
+        groq_result = detect_intent(_groq_msg, history, prev_ctx,
                                     cat_names, _groq_client, GROQ_MODEL,
                                     user_profile_block=profile.to_prompt_block())
 

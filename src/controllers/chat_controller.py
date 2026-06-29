@@ -1364,12 +1364,29 @@ def messenger_webhook():
                     attachments = message_obj.get('attachments') or []
                     image_received = False
                     file_received = False
+                    sticker_received = False
                     for att in attachments:
                         att_type = att.get('type', '')
-                        if att_type == 'image':
+                        att_payload = att.get('payload') or {}
+                        if att_type == 'image' and att_payload.get('sticker_id'):
+                            # Facebook stickers (👍 thumbs-up, hearts, etc.) arrive as
+                            # type='image' with a sticker_id. They are NOT product photos.
+                            sticker_received = True
+                        elif att_type == 'image':
                             image_received = True
                         elif att_type in ('file', 'audio', 'video', 'fallback'):
                             file_received = True
+
+                    if sticker_received and not image_received:
+                        # Sticker / emoji reaction — acknowledge without asking
+                        # "which product do you want?" (which confuses customers).
+                        if send_facebook_message(
+                            sender_id,
+                            "স্যার, কোনো সাহায্য লাগলে বলুন। 😊"
+                        ):
+                            replied_count += 1
+                        processed_count += 1
+                        continue
 
                     if image_received:
                         if send_facebook_message(

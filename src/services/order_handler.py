@@ -32,6 +32,17 @@ logger = logging.getLogger(__name__)
 STEP_COLLECT = 'collect'   # waiting for the combined reply (or a fix)
 STEP_CONFIRM = 'confirm'   # all fields parsed, waiting for "হ্যাঁ"
 
+# Price-inquiry signals — "কত টাকা?", "দাম কত?", "price koto?" mid-order.
+# Placed AFTER the product-search escape check so "laptop কত টাকা" still
+# escapes the flow; a bare "কত টাকা" (no category/brand) stays here.
+_PRICE_INQUIRY_SIGNALS = (
+    'কত টাকা', 'টাকা কত', 'কতো টাকা', 'টাকা কতো',
+    'দাম কত', 'কত দাম', 'দাম কতো', 'কতো দাম',
+    'koto taka', 'taka koto', 'dam koto', 'koto dam',
+    'price koto', 'koto price',
+    'এর দাম', 'এটার দাম', 'এইটার দাম', 'etar dam', 'itar dam',
+)
+
 # Words that cancel an in-progress order
 _CANCEL_WORDS = {
     'cancel', 'বাতিল', 'cancel korbo', 'বাদ দিন', 'বাদ দাও',
@@ -184,6 +195,14 @@ def _is_price_negotiation(message: str) -> bool:
     if not msg:
         return False
     return any(s in msg for s in _PRICE_NEGOTIATE_SIGNALS)
+
+
+def _is_price_inquiry(message: str) -> bool:
+    """True when the user is asking about the price of the product mid-order."""
+    msg = _normalize_token(message)
+    if not msg:
+        return False
+    return any(s in msg for s in _PRICE_INQUIRY_SIGNALS)
 
 
 # ── Mid-order info-question interruptions ─────────────────────────────────────
@@ -752,6 +771,20 @@ def continue_order_flow(user_id: str, message: str) -> Optional[Dict]:
     if _is_product_search_escape(message):
         clear_order_flow(user_id)
         return None
+
+    # Price inquiry mid-order ("এটা কত টাকা?", "দাম কত?"). The user wants to
+    # verify the price before filling the form. Direct them to the product page
+    # (which shows the price) and re-show the order form so they can continue.
+    # Runs AFTER the product-search escape so "laptop কত টাকা" still escapes;
+    # a bare "কত টাকা" with no brand/category stays here.
+    if _is_price_inquiry(message):
+        reply = "স্যার, প্রোডাক্টের সর্বশেষ দাম প্রোডাক্ট পেজে দেখুন।"
+        if state.get('step') == STEP_CONFIRM:
+            tail = _prompt_confirm(state)
+        else:
+            tail = _prompt_collect(state.get('product_title', ''),
+                                   state.get('product_url', ''))
+        return _ok(reply + "\n\n" + tail, 'order_interruption')
 
     step = state['step']
 

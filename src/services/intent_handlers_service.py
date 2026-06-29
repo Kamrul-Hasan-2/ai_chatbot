@@ -433,6 +433,21 @@ _WARRANTY_RESPONSE = (
     "স্যার, দয়া করে আমাদের ওয়েবসাইট ভিজিট করুন: 👉 www.bdstall.com"
 )
 
+# Multi-word phrases only — never fire on bare "নাম্বার" (order number) or
+# bare "phone" (phone product search). Each phrase unambiguously means
+# "what is BDStall's contact phone number?".
+_CONTACT_PHRASES = (
+    'ফোন নাম্বার', 'ফোন নম্বর', 'phone number', 'phone no',
+    'mobile number', 'mobile no', 'contact number', 'contact no',
+    'helpline', 'hotline', 'support number', 'call center',
+    'আপনাদের নাম্বার', 'আপনাদের নম্বর', 'apnader number', 'apnader phone',
+    'apnader mobile', 'apnar number', 'apnar phone',
+)
+_CONTACT_RESPONSE = (
+    "স্যার, BDStall একটি অনলাইন প্ল্যাটফর্ম। যেকোনো সহায়তার জন্য আমাদের "
+    "ওয়েবসাইট ভিজিট করুন: 👉 www.bdstall.com"
+)
+
 
 # Latin tokens are whole-word matched so 'shop'/'store'/'office' don't fire on
 # 'shopping'/'restore'/'officer'; Banglish postpositions are space-separated
@@ -538,6 +553,8 @@ def handle_faq(ctx: Dict, user_id: str, message: str, faq_db: List) -> Dict:
         return _handle_property_query(user_id, message, ic)
     if any(w in msg_lower for w in _WARRANTY_WORDS):
         return _ok(_WARRANTY_RESPONSE + LOOP_BACK, 'faq_warranty', ic)
+    if any(p in msg_lower for p in _CONTACT_PHRASES):
+        return _ok(_CONTACT_RESPONSE + LOOP_BACK, 'faq_contact', ic)
     if _has_showroom_word(msg_lower):
         return _ok(_SHOWROOM_RESPONSE + LOOP_BACK, 'faq_showroom', ic)
     faq = search_faq(message, faq_db)
@@ -945,10 +962,17 @@ _GENERIC_SEARCH_WORDS = frozenset({
     'moddhe', 'modde', 'moddhye', 'modhe', 'vitor', 'bhitor', 'vetore', 'taka',
     'budget', 'jonno', 'jonni', 'ektu', 'bolen', 'bolun', 'din', 'egula',
     'egulo', 'oigula', 'oigulo', 'egla',
+    'need', 'want',
     'প্রোডাক্ট', 'কিছু', 'কিনবো', 'কিনতে', 'লাগবে', 'চাই', 'দরকার', 'দাম',
     'কত', 'কেমন', 'মধ্যে', 'ভিতরে', 'টাকা', 'বাজেট', 'জন্য', 'একটু', 'এগুলো',
 })
 _BUDGET_TOKEN_RE = re.compile(r'^[\d,]+(k|hazar|tk|taka|৳|হাজার)?$', re.IGNORECASE)
+# Strips RAM/storage specs ("6/128 gb", "8gb", "256 gb") from a title so
+# "Galaxy A53 5G 6/128 gb" can be matched against a BDStall title "Samsung
+# Galaxy A53 5G" which doesn't embed those specs.
+_RAM_STORAGE_SPEC_RE = re.compile(
+    r'\b\d+\s*/\s*\d+\s*(?:gb|tb)\b|\b\d+\s*(?:gb|tb)\b', re.IGNORECASE
+)
 _SEARCH_NOISE_RE = re.compile(
     r'এই\s*(?:প্রোডাক্ট|product)\s*(?:টি|টা)?\s*(?:কি)?\s*(?:আছে|নেই|নাই)?\??'
     r'|(?:প্রোডাক্ট|product)\s*(?:টি|টা)'
@@ -995,10 +1019,17 @@ _BN_SEARCH_TERMS = {
     'পাম্প': 'pump', 'মোটর': 'motor', 'ব্যাটারি': 'battery',
     'চার্জার': 'charger', 'লাইটার': 'lighter', 'লাইট': 'light',
     'বাল্ব': 'bulb', 'বাতি': 'light', 'স্যাটেলাইট': 'satellite',
+    'হোম থিয়েটার': 'home theater', 'সাউন্ড সিস্টেম': 'sound system',
+    'সাউন্ড বার': 'soundbar', 'মাল্টিমিডিয়া স্পিকার': 'multimedia speaker',
+    'সাউন্ড': 'sound', 'থিয়েটার': 'theater',
     'স্পিকার': 'speaker', 'হেডফোন': 'headphone', 'ইয়ারফোন': 'earphone',
     'মাউস': 'mouse', 'কিবোর্ড': 'keyboard', 'মনিটর': 'monitor',
     'প্রিন্টার': 'printer', 'রাউটার': 'router', 'ঘড়ি': 'watch',
     'সুইচ': 'switch', 'তালা': 'lock', 'ট্রিমার': 'trimmer', 'ড্রিল': 'drill',
+    # personal care / hair
+    'চুল কাটার মেশিন': 'hair clipper', 'চুল কাটা': 'hair clipper',
+    'হেয়ার ক্লিপার': 'hair clipper', 'হেয়ার ট্রিমার': 'hair trimmer',
+    'চুল': 'hair', 'হেয়ার': 'hair', 'শেভার': 'shaver', 'রেজার': 'razor',
     # furniture / vehicles
     'খাট': 'bed', 'চেয়ার': 'chair', 'টেবিল': 'table', 'সোফা': 'sofa',
     'আলমারি': 'wardrobe', 'ম্যাট্রেস': 'mattress',
@@ -1013,11 +1044,17 @@ _BN_SEARCH_TERMS = {
     'কপিয়ার': 'copier',
     # measurements
     'ইঞ্চি': 'inch',
+    # camera / video
+    'ভিডিও ক্যামেরা': 'camcorder', 'ভিডিও': 'video', 'ক্যামেরা': 'camera',
+    'ডিএসএলআর': 'dslr', 'মিররলেস': 'mirrorless',
     # common Banglish spellings
     'chula': 'stove', 'chulha': 'stove', 'pakha': 'fan', 'ghori': 'watch',
     'istiri': 'iron', 'batti': 'light',
     # Banglish misspellings
     'climpting': 'crimping',
+    # English-to-BDStall aliases (BDStall uses different terms than common English)
+    'video camera': 'camcorder', 'handycam': 'camcorder',
+    'action camera': 'action cam',
 }
 _BN_TRANSLATE_KEYS = sorted(
     (k for k in _BN_SEARCH_TERMS if any(ord(c) > 127 for c in k)),
@@ -1055,16 +1092,30 @@ def _results_match_query(kw: str, products: List[Dict]) -> bool:
     Require at least one Latin query token (≥3 chars) to appear in one of the
     top titles. Bangla tokens can't be compared against the English titles,
     so a query with no Latin tokens is trusted as-is.
+
+    Pure-numeric tokens (e.g. "256", "128") are excluded from the primary
+    check: they appear in many unrelated product specs (a laptop listing
+    "256GB RAM" would spuriously pass a search for "256gb ssd"). Use only
+    word-bearing tokens for the relevance check; fall back to all tokens only
+    when the query is numbers-only.
     """
     q_tokens = {t for t in re.findall(r'[a-z0-9]{3,}', (kw or '').lower())
                 if t not in _GENERIC_SEARCH_WORDS}
     if not q_tokens:
         return True
-    for p in products[:5]:
-        title = (p.get('title') or '').lower()
-        if any(t in title for t in q_tokens):
-            return True
-    return False
+    word_tokens = {t for t in q_tokens if not re.fullmatch(r'\d+', t)}
+    check_tokens = word_tokens if word_tokens else q_tokens
+    top = products[:5]
+    if not top:
+        return True
+    match_count = sum(
+        1 for p in top
+        if any(t in (p.get('title') or '').lower() for t in check_tokens)
+    )
+    # Require a majority (≥50%) of the top results to carry a query token.
+    # A single spurious match (e.g. one "Ultra" brand product in a brick
+    # catalogue when searching "T2000 ultra 2") no longer passes the guard.
+    return match_count * 2 >= len(top)
 
 
 def _meaningful_search_tokens(kw: str) -> List[str]:
@@ -1246,6 +1297,21 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
 
     price_max = ctx.get('price_max')
     price_min = ctx.get('price_min')
+    # Groq sometimes misreads a RAM/storage spec as a budget — e.g. sees
+    # "6" in "Samsung A53 5G 6/128 gb" and sets price_max=6 (taka).  Collect
+    # all numbers that appear as GB/TB specs in the original message and clear
+    # any extracted price that matches one of them.
+    if price_max is not None or price_min is not None:
+        _spec_nums: set = set()
+        for _m in re.finditer(r'(\d+)\s*/\s*(\d+)\s*(?:gb|tb)\b',
+                              (message or '').lower()):
+            _spec_nums.update({int(_m.group(1)), int(_m.group(2))})
+        for _m in re.finditer(r'(\d+)\s*(?:gb|tb)\b', (message or '').lower()):
+            _spec_nums.add(int(_m.group(1)))
+        if price_max is not None and int(price_max) in _spec_nums:
+            price_max = None
+        if price_min is not None and int(price_min) in _spec_nums:
+            price_min = None
 
     # Generic-category intercept: when the user asks for a bare category
     # (no brand, no specific title, no budget), return the BDStall category
@@ -1335,7 +1401,7 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
             return _ok(cat_text + LOOP_BACK, 'product_search', ic,
                        link_buttons=buttons)
 
-    keywords  = _build_keywords(ctx)
+    keywords  = _translate_bn_search_terms(_build_keywords(ctx))
     logger.info("handle_product_search keywords=%r price_min=%s price_max=%s", keywords, price_min, price_max)
 
     # "More" rotation: if user asked for more AND we have a pool for the same query, slice next 3.
@@ -1374,7 +1440,7 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
     result    = search_products(keywords, price_max, price_min)
 
     if result['products_found'] == 0:
-        broader = _build_broader_keywords(ctx)
+        broader = _translate_bn_search_terms(_build_broader_keywords(ctx))
         if broader and broader != keywords:
             retry = search_products(broader, price_max, price_min)
             if retry['products_found'] > 0:
@@ -1429,23 +1495,55 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
     # tokens; pure-category or pure-Bangla queries are trusted as-is.
     if not _results_match_query(keywords, products):
         logger.info("main-path relevance guard rejected results for %r", keywords)
-        label = ' '.join(v for v in [
-            ctx.get('brand', ''), ctx.get('title', ''), ctx.get('category', '')
-        ] if v)
-        return _ok(
-            f"দুঃখিত স্যার, এই মুহূর্তে {label} স্টকে নেই। "
-            "স্টক আপডেটের জন্য আমাদের ওয়েবসাইট ফলো করুন: 👉 www.bdstall.com"
-            + LOOP_BACK,
-            'no_products_found', ic
-        )
+        # Before giving up, retry with broader (category-only) keywords. This
+        # recovers the case where a noisy query ("i need 256 gb ssd") returns
+        # junk from BDStall but the bare category ("ssd") finds real products.
+        _broader_fb = _translate_bn_search_terms(_build_broader_keywords(ctx))
+        _recovered = False
+        if _broader_fb and _broader_fb != keywords:
+            _fb_result = search_products(_broader_fb)
+            if (_fb_result['products_found'] > 0
+                    and _results_match_query(_broader_fb, _fb_result['products'])):
+                keywords = _broader_fb
+                result   = _fb_result
+                products = result['products']
+                _recovered = True
+        if not _recovered:
+            label = ' '.join(v for v in [
+                ctx.get('brand', ''), ctx.get('title', ''), ctx.get('category', '')
+            ] if v)
+            return _ok(
+                f"দুঃখিত স্যার, এই মুহূর্তে {label} স্টকে নেই। "
+                "স্টক আপডেটের জন্য আমাদের ওয়েবসাইট ফলো করুন: 👉 www.bdstall.com"
+                + LOOP_BACK,
+                'no_products_found', ic
+            )
     # Cache the full pool (up to 15) for "more" rotation
     set_search_pool(user_id, current_key, products)
     set_product_context(user_id, products[:5])
-    text, buttons = _format_listing(products[:3])
     title_kw = (ctx.get('title') or '').lower().strip()
+    # BDStall product titles don't embed RAM/storage specs ("6/128 gb").
+    # Strip those specs from the query title so "Galaxy A53 5G 6/128 gb"
+    # still matches a listing titled "Samsung Galaxy A53 5G".
+    title_kw_core = _RAM_STORAGE_SPEC_RE.sub('', title_kw).strip()
+    _title_found = any(title_kw in (p.get('title') or '').lower() for p in products)
+    if not _title_found and title_kw_core and title_kw_core != title_kw:
+        _title_found = any(title_kw_core in (p.get('title') or '').lower() for p in products)
+    # For price queries where the requested product IS found, filter the display
+    # to only the matching model(s).  Prevents "Samsung A54" appearing when the
+    # customer asked specifically about "Samsung A53 5G 6/128 gb price?".
+    _is_price_q = bool(re.search(
+        r'\bprice\b|\bপ্রাইস\b|\bদাম\b|\bdam\b', (message or '').lower()))
+    _display_products = products
+    if _is_price_q and _title_found and title_kw_core:
+        _matched = [p for p in products
+                    if title_kw_core in (p.get('title') or '').lower()]
+        if _matched:
+            _display_products = _matched
+    text, buttons = _format_listing(_display_products[:3])
     # Warn if specific model/type requested but results don't match; only say
     # "বাজেটে" when a price limit was actually applied.
-    if title_kw and not any(title_kw in p.get('title', '').lower() for p in products):
+    if title_kw and not _title_found:
         budget_phrase = 'এই বাজেটে ' if (price_max or price_min) else ''
         header = f"স্যার, {budget_phrase}'{ctx.get('title')}' পাওয়া যায়নি। কাছাকাছি অপশন:\n\n"
     elif price_max and price_min:
@@ -1456,7 +1554,8 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
         header = f"স্যার, ৳{price_min:,} এর উপরে এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
     else:
         header = "স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
-    return _ok(header + text, 'product_search', ic, products=products, link_buttons=buttons)
+    return _ok(header + text, 'product_search', ic,
+               products=_display_products, link_buttons=buttons)
 
 
 def handle_price_query(ctx: Dict, user_id: str, message: str) -> Dict:
