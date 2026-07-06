@@ -553,10 +553,10 @@ def handle_faq(ctx: Dict, user_id: str, message: str, faq_db: List) -> Dict:
         return _handle_property_query(user_id, message, ic)
     if any(w in msg_lower for w in _WARRANTY_WORDS):
         return _ok(_WARRANTY_RESPONSE + LOOP_BACK, 'faq_warranty', ic)
-    if any(p in msg_lower for p in _CONTACT_PHRASES):
-        return _ok(_CONTACT_RESPONSE + LOOP_BACK, 'faq_contact', ic)
     if _has_showroom_word(msg_lower):
         return _ok(_SHOWROOM_RESPONSE + LOOP_BACK, 'faq_showroom', ic)
+    if any(p in msg_lower for p in _CONTACT_PHRASES):
+        return _ok(_CONTACT_RESPONSE + LOOP_BACK, 'faq_contact', ic)
     faq = search_faq(message, faq_db)
     if faq:
         return _ok(faq + LOOP_BACK, 'faq', ic)
@@ -868,6 +868,9 @@ _MORE_WORDS = {
     'next ta', 'next gula', 'next gulo', 'porer ta', 'porer gula', 'porer gulo',
     'porer 3', 'porer tin', 'porer page',
     'ekto onno', 'ekta onno', 'aro vlo',
+    # "dekhan na" / "dekhao na" — soft-request form: "please show me"
+    'dekhan na', 'dekhao na', 'dekho na', 'dekhaben na',
+    'dekhan to', 'dekhao to', 'dekho to',
 
     # Bangla (Bengali script)
     'আরও', 'আরো', 'অন্য', 'অন্যগুলো', 'অন্য কিছু', 'অন্যটি', 'অন্যটা',
@@ -880,6 +883,7 @@ _MORE_WORDS = {
     'পরের', 'পরেরটা', 'পরেরগুলো', 'পরের তিনটা', 'পরের ৩',
     'অন্য কোনো', 'অন্য কোন', 'অন্য অপশন', 'অন্য প্রোডাক্ট',
     'নতুন কিছু', 'ভিন্ন', 'অন্যরকম',
+    'দেখান না', 'দেখাও না', 'দেখো না', 'দেখান তো', 'দেখাও তো',
 }
 
 
@@ -963,6 +967,10 @@ _GENERIC_SEARCH_WORDS = frozenset({
     'budget', 'jonno', 'jonni', 'ektu', 'bolen', 'bolun', 'din', 'egula',
     'egulo', 'oigula', 'oigulo', 'egla',
     'need', 'want',
+    # Banglish for এইরকম/ওইরকম (like this/that) — demonstrative, not a product
+    'airokom', 'eirokom', 'oirokom', 'erokom', 'airocome', 'eirocome',
+    'oisob', 'eisob', 'aisob', 'oigula', 'eigula', 'aigula',
+    'oigulo', 'eigulo', 'aigulo',
     'প্রোডাক্ট', 'কিছু', 'কিনবো', 'কিনতে', 'লাগবে', 'চাই', 'দরকার', 'দাম',
     'কত', 'কেমন', 'মধ্যে', 'ভিতরে', 'টাকা', 'বাজেট', 'জন্য', 'একটু', 'এগুলো',
 })
@@ -1107,14 +1115,17 @@ def _results_match_query(kw: str, products: List[Dict]) -> bool:
     check_tokens = word_tokens if word_tokens else q_tokens
     top = products[:5]
     if not top:
-        return True
+        return False
     match_count = sum(
         1 for p in top
         if any(t in (p.get('title') or '').lower() for t in check_tokens)
     )
-    # Require a majority (≥50%) of the top results to carry a query token.
-    # A single spurious match (e.g. one "Ultra" brand product in a brick
-    # catalogue when searching "T2000 ultra 2") no longer passes the guard.
+    # For small result sets (≤3) require at least one match — strict majority
+    # would reject a valid niche product (e.g. 1-of-3 where 2 are BDStall
+    # fallback listings).  For larger sets (4+) keep the ≥50% majority rule
+    # so the T2000-in-bricks case (1-of-5) still fails correctly.
+    if len(top) <= 3:
+        return match_count >= 1
     return match_count * 2 >= len(top)
 
 
@@ -1187,7 +1198,8 @@ def _search_without_category(ctx: Dict, user_id: str, message: str) -> Optional[
                'product_search', ic, products=products, link_buttons=buttons)
 
 
-def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
+def handle_product_search(ctx: Dict, user_id: str, message: str,
+                          _from_price_query: bool = False) -> Dict:
     logger.info("handle_product_search ctx=%s", {k: ctx.get(k) for k in ('category','brand','title','price_min','price_max')})
 
     # Intercept property/real-estate queries — route to dedicated handler
@@ -1362,7 +1374,7 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
         and not (ctx.get('title') or '').strip()
         and not price_min
         and not price_max
-        and not _is_more_request(message)
+        and not (not _from_price_query and _is_more_request(message))
         and not _has_spec_qualifier
     )
     if _is_generic_category:
@@ -1410,11 +1422,12 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
     # If the query key changed (new brand, new title, new budget) reset the pool
     # so stale results from a previous search aren't served as "more".
     _, existing_key, _ = get_search_pool(user_id)
-    if existing_key and existing_key != current_key and not _is_more_request(message):
+    if existing_key and existing_key != current_key and (
+            _from_price_query or not _is_more_request(message)):
         from repositories.state_repository import clear_product_state as _cps
         _cps(user_id)
 
-    if _is_more_request(message):
+    if not _from_price_query and _is_more_request(message):
         pool, pool_key, offset = get_search_pool(user_id)
         if pool and pool_key == current_key:
             next_off = advance_search_offset(user_id, by=3)
@@ -1501,7 +1514,7 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
         _broader_fb = _translate_bn_search_terms(_build_broader_keywords(ctx))
         _recovered = False
         if _broader_fb and _broader_fb != keywords:
-            _fb_result = search_products(_broader_fb)
+            _fb_result = search_products(_broader_fb, price_max, price_min)
             if (_fb_result['products_found'] > 0
                     and _results_match_query(_broader_fb, _fb_result['products'])):
                 keywords = _broader_fb
@@ -1518,9 +1531,6 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
                 + LOOP_BACK,
                 'no_products_found', ic
             )
-    # Cache the full pool (up to 15) for "more" rotation
-    set_search_pool(user_id, current_key, products)
-    set_product_context(user_id, products[:5])
     title_kw = (ctx.get('title') or '').lower().strip()
     # BDStall product titles don't embed RAM/storage specs ("6/128 gb").
     # Strip those specs from the query title so "Galaxy A53 5G 6/128 gb"
@@ -1532,7 +1542,7 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
     # For price queries where the requested product IS found, filter the display
     # to only the matching model(s).  Prevents "Samsung A54" appearing when the
     # customer asked specifically about "Samsung A53 5G 6/128 gb price?".
-    _is_price_q = bool(re.search(
+    _is_price_q = _from_price_query or bool(re.search(
         r'\bprice\b|\bপ্রাইস\b|\bদাম\b|\bdam\b', (message or '').lower()))
     _display_products = products
     if _is_price_q and _title_found and title_kw_core:
@@ -1540,6 +1550,10 @@ def handle_product_search(ctx: Dict, user_id: str, message: str) -> Dict:
                     if title_kw_core in (p.get('title') or '').lower()]
         if _matched:
             _display_products = _matched
+    # Cache pool AFTER filtering so "আরও দেখান" cycles the same model set,
+    # not the broader mixed-model list that was suppressed this turn.
+    set_search_pool(user_id, current_key, _display_products)
+    set_product_context(user_id, _display_products[:5])
     text, buttons = _format_listing(_display_products[:3])
     # Warn if specific model/type requested but results don't match; only say
     # "বাজেটে" when a price limit was actually applied.
@@ -1565,7 +1579,7 @@ def handle_price_query(ctx: Dict, user_id: str, message: str) -> Dict:
     # Pass '' as message so _is_more_request never fires on a price query
     # containing words like "aro" (e.g. "আরও কিছুর দাম কত?").
     if has_budget and ctx.get('category'):
-        return handle_product_search(ctx, user_id, '')
+        return handle_product_search(ctx, user_id, message, _from_price_query=True)
 
     # If products already shown and no budget filter, list cached prices
     prev_products = get_product_context(user_id)
@@ -1583,7 +1597,7 @@ def handle_price_query(ctx: Dict, user_id: str, message: str) -> Dict:
             'need_product', ic
         )
 
-    return handle_product_search(ctx, user_id, '')
+    return handle_product_search(ctx, user_id, message, _from_price_query=True)
 
 
 def handle_url_message(ctx: Dict, user_id: str, message: str, url: str) -> Dict:

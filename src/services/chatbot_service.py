@@ -175,7 +175,14 @@ def _is_bare_price_query(message: str) -> bool:
     """
     cleaned = re.sub(r'[?!।.,\'"]+', '', (message or '').lower()).strip()
     tokens = cleaned.split()
-    return bool(tokens) and all(t in _BARE_PRICE_WORDS for t in tokens)
+    if not tokens:
+        return False
+    # 'কত' / 'কতো' / 'koto' alone mean "how many?" — too ambiguous to treat as
+    # a bare price query without an unambiguous price word like 'দাম' or 'টাকা'.
+    _AMBIGUOUS_ALONE = {'কত', 'কতো', 'koto'}
+    if all(t in _AMBIGUOUS_ALONE for t in tokens):
+        return False
+    return all(t in _BARE_PRICE_WORDS for t in tokens)
 
 
 def _has_review_word(msg_lower: str) -> bool:
@@ -283,12 +290,18 @@ _BD_MOBILE_RE = re.compile(
     r'(?:\+?880)?(?:0|০)(?:1|১)[০-৯0-9]{9}'
 )
 _CONTACT_LABEL_RE = re.compile(
-    r'(?:আমার|আমর|amar|amr|my|ei|এই|এটা|eta|holo|হলো|হল|'
-    r'contact|কন্টাক্ট|কনট্যাক্ট|kontakt|'
-    r'number|নাম্বার|নম্বর|nambar|nombor|num|no|'
-    r'phone|ফোন|mobile|মোবাইল|'
-    r'dichi|দিচ্ছি|dilam|দিলাম|din|নিন|nilen|নিলেন|'
-    r'is|are)',
+    r'(?:'
+    # Bangla tokens are full Unicode words — no \b needed
+    r'আমার|আমর|এই|এটা|হলো|হল|'
+    r'কন্টাক্ট|কনট্যাক্ট|'
+    r'নাম্বার|নম্বর|'
+    r'ফোন|মোবাইল|'
+    r'দিচ্ছি|দিলাম|নিন|নিলেন|'
+    # Latin tokens must be whole words so 'no' doesn't match inside Nokia, etc.
+    r'\b(?:amar|amr|my|ei|eta|holo|contact|kontakt|'
+    r'number|nambar|nombor|num|no|'
+    r'phone|mobile|dichi|dilam|din|nilen|is|are)\b'
+    r')',
     re.IGNORECASE | re.UNICODE,
 )
 
@@ -389,7 +402,7 @@ _BARE_PRICE_WORDS = frozenset({
 # Groq labels them as hate_speech and fires the "ভদ্র ভাষায়" warning.
 _EMOJI_ONLY_RE = re.compile(
     r'^[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U0001F000-\U0001F2FF'
-    r'\U0001FA00-\U0001FAFF\U00002702-\U000027B0\s]+$'
+    r'\U0001FA00-\U0001FAFF\U00002702-\U000027B0︎️\s]+$'
 )
 
 # "Samsung A53 5G price?" — the trailing "price?" is a price-inquiry word, not a
@@ -398,6 +411,26 @@ _EMOJI_ONLY_RE = re.compile(
 _PRICE_INQUIRY_SUFFIX_RE = re.compile(
     r'\s*\b(?:price|prices|দাম|dam|কত|koto)\s*\??\s*$',
     re.IGNORECASE | re.UNICODE,
+)
+
+# "Ara vai ami bolsi ja ami charger nibo ami nibo iphone" — "ami bolsi ja" /
+# "bolechi je" / "bolesi je" are correction preambles meaning "I said that".
+# Strip them before Groq so the actual product intent reaches the model cleanly.
+_CORRECTION_PREAMBLE_RE = re.compile(
+    r'^\s*(?:ara\s+)?(?:vai\s+|bhai\s+|bro\s+)?'
+    r'(?:ami\s+)?(?:bolsi\s+(?:ja|je)|bolechi\s+(?:ja|je)|bolesi\s+(?:ja|je)|'
+    r'bolsilam\s+(?:ja|je)|apnake\s+bolsi|apnake\s+bolechi)\s*',
+    re.IGNORECASE,
+)
+
+# "Airokom machine gola hobe?" — "airokom" is Banglish for এইরকম (like this).
+# Groq reads "Airo" as "Air" and fires an Air Conditioner search. Strip these
+# demonstrative pronouns before Groq so only the noun ("machine") reaches it.
+_BN_DEMONSTRATIVE_RE = re.compile(
+    r'\b(?:airokom|eirokom|oirokom|erokom|airocome|eirocome|'
+    r'oisob|eisob|aisob|oisbo|eisbo|aisbo|'
+    r'oigula|eigula|aigula|oigulo|eigulo|aigulo)\b',
+    re.IGNORECASE,
 )
 
 _BLOCKED_PHRASES = [
@@ -977,9 +1010,16 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         if _cached_products_early and _is_storage_drive_search(message):
             clear_product_state(user_id)
             set_session_category(user_id, '')
+            # Extract any budget stated in the message (e.g. "5000 taka te ssd")
+            # so price filtering isn't silently lost when Groq is bypassed here.
+            _sds_price_m = re.search(
+                r'(\d[\d,]*)\s*(?:taka|tk|টাকা|bdt)\b', message, re.IGNORECASE)
+            _sds_price_max = (
+                int(_sds_price_m.group(1).replace(',', '')) if _sds_price_m else None
+            )
             storage_result = handle_product_search(
                 {'category': '', 'brand': '', 'title': '',
-                 'price_max': None, 'price_min': None},
+                 'price_max': _sds_price_max, 'price_min': None},
                 user_id,
                 message,
             )
@@ -1018,6 +1058,8 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         # Strip trailing price-inquiry words before Groq to prevent it from
         # reading "price?" (or nearby spec numbers like "6" GB) as a budget.
         _groq_msg = _PRICE_INQUIRY_SUFFIX_RE.sub('', message).strip() or message
+        _groq_msg = _BN_DEMONSTRATIVE_RE.sub('', _groq_msg).strip() or _groq_msg
+        _groq_msg = _CORRECTION_PREAMBLE_RE.sub('', _groq_msg).strip() or _groq_msg
         groq_result = detect_intent(_groq_msg, history, prev_ctx,
                                     cat_names, _groq_client, GROQ_MODEL,
                                     user_profile_block=profile.to_prompt_block())

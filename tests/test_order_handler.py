@@ -573,7 +573,9 @@ class TestOrderFlow:
         assert 'Baraipara' in result['response']
         result = continue_order_flow(UID, 'হ্যাঁ')
         assert result['intent'] == 'order_placed'
-        assert mock_place.call_args.kwargs['area_id'] is None
+        # area_id is normalised to '' (not None) before hitting place_order
+        # so the API receives an empty string rather than JSON null.
+        assert mock_place.call_args.kwargs['area_id'] == ''
         # The typed area must reach BDStall — the payload has no area_name
         # field, so it travels appended to the address.
         assert 'Baraipara' in mock_place.call_args.kwargs['address']
@@ -598,7 +600,7 @@ class TestOrderFlow:
         result = continue_order_flow(UID, 'হ্যাঁ')
         assert result['intent'] == 'order_placed'
         assert mock_place.call_args.kwargs['qty'] == 1
-        assert mock_place.call_args.kwargs['area_id'] is None
+        assert mock_place.call_args.kwargs['area_id'] == ''
 
     def test_qty_inline_not_taken_from_address(self, mock_areas, mock_cities):
         # "বাসা সংখ্যা ১২" is a HOUSE number — it must never become qty=12.

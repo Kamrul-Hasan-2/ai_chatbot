@@ -95,7 +95,7 @@ _PRICE_NEGOTIATE_SIGNALS = (
 
 # Words that confirm
 _CONFIRM_WORDS = {
-    'yes', 'হ্যাঁ', 'haa', 'confirm', 'ok', 'okay', 'thik',
+    'yes', 'হ্যাঁ', 'haa', 'confirm', 'confirmed', 'ok', 'okay', 'thik',
     'ঠিক আছে', 'thik ache', 'হাঁ', 'অবশ্যই', 'jee', 'জি', 'ji',
     'korun', 'korben', 'submit', 'place', 'order korun', 'order koro',
     'করুন', 'place korun',
@@ -403,7 +403,7 @@ _LABEL_ALIASES: Dict[str, str] = {
     'name': 'name', 'নাম': 'name', 'naam': 'name',
     # mobile
     'mobile': 'mobile', 'phone': 'mobile', 'number': 'mobile', 'no': 'mobile',
-    'নম্বর': 'mobile', 'মোবাইল': 'mobile', 'ফোন': 'mobile',
+    'contact': 'mobile', 'নম্বর': 'mobile', 'মোবাইল': 'mobile', 'ফোন': 'mobile',
     # address
     'address': 'address', 'addr': 'address', 'ঠিকানা': 'address',
     'thikana': 'address',
@@ -475,9 +475,12 @@ def _parse_freeform(text: str) -> Dict[str, str]:
             remaining.remove(ln)
             break
 
-    # qty: a line that is only a small number (1–99)
+    # qty: a line that is a small number (1–99) optionally followed by a unit
     for ln in list(remaining):
-        if re.fullmatch(r'\s*\d{1,2}\s*', _to_en_digits(ln)):
+        if re.fullmatch(
+            r'\s*\d{1,2}\s*(?:pcs?|piece|pieces|ta|ti|টি|টা|পিস)?\s*',
+            _to_en_digits(ln), re.IGNORECASE
+        ):
             out['qty'] = ln.strip()
             remaining.remove(ln)
             break
@@ -494,7 +497,7 @@ def _parse_freeform(text: str) -> Dict[str, str]:
 # never be misread as qty; only a line that STARTS with a qty label matches.
 # 'সংখ্যা' is deliberately absent — it's the generic word for "number".
 _QTY_INLINE_RE = re.compile(
-    r'^\s*(?:পরিমাণ|কয়টি|qty|quantity|koyti)\s*[:=]?\s*([০-৯\d]{1,2})(?![০-৯\d])',
+    r'^\s*(?:পরিমাণ|কয়টি|qty|quantity|koyti)\s*[:=]?\s*([০-৯\d]{1,4})(?![০-৯\d])',
     re.MULTILINE,
 )
 
@@ -592,6 +595,36 @@ def _validate_and_resolve(
                 state['area_city_id'] = state['city_id']
             # Junk (acks, questions, long texts) falls through — এলাকা stays
             # missing and the buyer is re-prompted.
+
+    # City / area inference from the address string — name-only matching (never
+    # ID-based) so house numbers like "lift-5" or postal codes like "1212"
+    # can't accidentally match a city_id.  Only fires when the field wasn't
+    # given explicitly: "uttar badda, dhaka-1212" → city=Dhaka, area=Badda.
+    if not state.get('city_id') and not state.get('city_unmatched') and state.get('address'):
+        _addr_t = _normalize_token(state['address'])
+        _best_c, _best_clen = None, 0
+        for _c in cities:
+            _cn = (_c.get('city_name') or '').lower()
+            if _cn and (_cn in _addr_t) and len(_cn) > _best_clen:
+                _best_c, _best_clen = _c, len(_cn)
+        if _best_c:
+            state['city_id']   = _best_c['city_id']
+            state['city_name'] = _best_c['city_name']
+
+    if ('area_id' not in state and not state.get('city_unmatched')
+            and state.get('city_id') and state.get('address')):
+        _addr_t = _normalize_token(state['address'])
+        _city_areas = [a for a in areas
+                       if str(a.get('city_id')) == str(state['city_id'])]
+        _best_a, _best_alen = None, 0
+        for _a in _city_areas:
+            _an = (_a.get('area_name') or '').lower()
+            if _an and (_an in _addr_t) and len(_an) > _best_alen:
+                _best_a, _best_alen = _a, len(_an)
+        if _best_a:
+            state['area_id']      = _best_a['area_id']
+            state['area_name']    = _best_a['area_name']
+            state['area_city_id'] = _best_a['city_id']
 
     # Qty
     raw_qty = extracted.get('qty', '').strip()
@@ -850,6 +883,14 @@ def continue_order_flow(user_id: str, message: str) -> Optional[Dict]:
                     return _ok(_prompt_missing(missing, state, areas), 'order_collect')
                 set_order_flow(user_id, state)
                 return _ok(_prompt_confirm(state), 'order_confirm')
+            else:
+                # City/area API unavailable — tell the user rather than silently
+                # discarding the correction and looping on "হ্যাঁ লিখুন".
+                return _ok(
+                    "স্যার, এই মুহূর্তে সার্ভারের সাথে যোগাযোগ করা যাচ্ছে না। "
+                    "একটু পরে আবার চেষ্টা করুন।",
+                    'order_confirm_api_error'
+                )
         if not _is_confirm(message):
             return _ok(
                 "স্যার, অর্ডার নিশ্চিত করতে \"হ্যাঁ\" লিখুন, "
@@ -871,7 +912,7 @@ def continue_order_flow(user_id: str, message: str) -> Optional[Dict]:
             listing_id=state.get('listing_id', ''),
             qty=state.get('qty', 1),
             city_id=state.get('city_id', ''),
-            area_id=state.get('area_id', ''),
+            area_id=state.get('area_id') or '',
         )
         product_url = state.get('product_url', '')
         buttons = ([{'text': 'প্রোডাক্ট দেখুন', 'url': product_url,
