@@ -350,16 +350,18 @@ class TestValidateAndResolve:
         assert 'area_id' not in state
         assert 'এলাকা' in missing
 
-    def test_unmatched_city_reported_not_silently_kept(self):
-        # An explicit জেলা we don't recognise must re-ask জেলা, not silently
-        # keep the old city (which would place a wrong-city order).
+    def test_unmatched_city_accepted_not_silently_kept(self):
+        # An explicit জেলা we don't recognise must NOT silently keep the old
+        # city — accept the raw name (city_id=null) and proceed without re-asking.
         state = {'name': 'Rahim', 'mobile': '01711111111', 'address': 'House 5',
                  'city_id': '1', 'city_name': 'Dhaka', 'qty': 1,
                  'area_id': '10', 'area_name': 'Mirpur', 'area_city_id': '1'}
         state, missing = _validate_and_resolve(state, {'city': 'Coxbazar'},
                                                SAMPLE_CITIES, SAMPLE_AREAS)
-        assert 'জেলা' in missing
-        # A later valid জেলা clears the flag
+        assert 'জেলা' not in missing
+        assert state.get('city_name') == 'Coxbazar'
+        assert not state.get('city_id')
+        # A later valid জেলা still resolves correctly
         state, missing = _validate_and_resolve(state, {'city': 'Khulna'},
                                                SAMPLE_CITIES, SAMPLE_AREAS)
         assert 'জেলা' not in missing

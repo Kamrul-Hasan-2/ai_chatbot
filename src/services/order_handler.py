@@ -558,15 +558,17 @@ def _validate_and_resolve(
                 state.pop('area_name', None)
                 state.pop('area_city_id', None)
         else:
-            # The buyer explicitly named a district we don't recognise. Never
-            # silently keep the old one — flag it so জেলা is re-asked (the flag
-            # clears on the next successful match).
+            # The buyer explicitly named a district we don't recognise.
+            # Accept the raw name (city_id=null) and proceed — re-asking
+            # loops forever when the buyer's district isn't in BDStall's list.
             state['city_unmatched'] = raw_city
+            state['city_name'] = raw_city
+            state.pop('city_id', None)
 
     # Area (only resolvable once city is known)
     raw_area = extracted.get('area', '').strip()
-    if raw_area and state.get('city_id'):
-        match = _match_area(raw_area, areas, state['city_id'])
+    if raw_area and (state.get('city_id') or state.get('city_unmatched')):
+        match = _match_area(raw_area, areas, state.get('city_id') or '')
         if match:
             state['area_id']      = match['area_id']
             state['area_name']    = match['area_name']
@@ -640,7 +642,7 @@ def _validate_and_resolve(
         missing.append('মোবাইল (01XXXXXXXXX)')
     if not (state.get('address') and len(state['address']) >= 2):
         missing.append('ঠিকানা')
-    if not state.get('city_id') or state.get('city_unmatched'):
+    if not state.get('city_id') and not state.get('city_unmatched'):
         missing.append('জেলা')
     # Key-presence check: an unmatched area is stored as area_id=None (sent as
     # null to the API) and counts as provided — only a never-given area is missing.
