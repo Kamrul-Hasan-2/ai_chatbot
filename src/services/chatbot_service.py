@@ -502,11 +502,16 @@ def _continue_seller_flow(user_id: str, message: str) -> Optional[Dict]:
     note = message.strip()
 
     # ── Extract name and mobile line-by-line (ASCII-only digit matching) ───────
-    _BD_MOB_PAT = re.compile(r'(?:\+?880|0)(1[3-9]\d{8})', re.ASCII)
-    _NAME_PAT   = re.compile(r'^(?:আমার\s+নাম|নাম|name)\s*[:\-]\s*', re.IGNORECASE)
+    _BD_MOB_PAT  = re.compile(r'(?:\+?880|0)(1[3-9]\d{8})', re.ASCII)
+    _NAME_PAT    = re.compile(r'^(?:আমার\s+নাম|নাম|name)\s*[:\-]\s*', re.IGNORECASE)
+    _LABEL_STRIP = re.compile(
+        r'^(?:ফোন|phone|mobile|mob|নম্বর|নম্বর|number|নষ্র|নাম্বার)\s*[:\-\s]',
+        re.IGNORECASE,
+    )
 
     name   = ''
     mobile = ''
+    first_nonphone_line = ''   # fallback name source when no "নাম :" prefix
     for _line in note.split('\n'):
         _line = _line.strip()
         if not _line:
@@ -519,6 +524,12 @@ def _continue_seller_flow(user_id: str, message: str) -> Optional[Dict]:
             _cand = _NAME_PAT.sub('', _line).strip()
             if _cand:
                 name = _cand
+        elif not first_nonphone_line and not _LABEL_STRIP.match(_line):
+            first_nonphone_line = _line
+
+    # Fallback: no "নাম :" prefix — use the first non-phone line as the name
+    if not name and first_nonphone_line:
+        name = first_nonphone_line
 
     logger.info("seller_flow submit user=%s name=%r mobile=%r note_len=%d",
                 user_id, name, mobile, len(note))
