@@ -775,19 +775,27 @@ def submit_seller_request(name: str, mobile: str, note: str) -> Dict[str, Any]:
         'mobile': str(mobile or '').strip(),
         'note':   str(note or '').strip(),
     }
-    try:
-        started = datetime.now()
-        resp = requests.post(SELLER_REQUEST_URL, json=payload, timeout=10)
-        duration_ms = int((datetime.now() - started).total_seconds() * 1000)
-        ok = 200 <= resp.status_code < 300
-        log_payload = dict(payload)
-        log_payload['key'] = '***'
-        _log_api_call('seller_request', 'POST', SELLER_REQUEST_URL, log_payload,
-                      resp.status_code, duration_ms, 'PASS' if ok else 'FAIL', resp.text[:400])
-        return {'success': ok, 'raw': resp.text}
-    except Exception as e:
-        logger.error("submit_seller_request failed: %s", e)
-        return {'success': False, 'raw': str(e)}
+    log_payload = dict(payload); log_payload['key'] = '***'
+    last_err = None
+    for mode, fn in [
+        ('json', lambda: requests.post(SELLER_REQUEST_URL, json=payload, timeout=10)),
+        ('form', lambda: requests.post(SELLER_REQUEST_URL, data=payload, timeout=10)),
+    ]:
+        try:
+            started = datetime.now()
+            resp = fn()
+            duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+            ok = 200 <= resp.status_code < 300
+            _log_api_call('seller_request', 'POST', SELLER_REQUEST_URL, log_payload,
+                          resp.status_code, duration_ms, 'PASS' if ok else 'FAIL',
+                          resp.text[:400])
+            if ok:
+                return {'success': True, 'raw': resp.text}
+            last_err = resp.text
+        except Exception as e:
+            logger.error("submit_seller_request [%s] failed: %s", mode, e)
+            last_err = str(e)
+    return {'success': False, 'raw': str(last_err)}
 
 
 def fetch_return_policy() -> Optional[str]:
