@@ -783,23 +783,23 @@ def _process_user_message(
     intent_content = result.get('intent_content') if isinstance(result, dict) else None
 
     response_text = (result.get('response') or '').strip()
-    # Always save the bot turn so history has no gaps. For silent turns
-    # (human-mode, automated-template blocked) save a single space so the
-    # API accepts the record while the conversation thread stays intact.
-    bot_save_text = response_text or ' '
-    bot_saved = save_chat_message(
-        user_id=user_id,
-        sender_type=2,
-        message=bot_save_text,
-        user_name=resolved_user_name,
-        intent_content=intent_content if isinstance(intent_content, dict) else None
-    )
-    if not bot_saved:
-        logger.warning(
-            "[PIPELINE] bot response not persisted source=%s user_id=%s",
-            source,
-            user_id
+    # Skip saving the bot turn for silent turns (human-mode, automated-template)
+    # because the BDStall API rejects blank/space messages with 400.
+    bot_saved = False
+    if response_text:
+        bot_saved = save_chat_message(
+            user_id=user_id,
+            sender_type=2,
+            message=response_text,
+            user_name=resolved_user_name,
+            intent_content=intent_content if isinstance(intent_content, dict) else None
         )
+        if not bot_saved:
+            logger.warning(
+                "[PIPELINE] bot response not persisted source=%s user_id=%s",
+                source,
+                user_id
+            )
 
     logger.info(
         "[PIPELINE] platform=%s source=%s user_id=%s mode=%s intent=%s has_response=%s visitor_saved=%s bot_saved=%s",
