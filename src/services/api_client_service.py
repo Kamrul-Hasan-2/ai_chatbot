@@ -769,7 +769,6 @@ def fetch_order_status(order_no: str) -> Dict[str, Any]:
 
 
 def submit_seller_request(name: str, mobile: str, note: str) -> Dict[str, Any]:
-    import json as _json
     payload = {
         'key':    API_KEY,
         'name':   str(name or '').strip(),
@@ -777,27 +776,23 @@ def submit_seller_request(name: str, mobile: str, note: str) -> Dict[str, Any]:
         'note':   str(note or '').strip(),
     }
     log_payload = {**payload, 'key': '***'}
-    logger.info("submit_seller_request sending: %s", log_payload)
+    logger.info("submit_seller_request payload: %s", log_payload)
 
-    # ── Attempt 1: JSON with explicit UTF-8 (Bengali chars as-is, not \uXXXX) ──
+    # ── Attempt 1: standard JSON (same as working Postman call) ───────────────
     try:
-        body = _json.dumps(payload, ensure_ascii=False).encode('utf-8')
         started = datetime.now()
-        resp = requests.post(
-            SELLER_REQUEST_URL,
-            data=body,
-            headers={'Content-Type': 'application/json; charset=utf-8'},
-            timeout=10,
-        )
+        resp = requests.post(SELLER_REQUEST_URL, json=payload, timeout=10)
         duration_ms = int((datetime.now() - started).total_seconds() * 1000)
         ok = 200 <= resp.status_code < 300
         _log_api_call('seller_request', 'POST', SELLER_REQUEST_URL, log_payload,
                       resp.status_code, duration_ms, 'PASS' if ok else 'FAIL',
                       resp.text[:400])
-        logger.info("submit_seller_request JSON: status=%d body=%.300s", resp.status_code, resp.text)
+        logger.info("submit_seller_request JSON: status=%d body=%.300s",
+                    resp.status_code, resp.text)
         if ok:
             return {'success': True, 'raw': resp.text}
-        logger.warning("submit_seller_request JSON non-2xx: %d %s", resp.status_code, resp.text[:200])
+        logger.warning("submit_seller_request JSON non-2xx: %d %s",
+                       resp.status_code, resp.text[:300])
     except Exception as e:
         logger.error("submit_seller_request JSON failed: %s", e)
 
@@ -810,7 +805,8 @@ def submit_seller_request(name: str, mobile: str, note: str) -> Dict[str, Any]:
         _log_api_call('seller_request_form', 'POST', SELLER_REQUEST_URL, log_payload,
                       resp.status_code, duration_ms, 'PASS' if ok else 'FAIL',
                       resp.text[:400])
-        logger.info("submit_seller_request FORM: status=%d body=%.300s", resp.status_code, resp.text)
+        logger.info("submit_seller_request FORM: status=%d body=%.300s",
+                    resp.status_code, resp.text)
         if ok:
             return {'success': True, 'raw': resp.text}
         return {'success': False, 'raw': resp.text}
