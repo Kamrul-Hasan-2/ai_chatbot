@@ -1443,8 +1443,7 @@ def messenger_webhook():
                     # Only send a fallback for genuine AI errors, never for human mode
                     if (result.get('mode') == 'ai'
                             and result.get('intent') not in (
-                                'human_mode_active', 'ignored_automated_template',
-                                'seller_collecting')):
+                                'human_mode_active', 'ignored_automated_template')):
                         if send_facebook_message(
                             sender_id,
                             "দুঃখিত স্য়ার, উত্তর তৈরি করতে সমস্যা হয়েছে। আবার প্রশ্নটি লিখে দিন।"

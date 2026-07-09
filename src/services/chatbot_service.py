@@ -12,8 +12,6 @@ Entry point: process_message(user_id, message) → dict
 """
 import os
 import re
-import time
-import threading
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -490,121 +488,43 @@ def _handoff(user_id: str, intent_name: str, response_text: str,
                            (datetime.now() - start_time).total_seconds())
 
 
-_SELLER_WAIT_SECONDS = 60
-_seller_timers: Dict[str, threading.Timer] = {}
-
 _SELLER_THANK_YOU = "ধন্যবাদ স্যার, আমাদের প্রতিনিধি আপনার সাথে খুব শীঘ্রই যোগাযোগ করবেন।"
 
 
-def _parse_seller_info(accumulated: str):
-    """Extract (name, mobile) from accumulated seller text."""
-    _clean = accumulated.replace(' ', '').replace('-', '')
-    mob = re.search(r'(?:\+?880?|0)(1[3-9]\d{8})', _clean)
-    mobile = ('0' + mob.group(1)) if mob else ''
-    name = ''
-    if mob:
-        idx = accumulated.find(mob.group(0))
-        if idx > 0:
-            raw = accumulated[:idx].strip()
-            raw = re.sub(r'(?i)^(?:আমার\s+নাম|নাম|name)[:\s]*', '', raw).strip()
-            name = raw.split(',')[0].split('।')[0].split('\n')[0].strip()
-    return name, mobile
-
-
-def _push_seller_thankyou(user_id: str) -> None:
-    """Send the thank-you message directly to Messenger (no chat_controller import)."""
-    _token = os.getenv('PAGE_ACCESS_TOKEN', '')
-    if not _token:
-        logger.warning("_push_seller_thankyou: PAGE_ACCESS_TOKEN not set")
-        return
-    try:
-        import requests as _req
-        _req.post(
-            f'https://graph.facebook.com/v25.0/me/messages?access_token={_token}',
-            json={
-                'recipient': {'id': user_id},
-                'messaging_type': 'RESPONSE',
-                'message': {'text': _SELLER_THANK_YOU},
-            },
-            timeout=10,
-        )
-    except Exception as e:
-        logger.error("_push_seller_thankyou failed: %s", e)
-
-
-def _do_seller_submit(user_id: str, accumulated: str) -> None:
-    """Parse, call API, log. Used by both timer and inline path."""
-    name, mobile = _parse_seller_info(accumulated)
-    logger.info("seller_submit user=%s name=%r mobile=%r note_len=%d",
-                user_id, name, mobile, len(accumulated))
-    result = submit_seller_request(name, mobile, accumulated)
-    logger.info("seller_submit result=%s", result)
-
-
-def _seller_timer_fire(user_id: str) -> None:
-    """Background: fires 60 s after first seller reply when no more messages arrive."""
-    try:
-        _seller_timers.pop(user_id, None)
-        state = get_seller_flow(user_id)
-        if not state or state.get('step') != 'collecting':
-            return
-        accumulated = ' '.join(state.get('messages', [])).strip()
-        if not accumulated:
-            clear_seller_flow(user_id)
-            return
-        clear_seller_flow(user_id)
-        _do_seller_submit(user_id, accumulated)
-        _push_seller_thankyou(user_id)
-    except Exception as e:
-        logger.error("_seller_timer_fire user=%s: %s", user_id, e, exc_info=True)
-
-
 def _continue_seller_flow(user_id: str, message: str) -> Optional[Dict]:
-    """Accumulate seller messages. After 60 s from first reply, submit inline."""
+    """User replied to seller question — parse, submit immediately, thank."""
     state = get_seller_flow(user_id)
     if not state or state.get('step') != 'collecting':
         return None
 
-    now = time.time()
-    started_at = state.get('started_at', now)
-    elapsed = now - started_at
+    clear_seller_flow(user_id)
 
-    msgs = state.get('messages', [])
-    msgs.append(message.strip())
+    note = message.strip()
 
-    # If 60 s have passed since the first reply, submit right here in this request.
-    if elapsed >= _SELLER_WAIT_SECONDS:
-        accumulated = ' '.join(msgs).strip()
-        clear_seller_flow(user_id)
-        old = _seller_timers.pop(user_id, None)
-        if old:
-            old.cancel()
-        _do_seller_submit(user_id, accumulated)
-        return {
-            'response': _SELLER_THANK_YOU,
-            'intent': 'seller_flow_done',
-            'intent_content': {}, 'products': [],
-        }
+    # Extract BD mobile number
+    _clean = note.replace(' ', '').replace('-', '')
+    mob = re.search(r'(?:\+?880?|0)(1[3-9]\d{8})', _clean)
+    mobile = ('0' + mob.group(1)) if mob else ''
 
-    # Still within the 60 s window — accumulate and wait.
-    state['messages'] = msgs
-    state['started_at'] = started_at       # keep the ORIGINAL start time, never reset
-    set_seller_flow(user_id, state)
+    # Extract name: text before the phone number, strip label prefixes
+    name = ''
+    if mob:
+        idx = note.find(mob.group(0))
+        if idx > 0:
+            raw = note[:idx].strip()
+            raw = re.sub(r'(?i)^(?:আমার\s+নাম|নাম|name)[:\s]*', '', raw).strip()
+            name = raw.split(',')[0].split('।')[0].split('\n')[0].strip()
 
-    # Start the one-shot timer only on the first reply (don't reset on each message).
-    if len(msgs) == 1:
-        t = threading.Timer(_SELLER_WAIT_SECONDS, _seller_timer_fire, args=[user_id])
-        t.daemon = True
-        t.start()
-        _seller_timers[user_id] = t
-        return {
-            'response': "আপনার তথ্য পেয়েছি স্যার।",
-            'intent': 'seller_collecting',
-            'intent_content': {}, 'products': [],
-        }
+    logger.info("seller_flow submit user=%s name=%r mobile=%r note_len=%d",
+                user_id, name, mobile, len(note))
+    result = submit_seller_request(name, mobile, note)
+    logger.info("seller_request result=%s", result)
 
-    # 2nd+ message within 60 s window — stay silent.
-    return {'response': '', 'intent': 'seller_collecting', 'intent_content': {}, 'products': []}
+    return {
+        'response': _SELLER_THANK_YOU,
+        'intent': 'seller_flow_done',
+        'intent_content': {}, 'products': [],
+    }
 
 
 def _observe_and_save(user_id: str, profile, message: str,
@@ -1439,7 +1359,7 @@ def _dispatch(intent: str, ctx: Dict, user_id: str, message: str,
                     'intent': 'faq_showroom', 'intent_content': ic, 'products': []}
         # Genuine sell intent — ask once, wait 60 s, then submit
         ic = normalize_payload(prev_ctx or load_context(user_id))
-        set_seller_flow(user_id, {'step': 'collecting', 'messages': [], 'started_at': time.time()})
+        set_seller_flow(user_id, {'step': 'collecting'})
         return {
             'response': (
                 "স্যার, আপনার নাম, ফোন নম্বর এবং কী বিক্রি করতে চান "
