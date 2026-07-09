@@ -501,24 +501,30 @@ def _continue_seller_flow(user_id: str, message: str) -> Optional[Dict]:
 
     note = message.strip()
 
-    # Extract BD mobile number
-    _clean = note.replace(' ', '').replace('-', '')
-    mob = re.search(r'(?:\+?880?|0)(1[3-9]\d{8})', _clean)
-    mobile = ('0' + mob.group(1)) if mob else ''
+    # ── Extract name and mobile line-by-line (ASCII-only digit matching) ───────
+    _BD_MOB_PAT = re.compile(r'(?:\+?880|0)(1[3-9]\d{8})', re.ASCII)
+    _NAME_PAT   = re.compile(r'^(?:আমার\s+নাম|নাম|name)\s*[:\-]\s*', re.IGNORECASE)
 
-    # Extract name: text before the phone number, strip label prefixes
-    name = ''
-    if mob:
-        idx = note.find(mob.group(0))
-        if idx > 0:
-            raw = note[:idx].strip()
-            raw = re.sub(r'(?i)^(?:আমার\s+নাম|নাম|name)[:\s]*', '', raw).strip()
-            name = raw.split(',')[0].split('।')[0].split('\n')[0].strip()
+    name   = ''
+    mobile = ''
+    for _line in note.split('\n'):
+        _line = _line.strip()
+        if not _line:
+            continue
+        _m = _BD_MOB_PAT.search(re.sub(r'[\s\-\(\)]', '', _line))
+        if _m:
+            mobile = '0' + _m.group(1)   # always normalise to 01XXXXXXXXX
+            continue
+        if not name and _NAME_PAT.match(_line):
+            _cand = _NAME_PAT.sub('', _line).strip()
+            if _cand:
+                name = _cand
 
     logger.info("seller_flow submit user=%s name=%r mobile=%r note_len=%d",
                 user_id, name, mobile, len(note))
     result = submit_seller_request(name, mobile, note)
-    logger.info("seller_request result=%s", result)
+    logger.info("seller_request result user=%s success=%s raw=%.200s",
+                user_id, result.get('success'), result.get('raw', ''))
 
     return {
         'response': _SELLER_THANK_YOU,
