@@ -304,6 +304,16 @@ def clear_order_flow(user_id: str) -> None:
 # ── Seller request flow (multi-step info collection) ─────────────────────────
 
 def get_seller_flow(user_id: str) -> Dict:
+    # Always re-read from file so that a different gunicorn worker's
+    # set_seller_flow() is visible to this worker immediately.
+    try:
+        if os.path.exists(_STATE_FILE):
+            with open(_STATE_FILE, 'r', encoding='utf-8') as _f:
+                _fresh = json.load(_f).get('user_seller_flow') or {}
+            _seller_flow.clear()
+            _seller_flow.update(_fresh)
+    except Exception as _e:
+        logger.warning("get_seller_flow file reload failed: %s", _e)
     return dict(_seller_flow.get(user_id) or {})
 
 
