@@ -31,6 +31,7 @@ from models.chatbot_config import (
     SAVE_MESSAGE_URL, SAVE_MESSAGE_KEY,
     CAT_LIST_URL, SPEC_URL, KNOWLEDGE_URL,
     CITY_LIST_URL, AREA_LIST_URL, PLACE_ORDER_URL, ORDER_STATUS_URL,
+    SELLER_REQUEST_URL,
     _log_api_call,
 )
 
@@ -765,6 +766,28 @@ def fetch_order_status(order_no: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error("fetch_order_status failed: %s", e)
         return {'success': False, 'message': str(e), 'data': {}}
+
+
+def submit_seller_request(name: str, mobile: str, note: str) -> Dict[str, Any]:
+    payload = {
+        'key':    API_KEY,
+        'name':   str(name or '').strip(),
+        'mobile': str(mobile or '').strip(),
+        'note':   str(note or '').strip(),
+    }
+    try:
+        started = datetime.now()
+        resp = requests.post(SELLER_REQUEST_URL, json=payload, timeout=10)
+        duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+        ok = 200 <= resp.status_code < 300
+        log_payload = dict(payload)
+        log_payload['key'] = '***'
+        _log_api_call('seller_request', 'POST', SELLER_REQUEST_URL, log_payload,
+                      resp.status_code, duration_ms, 'PASS' if ok else 'FAIL', resp.text[:400])
+        return {'success': ok, 'raw': resp.text}
+    except Exception as e:
+        logger.error("submit_seller_request failed: %s", e)
+        return {'success': False, 'raw': str(e)}
 
 
 def fetch_return_policy() -> Optional[str]:

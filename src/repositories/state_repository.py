@@ -48,6 +48,7 @@ _search_key:       Dict[str, str]  = {}  # cache key (keywords|min|max) for the 
 _user_profile:     Dict[str, Dict] = {}  # per-user behavioural profile (JSON dict form)
 _knowledge_count:  Dict[str, Dict] = {}  # per-user knowledge calls today: {user_id: {date: 'YYYY-MM-DD', count: int}}
 _order_flow:       Dict[str, Dict] = {}  # per-user in-progress order: {step, name, mobile, address, qty, city_id, area_id, listing_id, product_title, product_url}
+_seller_flow:      Dict[str, Dict] = {}  # per-user seller-request collection: {step, name, mobile, note}
 _state_lock = threading.Lock()
 
 _PROJECT_ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
@@ -66,6 +67,7 @@ def _load_local_state() -> None:
         _user_profile.update(state.get('user_profile') or {})
         _knowledge_count.update(state.get('user_knowledge_count') or {})
         _order_flow.update(state.get('user_order_flow') or {})
+        _seller_flow.update(state.get('user_seller_flow') or {})
         # Persisted so a restart between "which product?" and the user's "1"
         # doesn't lose what was being asked (buy/spec/condition). (#5)
         _pending_question.update(state.get('user_pending_question') or {})
@@ -84,6 +86,7 @@ def _save_local_state() -> None:
                 'user_profile':          _user_profile,
                 'user_knowledge_count':  _knowledge_count,
                 'user_order_flow':       _order_flow,
+                'user_seller_flow':      _seller_flow,
                 'user_pending_question': _pending_question,
             }
             fd, tmp = tempfile.mkstemp(dir=os.path.dirname(_STATE_FILE), suffix='.tmp')
@@ -295,6 +298,23 @@ def clear_order_flow(user_id: str) -> None:
     """Drop any in-progress order state for this user."""
     if user_id in _order_flow:
         _order_flow.pop(user_id, None)
+        _save_local_state()
+
+
+# ── Seller request flow (multi-step info collection) ─────────────────────────
+
+def get_seller_flow(user_id: str) -> Dict:
+    return dict(_seller_flow.get(user_id) or {})
+
+
+def set_seller_flow(user_id: str, state: Dict) -> None:
+    _seller_flow[user_id] = dict(state or {})
+    _save_local_state()
+
+
+def clear_seller_flow(user_id: str) -> None:
+    if user_id in _seller_flow:
+        _seller_flow.pop(user_id, None)
         _save_local_state()
 
 

@@ -12,6 +12,7 @@ Entry point: process_message(user_id, message) → dict
 """
 import os
 import re
+import threading
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -28,7 +29,7 @@ from models.chatbot_config import (
 from services.api_client_service import (
     check_responder_type, assign_agent, assign_bot,
     fetch_history, fetch_categories, fetch_return_policy, fetch_faq_db,
-    invalidate_user_cache,
+    invalidate_user_cache, submit_seller_request,
 )
 from repositories.state_repository import (
     load_context, save_last_intent, get_last_intent,
@@ -36,6 +37,7 @@ from repositories.state_repository import (
     set_session_category, get_session_category,
     load_user_profile, save_user_profile,
     set_pending_question, get_pending_question,
+    get_seller_flow, set_seller_flow, clear_seller_flow,
 )
 from services.intent_service import (
     detect_intent, merge_context,
@@ -487,6 +489,71 @@ def _handoff(user_id: str, intent_name: str, response_text: str,
                            (datetime.now() - start_time).total_seconds())
 
 
+_SELLER_WAIT_SECONDS = 60
+_seller_timers: Dict[str, threading.Timer] = {}
+
+
+def _seller_timer_fire(user_id: str) -> None:
+    """Background: fires 60 s after last seller message — parse, submit, thank."""
+    _seller_timers.pop(user_id, None)
+    state = get_seller_flow(user_id)
+    if not state or state.get('step') != 'collecting':
+        return
+
+    accumulated = ' '.join(state.get('messages', []))
+    clear_seller_flow(user_id)
+
+    # Extract BD mobile number
+    mob = re.search(r'(?:\+?880?|0)(1[3-9]\d{8})',
+                    accumulated.replace(' ', '').replace('-', ''))
+    mobile = ('0' + mob.group(1)) if mob else ''
+
+    # Heuristic name: text before the phone number, strip common Bangla/English prefixes
+    name = ''
+    if mob:
+        raw_before = accumulated[:accumulated.find(mob.group(0))].strip()
+        name = re.sub(r'(?i)^(?:আমার\s+নাম|নাম|name)[:\s]*', '', raw_before).strip()
+        name = name.split(',')[0].split('।')[0].strip()
+
+    try:
+        submit_seller_request(name, mobile, accumulated)
+    except Exception as e:
+        logger.error("seller_request submit failed: %s", e)
+
+    try:
+        from controllers.chat_controller import _send_facebook_text_message
+    except ImportError:
+        from src.controllers.chat_controller import _send_facebook_text_message
+    _send_facebook_text_message(
+        user_id,
+        "ধন্যবাদ স্যার, আমাদের প্রতিনিধি আপনার সাথে খুব শীঘ্রই যোগাযোগ করবেন।",
+    )
+
+
+def _continue_seller_flow(user_id: str, message: str) -> Optional[Dict]:
+    """Accumulate seller messages; reset the 60 s submit timer on each reply."""
+    state = get_seller_flow(user_id)
+    if not state or state.get('step') != 'collecting':
+        return None
+
+    msgs = state.get('messages', [])
+    msgs.append(message.strip())
+    state['messages'] = msgs
+    set_seller_flow(user_id, state)
+
+    # Cancel any running timer and start a fresh 60 s one
+    old = _seller_timers.pop(user_id, None)
+    if old:
+        old.cancel()
+    t = threading.Timer(_SELLER_WAIT_SECONDS, _seller_timer_fire, args=[user_id])
+    t.daemon = True
+    t.start()
+    _seller_timers[user_id] = t
+
+    # Stay silent while collecting — timer will send the thank-you
+    return {'response': '', 'intent': 'seller_collecting', 'intent_content': {}, 'products': []}
+
+
 def _observe_and_save(user_id: str, profile, message: str,
                       intent: str, ctx: Dict) -> None:
     """Update the rolling user profile from one turn and persist it.
@@ -541,6 +608,18 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                 ChatMode.HUMAN, HUMAN_SUPPORT_REQUIRED_STATUS,
                 (datetime.now() - start_time).total_seconds(),
                 user_message=message, profile=profile)
+
+        # ── Seller flow pump ─────────────────────────────────────────────────
+        # If the user is mid-seller-info collection (giving name / phone /
+        # description), every reply must stay in this flow — not Groq routed.
+        _sf_result = _continue_seller_flow(user_id, message)
+        if _sf_result is not None:
+            _observe_and_save(user_id, profile, message,
+                              _sf_result.get('intent', 'seller_flow'), {})
+            return _build_response(user_id, _sf_result,
+                                   ChatMode.AI, AI_ACTIVE_STATUS,
+                                   (datetime.now() - start_time).total_seconds(),
+                                   user_message=message, profile=profile)
 
         # ── Order flow pump ──────────────────────────────────────────────────
         # If the user is mid-order (collecting name/mobile/address/city/area/qty,
@@ -1248,7 +1327,7 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         # Handoff intents flip the mode to human so the next message bypasses AI.
         _HANDOFF_INTENT_NAMES = {
             'unknown_handoff', 'knowledge_limit_exceeded',
-            'seller_query', 'hate_speech', 'explicit_human_request',
+            'hate_speech', 'explicit_human_request',
             'complaint_handoff',
         }
         _intent_out = handler_result.get('intent', '')
@@ -1275,9 +1354,6 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
 # ── Intent dispatch ───────────────────────────────────────────────────────────
 
 _HANDOFF_MAP = {
-    'seller_query':  (
-        "স্যার, বিক্রয় সংক্রান্ত বিষয়ে আমাদের একজন প্রতিনিধি আপনাকে সাহায্য করবেন।",
-        'seller_query'),
     'hate_speech':   (
         "স্যার, অনুগ্রহ করে ভদ্র ভাষায় কথা বলুন। আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।",
         'hate_speech'),
@@ -1308,6 +1384,17 @@ def _dispatch(intent: str, ctx: Dict, user_id: str, message: str,
             ic = normalize_payload(prev_ctx or load_context(user_id))
             return {'response': _SHOWROOM_RESPONSE + LOOP_BACK,
                     'intent': 'faq_showroom', 'intent_content': ic, 'products': []}
+        # Genuine sell intent — ask once, collect silently, submit after 60 s
+        ic = normalize_payload(prev_ctx or load_context(user_id))
+        set_seller_flow(user_id, {'step': 'collecting', 'messages': []})
+        return {
+            'response': (
+                "স্যার, আপনার নাম, ফোন নম্বর এবং কী বিক্রি করতে চান "
+                "তা বিস্তারিত বলুন।"
+            ),
+            'intent': 'seller_flow',
+            'intent_content': ic, 'products': [],
+        }
 
     # Return / refund complaint — fetch policy from API, no agent handoff needed
     if intent == 'complaint':

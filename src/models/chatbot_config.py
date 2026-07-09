@@ -69,8 +69,9 @@ SPEC_URL          = os.getenv('SPEC_API_URL',            'https://www.bdstall.co
 KNOWLEDGE_URL     = os.getenv('KNOWLEDGE_API_URL',       'https://www.bdstall.com/api/chatbot/knowledge/')
 CITY_LIST_URL     = os.getenv('CITY_LIST_API_URL',       'https://www.bdstall.com/api/chatbot/city_list/')
 AREA_LIST_URL     = os.getenv('AREA_LIST_API_URL',       'https://www.bdstall.com/api/chatbot/area_list/')
-PLACE_ORDER_URL   = os.getenv('PLACE_ORDER_API_URL',     'https://www.bdstall.com/api/chatbot/chatbot_place_order/')
-ORDER_STATUS_URL  = os.getenv('ORDER_STATUS_API_URL',    'https://www.bdstall.com/api/chatbot/chatbot_order_status/')
+PLACE_ORDER_URL      = os.getenv('PLACE_ORDER_API_URL',      'https://www.bdstall.com/api/chatbot/chatbot_place_order/')
+ORDER_STATUS_URL     = os.getenv('ORDER_STATUS_API_URL',     'https://www.bdstall.com/api/chatbot/chatbot_order_status/')
+SELLER_REQUEST_URL   = os.getenv('SELLER_REQUEST_API_URL',   'https://www.bdstall.com/api/chatbot/seller_request/')
 
 try:
     HISTORY_LIMIT = max(1, min(int(os.getenv('CHATBOT_HISTORY_LIMIT', '5')), 20))
