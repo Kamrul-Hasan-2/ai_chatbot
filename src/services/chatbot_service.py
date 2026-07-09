@@ -495,39 +495,60 @@ _seller_timers: Dict[str, threading.Timer] = {}
 
 def _seller_timer_fire(user_id: str) -> None:
     """Background: fires 60 s after last seller message — parse, submit, thank."""
-    _seller_timers.pop(user_id, None)
-    state = get_seller_flow(user_id)
-    if not state or state.get('step') != 'collecting':
-        return
-
-    accumulated = ' '.join(state.get('messages', []))
-    clear_seller_flow(user_id)
-
-    # Extract BD mobile number
-    mob = re.search(r'(?:\+?880?|0)(1[3-9]\d{8})',
-                    accumulated.replace(' ', '').replace('-', ''))
-    mobile = ('0' + mob.group(1)) if mob else ''
-
-    # Heuristic name: text before the phone number, strip common Bangla/English prefixes
-    name = ''
-    if mob:
-        raw_before = accumulated[:accumulated.find(mob.group(0))].strip()
-        name = re.sub(r'(?i)^(?:আমার\s+নাম|নাম|name)[:\s]*', '', raw_before).strip()
-        name = name.split(',')[0].split('।')[0].strip()
-
     try:
-        submit_seller_request(name, mobile, accumulated)
+        _seller_timers.pop(user_id, None)
+        state = get_seller_flow(user_id)
+        if not state or state.get('step') != 'collecting':
+            return
+
+        accumulated = ' '.join(state.get('messages', []))
+        if not accumulated.strip():
+            clear_seller_flow(user_id)
+            return
+
+        clear_seller_flow(user_id)
+
+        # Extract BD mobile number from accumulated text
+        _clean = accumulated.replace(' ', '').replace('-', '')
+        mob = re.search(r'(?:\+?880?|0)(1[3-9]\d{8})', _clean)
+        mobile = ('0' + mob.group(1)) if mob else ''
+
+        # Heuristic name: text before phone number, strip label prefixes
+        name = ''
+        if mob:
+            phone_str = mob.group(0)
+            idx = accumulated.find(phone_str)
+            if idx > 0:
+                raw_before = accumulated[:idx].strip()
+                name = re.sub(
+                    r'(?i)^(?:আমার\s+নাম|নাম|name)[:\s]*', '', raw_before
+                ).strip()
+                name = name.split(',')[0].split('।')[0].split('\n')[0].strip()
+
+        logger.info("seller_timer_fire user=%s name=%r mobile=%r note_len=%d",
+                    user_id, name, mobile, len(accumulated))
+
+        result = submit_seller_request(name, mobile, accumulated)
+        logger.info("seller_request result: %s", result)
+
+        # Send thank-you via Messenger directly (avoid importing chat_controller)
+        import requests as _req
+        _token = os.getenv('PAGE_ACCESS_TOKEN', '')
+        if _token:
+            _req.post(
+                f'https://graph.facebook.com/v25.0/me/messages?access_token={_token}',
+                json={
+                    'recipient': {'id': user_id},
+                    'messaging_type': 'RESPONSE',
+                    'message': {'text': 'ধন্যবাদ স্যার, আমাদের প্রতিনিধি আপনার সাথে খুব শীঘ্রই যোগাযোগ করবেন।'},
+                },
+                timeout=10,
+            )
+        else:
+            logger.warning("seller_timer_fire: PAGE_ACCESS_TOKEN not set, cannot send thank-you")
+
     except Exception as e:
-        logger.error("seller_request submit failed: %s", e)
-
-    try:
-        from controllers.chat_controller import _send_facebook_text_message
-    except ImportError:
-        from src.controllers.chat_controller import _send_facebook_text_message
-    _send_facebook_text_message(
-        user_id,
-        "ধন্যবাদ স্যার, আমাদের প্রতিনিধি আপনার সাথে খুব শীঘ্রই যোগাযোগ করবেন।",
-    )
+        logger.error("_seller_timer_fire failed for user=%s: %s", user_id, e, exc_info=True)
 
 
 def _continue_seller_flow(user_id: str, message: str) -> Optional[Dict]:
@@ -550,8 +571,13 @@ def _continue_seller_flow(user_id: str, message: str) -> Optional[Dict]:
     t.start()
     _seller_timers[user_id] = t
 
-    # Stay silent while collecting — timer will send the thank-you
-    return {'response': '', 'intent': 'seller_collecting', 'intent_content': {}, 'products': []}
+    # First reply: acknowledge receipt. Subsequent replies are silent.
+    is_first = len(msgs) == 1
+    return {
+        'response': "আপনার তথ্য পেয়েছি স্যার।" if is_first else '',
+        'intent': 'seller_collecting',
+        'intent_content': {}, 'products': [],
+    }
 
 
 def _observe_and_save(user_id: str, profile, message: str,
