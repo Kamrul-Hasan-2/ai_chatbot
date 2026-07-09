@@ -571,20 +571,9 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                 (datetime.now() - start_time).total_seconds(),
                 user_message=message, profile=profile)
 
-        # Human mode check
-        if check_responder_type(user_id) == 'agent':
-            _observe_and_save(user_id, profile, message, 'human_mode_active', {})
-            ic = normalize_payload(prev_ctx)
-            return _build_response(user_id,
-                {'response': '', 'intent': 'human_mode_active',
-                 'intent_content': ic, 'products': []},
-                ChatMode.HUMAN, HUMAN_SUPPORT_REQUIRED_STATUS,
-                (datetime.now() - start_time).total_seconds(),
-                user_message=message, profile=profile)
-
         # ── Seller flow pump ─────────────────────────────────────────────────
-        # If the user is mid-seller-info collection (giving name / phone /
-        # description), every reply must stay in this flow — not Groq routed.
+        # Must run BEFORE the human-mode check so that a user who was
+        # previously handed off can still complete the info collection.
         _sf_result = _continue_seller_flow(user_id, message)
         if _sf_result is not None:
             _observe_and_save(user_id, profile, message,
@@ -593,6 +582,28 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                                    ChatMode.AI, AI_ACTIVE_STATUS,
                                    (datetime.now() - start_time).total_seconds(),
                                    user_message=message, profile=profile)
+
+        # Human mode check
+        if check_responder_type(user_id) == 'agent':
+            # If user is in human mode but explicitly wants to sell →
+            # pull them back to AI mode so the sell flow can start.
+            _msg_l_sell = message.lower()
+            _SELL_SIGNALS = (
+                'বিক্রি', 'bikri', 'sell', 'bechte', 'beche', 'bechbo',
+                'bechte chai', 'sell korte', 'sell korbo',
+            )
+            if any(s in _msg_l_sell for s in _SELL_SIGNALS):
+                assign_bot(user_id)
+                # Fall through to normal Groq routing below
+            else:
+                _observe_and_save(user_id, profile, message, 'human_mode_active', {})
+                ic = normalize_payload(prev_ctx)
+                return _build_response(user_id,
+                    {'response': '', 'intent': 'human_mode_active',
+                     'intent_content': ic, 'products': []},
+                    ChatMode.HUMAN, HUMAN_SUPPORT_REQUIRED_STATUS,
+                    (datetime.now() - start_time).total_seconds(),
+                    user_message=message, profile=profile)
 
         # ── Order flow pump ──────────────────────────────────────────────────
         # If the user is mid-order (collecting name/mobile/address/city/area/qty,
@@ -1357,7 +1368,8 @@ def _dispatch(intent: str, ctx: Dict, user_id: str, message: str,
             ic = normalize_payload(prev_ctx or load_context(user_id))
             return {'response': _SHOWROOM_RESPONSE + LOOP_BACK,
                     'intent': 'faq_showroom', 'intent_content': ic, 'products': []}
-        # Genuine sell intent — ask once, wait 60 s, then submit
+        # Genuine sell intent — ensure bot mode, then collect info
+        assign_bot(user_id)   # undo any previous agent handoff
         ic = normalize_payload(prev_ctx or load_context(user_id))
         set_seller_flow(user_id, {'step': 'collecting'})
         return {
