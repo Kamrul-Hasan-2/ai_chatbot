@@ -1539,6 +1539,16 @@ def handle_product_search(ctx: Dict, user_id: str, message: str,
     _title_found = any(title_kw in (p.get('title') or '').lower() for p in products)
     if not _title_found and title_kw_core and title_kw_core != title_kw:
         _title_found = any(title_kw_core in (p.get('title') or '').lower() for p in products)
+    # Model numbers are often typed with a stray space around the digits
+    # ("A 10", "Note 12") even though the catalog title has none ("A10",
+    # "Note12"). Retry with internal whitespace collapsed on both sides
+    # before concluding the exact product wasn't found.
+    if not _title_found and title_kw:
+        _title_kw_nospace = re.sub(r'\s+', '', title_kw)
+        _title_found = any(
+            _title_kw_nospace in re.sub(r'\s+', '', (p.get('title') or '').lower())
+            for p in products
+        )
     # For price queries where the requested product IS found, filter the display
     # to only the matching model(s).  Prevents "Samsung A54" appearing when the
     # customer asked specifically about "Samsung A53 5G 6/128 gb price?".
@@ -1633,9 +1643,17 @@ def handle_product_link(ctx: Dict, user_id: str, message: str, url: str) -> Dict
             result = search_products(broader)
 
     if result['products_found'] == 0:
+        # A search miss doesn't confirm the item is out of stock — it may just
+        # be a search-index gap while the product page itself is still live.
+        # Don't assert "out of stock" as fact; hand off so a human can verify.
+        try:
+            assign_agent(user_id, 'product_link_not_found')
+        except Exception as e:
+            logger.warning("assign_agent on product_link_not_found failed: %s", e)
         return _ok(
-            f"স্যার, এই লিংকের প্রোডাক্টটি ({keywords}) এই মুহূর্তে স্টকে নেই।"
-            " সরাসরি লিংকে গিয়ে দেখতে পারেন।" + LOOP_BACK,
+            f"স্যার, এই লিংকের প্রোডাক্টটি ({keywords}) আমাদের সার্চে খুঁজে পাচ্ছি না। "
+            "আমাদের একজন প্রতিনিধি স্টক নিশ্চিত করে শীঘ্রই আপনাকে জানাবেন। "
+            "সরাসরি লিংকে গিয়েও দেখতে পারেন।" + LOOP_BACK,
             'product_link_not_found', ic,
             link_buttons=[{'text': 'বিডিস্টলে দেখুন', 'url': url}]
         )
@@ -2266,7 +2284,21 @@ def handle_product_spec_query(ctx: Dict, user_id: str, message: str,
             logger.info("handle_product_spec_query: Groq review-based answer returned")
             return _ok(groq_answer + LOOP_BACK, 'product_spec_query', ic)
     else:
+        # Same quota that gates the "no listing_id" branch above — that branch
+        # honestly tells the user and hands off to an agent. This branch must
+        # match it, otherwise a rate-limited customer gets the generic "we
+        # don't have this info" bounce, which reads as a wrong answer rather
+        # than a quota message and leaves them with no escalation path.
         logger.info("handle_product_spec_query: knowledge limit reached, skipping Groq")
+        try:
+            assign_agent(user_id, 'knowledge_limit_exceeded')
+        except Exception as e:
+            logger.warning("assign_agent on knowledge limit failed: %s", e)
+        return _ok(
+            "স্যার, আজকের জন্য বিস্তারিত পরামর্শের সীমা শেষ হয়েছে। "
+            "আমাদের একজন প্রতিনিধি শীঘ্রই আপনার সাথে যোগাযোগ করবেন।",
+            'knowledge_limit_exceeded', ic
+        )
 
     # ── Nothing found — warm redirect with product page link ─────────────────
     _LIVE_INVENTORY_WORDS = {

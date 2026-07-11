@@ -1377,10 +1377,20 @@ def messenger_webhook():
                         elif att_type in ('file', 'audio', 'video', 'fallback'):
                             file_received = True
 
+                    # Human mode — bot must stay completely silent, same as the
+                    # text-message path below. Stickers/images must not let the
+                    # bot butt in over an agent who already owns the thread.
+                    human_mode = bool(sender_id) and get_chatbot().get_user_mode(sender_id) == 'human'
+
                     if sticker_received and not image_received:
                         # Sticker / emoji reaction — acknowledge without asking
                         # "which product do you want?" (which confuses customers).
-                        if send_facebook_message(
+                        if human_mode:
+                            logger.info(
+                                "[WEBHOOK] Sticker from sender_id=%s ignored — human mode active",
+                                sender_id,
+                            )
+                        elif send_facebook_message(
                             sender_id,
                             "স্যার, কোনো সাহায্য লাগলে বলুন। 😊"
                         ):
@@ -1389,7 +1399,12 @@ def messenger_webhook():
                         continue
 
                     if image_received:
-                        if send_facebook_message(
+                        if human_mode:
+                            logger.info(
+                                "[WEBHOOK] Image from sender_id=%s ignored — human mode active",
+                                sender_id,
+                            )
+                        elif send_facebook_message(
                             sender_id,
                             "স্যার, আপনি কোন প্রোডাক্টটি কিনতে চাচ্ছেন? দয়া করে প্রোডাক্টটির নাম এবং মডেল বলুন।"
                         ):
@@ -1398,7 +1413,12 @@ def messenger_webhook():
                         continue
 
                     if file_received:
-                        if send_facebook_message(
+                        if human_mode:
+                            logger.info(
+                                "[WEBHOOK] File from sender_id=%s ignored — human mode active",
+                                sender_id,
+                            )
+                        elif send_facebook_message(
                             sender_id,
                             "দুঃখিত স্যার, এই ফরম্যাটে সাহায্য করা সম্ভব হচ্ছে না। আপনার প্রশ্নটি টেক্সটে লিখলে আমরা সাহায্য করতে পারব।"
                         ):
