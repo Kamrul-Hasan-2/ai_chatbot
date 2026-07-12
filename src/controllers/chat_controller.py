@@ -1359,26 +1359,31 @@ def messenger_webhook():
                 remember_user_name(sender_id, sender_name)
                 message_text = (message_obj.get('text') or '').strip()
 
-                # Handle image and file attachments
-                if not message_text:
-                    attachments = message_obj.get('attachments') or []
-                    image_received = False
-                    file_received = False
-                    sticker_received = False
-                    image_url = ''
-                    for att in attachments:
-                        att_type = att.get('type', '')
-                        att_payload = att.get('payload') or {}
-                        if att_type == 'image' and att_payload.get('sticker_id'):
-                            # Facebook stickers (👍 thumbs-up, hearts, etc.) arrive as
-                            # type='image' with a sticker_id. They are NOT product photos.
-                            sticker_received = True
-                        elif att_type == 'image':
-                            image_received = True
-                            image_url = image_url or (att_payload.get('url') or '')
-                        elif att_type in ('file', 'audio', 'video', 'fallback'):
-                            file_received = True
+                # Handle image and file attachments — detected regardless of
+                # whether text was also sent. A photo attached WITH a caption
+                # ("eita ase?" + image) must still be treated as an image
+                # message: falling through to the plain text pipeline would
+                # ignore the photo entirely and ask the generic "which
+                # category?" question instead of reading the picture.
+                attachments = message_obj.get('attachments') or []
+                image_received = False
+                file_received = False
+                sticker_received = False
+                image_url = ''
+                for att in attachments:
+                    att_type = att.get('type', '')
+                    att_payload = att.get('payload') or {}
+                    if att_type == 'image' and att_payload.get('sticker_id'):
+                        # Facebook stickers (👍 thumbs-up, hearts, etc.) arrive as
+                        # type='image' with a sticker_id. They are NOT product photos.
+                        sticker_received = True
+                    elif att_type == 'image':
+                        image_received = True
+                        image_url = image_url or (att_payload.get('url') or '')
+                    elif att_type in ('file', 'audio', 'video', 'fallback'):
+                        file_received = True
 
+                if image_received or sticker_received or file_received:
                     # Human mode — bot must stay completely silent, same as the
                     # text-message path below. Stickers/images must not let the
                     # bot butt in over an agent who already owns the thread.
