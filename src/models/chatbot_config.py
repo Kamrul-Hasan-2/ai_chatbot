@@ -81,6 +81,10 @@ except Exception:
 GROQ_API_KEY      = os.getenv('GROQ_API_KEY', '')
 GROQ_MODEL        = os.getenv('GROQ_MODEL',        'llama-3.3-70b-versatile')
 GROQ_ANSWER_MODEL = os.getenv('GROQ_ANSWER_MODEL', 'llama-3.3-70b-versatile')
+# Vision-capable model for reading customer product photos. Override via env
+# if Groq renames/deprecates this model — check the current model list at
+# https://console.groq.com/docs/models before assuming this default is stale.
+GROQ_VISION_MODEL = os.getenv('GROQ_VISION_MODEL', 'meta-llama/llama-4-scout-17b-16e-instruct')
 
 # ── Groq system prompt template ───────────────────────────────────────────────
 

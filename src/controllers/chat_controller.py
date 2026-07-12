@@ -1365,6 +1365,7 @@ def messenger_webhook():
                     image_received = False
                     file_received = False
                     sticker_received = False
+                    image_url = ''
                     for att in attachments:
                         att_type = att.get('type', '')
                         att_payload = att.get('payload') or {}
@@ -1374,6 +1375,7 @@ def messenger_webhook():
                             sticker_received = True
                         elif att_type == 'image':
                             image_received = True
+                            image_url = image_url or (att_payload.get('url') or '')
                         elif att_type in ('file', 'audio', 'video', 'fallback'):
                             file_received = True
 
@@ -1404,11 +1406,24 @@ def messenger_webhook():
                                 "[WEBHOOK] Image from sender_id=%s ignored — human mode active",
                                 sender_id,
                             )
-                        elif send_facebook_message(
-                            sender_id,
-                            "স্যার, আপনি কোন প্রোডাক্টটি কিনতে চাচ্ছেন? দয়া করে প্রোডাক্টটির নাম এবং মডেল বলুন।"
-                        ):
-                            replied_count += 1
+                        else:
+                            # Read the photo with a vision model and search the
+                            # catalog for it, instead of just asking the customer
+                            # to type the product name.
+                            from services.intent_handlers_service import handle_image_search
+                            from models.chatbot_config import GROQ_VISION_MODEL
+                            _send_typing_indicator(sender_id, on=True)
+                            image_result = handle_image_search(
+                                sender_id, image_url,
+                                get_chatbot().groq_client, GROQ_VISION_MODEL
+                            )
+                            _send_typing_indicator(sender_id, on=False)
+                            img_response_text = (image_result.get('response') or '').strip()
+                            img_link_buttons = image_result.get('link_buttons') or []
+                            if img_response_text and send_facebook_message(
+                                sender_id, img_response_text, link_buttons=img_link_buttons
+                            ):
+                                replied_count += 1
                         processed_count += 1
                         continue
 

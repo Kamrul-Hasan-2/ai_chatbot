@@ -1625,6 +1625,78 @@ def handle_url_message(ctx: Dict, user_id: str, message: str, url: str) -> Dict:
     )
 
 
+def _identify_product_from_image(image_url: str, groq_client, vision_model: str) -> Optional[str]:
+    """Ask a Groq vision model what product is shown in a customer's photo.
+
+    Returns a short catalog search query (brand + model + product type) or
+    None when vision isn't configured or nothing can be confidently named —
+    callers must fall back to asking the customer to describe it in text.
+    """
+    if not groq_client or not vision_model or not image_url:
+        return None
+    system = (
+        "You identify products in customer photos for BDStall.com, a "
+        "Bangladeshi electronics/gadgets e-commerce store. Look at the "
+        "image and respond with ONLY a short product search query "
+        "(brand + model + product type, in English, max 6 words) suitable "
+        "for searching the store's catalog. If you cannot confidently "
+        "identify a specific product or brand from the photo, reply with "
+        "exactly: UNKNOWN"
+    )
+    try:
+        resp = groq_client.chat.completions.create(
+            model=vision_model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": [
+                    {"type": "text", "text": "What product is shown in this image?"},
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                ]},
+            ],
+            temperature=0.0,
+            max_tokens=40,
+        )
+        answer = (resp.choices[0].message.content or '').strip()
+        logger.info("_identify_product_from_image: answer=%r", answer)
+        if not answer or answer.upper() == 'UNKNOWN':
+            return None
+        return answer
+    except Exception as e:
+        logger.warning("_identify_product_from_image failed: %s", e)
+        return None
+
+
+def handle_image_search(user_id: str, image_url: str,
+                        groq_client=None, vision_model: str = '') -> Dict:
+    """Identify the product in a customer photo and search BDStall for it.
+
+    Falls back to asking for a text description when vision isn't
+    configured, nothing is confidently identified, or the search turns up
+    no matching listings — never leaves the customer with silence.
+    """
+    ic = normalize_payload(load_context(user_id))
+    fallback = _ok(
+        "স্যার, আপনি কোন প্রোডাক্টটি কিনতে চাচ্ছেন? দয়া করে প্রোডাক্টটির নাম এবং মডেল বলুন।",
+        'image_unrecognized', ic
+    )
+
+    query = _identify_product_from_image(image_url, groq_client, vision_model)
+    if not query:
+        return fallback
+
+    result = search_products(query)
+    if result['products_found'] == 0:
+        return fallback
+
+    products = result['products']
+    set_product_context(user_id, products[:5])
+    text, buttons = _format_listing(products[:3])
+    ic['title'] = query
+    header = "স্যার, ছবিতে সম্ভবত এই প্রোডাক্টটি দেখতে পাচ্ছি। কাছাকাছি অপশনগুলো দেখুন:\n\n"
+    return _ok(header + text, 'image_product_search', ic,
+               products=products, link_buttons=buttons)
+
+
 def handle_product_link(ctx: Dict, user_id: str, message: str, url: str) -> Dict:
     from services.intent_service import resolve_category_from_message
     keywords = _extract_keywords_from_url(url)
