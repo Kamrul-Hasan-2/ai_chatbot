@@ -559,7 +559,7 @@ def fetch_categories() -> List[Dict]:
                 'cat_url':          str(e.get('cat_url', '')).strip(),
             }
             for e in data
-            if isinstance(e, dict) and e.get('category_id') and e.get('category_name')
+            if isinstance(e, dict) and e.get('category_name')
         ]
     except Exception as e:
         logger.warning("fetch_categories failed: %s", e)

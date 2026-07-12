@@ -1625,6 +1625,42 @@ def handle_url_message(ctx: Dict, user_id: str, message: str, url: str) -> Dict:
     )
 
 
+_IMAGE_DOWNLOAD_MAX_BYTES = 8 * 1024 * 1024  # 8MB — plenty for a phone-camera photo
+
+
+def _fetch_image_as_data_uri(image_url: str) -> Optional[str]:
+    """Download the customer's photo ourselves and return it as a base64 data URI.
+
+    Facebook's CDN sometimes rejects fetches from unfamiliar server
+    infrastructure with a 403 (confirmed: the same blocking behavior hits
+    other hosts like Wikimedia when Groq's own servers try to fetch a
+    remote image_url directly). We are the actual webhook recipient, so we
+    can always reach the URL — download it here and hand Groq the bytes
+    instead of asking Groq to fetch the URL itself.
+    """
+    import base64
+    import requests
+    try:
+        resp = requests.get(image_url, timeout=8, stream=True,
+                            headers={'User-Agent': 'Mozilla/5.0'})
+        if resp.status_code != 200:
+            logger.warning("_fetch_image_as_data_uri: HTTP %s for %s",
+                           resp.status_code, image_url)
+            return None
+        content = resp.content
+        if len(content) > _IMAGE_DOWNLOAD_MAX_BYTES:
+            logger.warning("_fetch_image_as_data_uri: image too large (%d bytes)", len(content))
+            return None
+        mime = resp.headers.get('Content-Type', 'image/jpeg').split(';')[0].strip() or 'image/jpeg'
+        if not mime.startswith('image/'):
+            mime = 'image/jpeg'
+        b64 = base64.b64encode(content).decode('ascii')
+        return f"data:{mime};base64,{b64}"
+    except Exception as e:
+        logger.warning("_fetch_image_as_data_uri failed for %s: %s", image_url, e)
+        return None
+
+
 def _identify_product_from_image(image_url: str, groq_client, vision_model: str) -> Optional[str]:
     """Ask a Groq vision model what product is shown in a customer's photo.
 
@@ -1634,6 +1670,13 @@ def _identify_product_from_image(image_url: str, groq_client, vision_model: str)
     """
     if not groq_client or not vision_model or not image_url:
         return None
+
+    data_uri = _fetch_image_as_data_uri(image_url)
+    if not data_uri:
+        # Download failed — fall back to letting Groq fetch the URL itself
+        # rather than giving up outright (works when the CDN cooperates).
+        data_uri = image_url
+
     system = (
         "You identify products in customer photos for BDStall.com, a "
         "Bangladeshi electronics/gadgets e-commerce store. Look at the "
@@ -1650,7 +1693,7 @@ def _identify_product_from_image(image_url: str, groq_client, vision_model: str)
                 {"role": "system", "content": system},
                 {"role": "user", "content": [
                     {"type": "text", "text": "What product is shown in this image?"},
-                    {"type": "image_url", "image_url": {"url": image_url}},
+                    {"type": "image_url", "image_url": {"url": data_uri}},
                 ]},
             ],
             temperature=0.0,

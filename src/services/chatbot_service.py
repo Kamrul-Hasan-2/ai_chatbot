@@ -42,6 +42,7 @@ from services.intent_service import (
     detect_intent, merge_context,
     resolve_category, normalize_payload,
     apply_post_groq_overrides, resolve_category_from_message,
+    _msg_has_any,
 )
 from services.intent_handlers_service import (
     handle_greeting, handle_goodbye, handle_thanks, handle_exit,
@@ -80,6 +81,23 @@ _ADVANCE_SIGNALS = frozenset({
     'আগে দিতে হবে', 'আগে দিতে হয়', 'আগে পাঠাতে হবে',
     'upfront', 'prepaid', 'prepay', 'advance', 'advance pay', 'advance dite',
     'age taka', 'age payment', 'age dite', 'age pathate',
+})
+
+# ── Hate-speech / abuse signals (deterministic, before Groq) ──────────────────
+# Groq (llama-3.3-70b) reliably misreads strong Bangla profanity written in
+# Banglish — verified empirically: "Dhoner alap chudai bainchud" scored
+# intent=greeting, confidence=0.95, twice in a row. Left uncaught, the bot
+# just repeats its last canned question at an angry, swearing customer
+# instead of escalating to a human. Catch strong, unambiguous abuse
+# deterministically. Word-bound short Latin tokens via _msg_has_any
+# (substring collides — e.g. bare 'harami' would match inside 'haramain');
+# Bangla stays substring since it takes attached suffixes.
+_HATE_SPEECH_SIGNALS = frozenset({
+    'চুদা', 'চুদি', 'চোদা', 'চোদন', 'খানকি', 'মাগি', 'হারামি', 'বেশ্যা',
+    'বাইনচোদ', 'মাদারচোদ', 'ভোদা', 'গুদ',
+    'chuda', 'chudi', 'choda', 'chodon', 'chudai', 'chudir', 'khanki', 'magi',
+    'harami', 'madarchod', 'bainchod', 'banchod', 'bainchud', 'boinchod',
+    'chutiya', 'chutia', 'bhosda',
 })
 
 # ── Self-reference words that carry no question intent ────────────────────────
@@ -650,6 +668,24 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                  'intent': 'emoji_reaction', 'intent_content': _emj_ctx,
                  'products': []},
                 ChatMode.AI, AI_ACTIVE_STATUS,
+                (datetime.now() - start_time).total_seconds(),
+                user_message=message, profile=profile)
+
+        # ── Hate-speech / abuse intercept ────────────────────────────────────
+        # Groq unreliably classifies strong Bangla profanity written in
+        # Banglish (verified: it scored as 'greeting'). Catch it
+        # deterministically so an angry, swearing customer gets handed off
+        # to a human instead of the bot repeating its last canned question.
+        if _msg_has_any(message.lower(), _HATE_SPEECH_SIGNALS):
+            _hate_ctx = normalize_payload(prev_ctx)
+            _observe_and_save(user_id, profile, message, 'hate_speech', {})
+            assign_agent(user_id, 'hate_speech')
+            return _build_response(
+                user_id,
+                {'response': "স্যার, অনুগ্রহ করে ভদ্র ভাষায় কথা বলুন। আমাদের একজন প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।",
+                 'intent': 'hate_speech', 'intent_content': _hate_ctx,
+                 'products': []},
+                ChatMode.HUMAN, HUMAN_SUPPORT_REQUIRED_STATUS,
                 (datetime.now() - start_time).total_seconds(),
                 user_message=message, profile=profile)
 
