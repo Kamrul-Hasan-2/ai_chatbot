@@ -2438,10 +2438,8 @@ def handle_fallback(ctx: Dict, user_id: str, message: str,
     if ctx.get('category'):
         return handle_product_search(ctx, user_id, message)
     ic = intent_to_normalized(ctx)
-    # Smart clarification: if we know the user's recent interests, ask a
-    # targeted question instead of dumping the generic category prompt.
     return _ok(
-        _smart_clarification_prompt(ctx, user_id) + LOOP_BACK,
+        CATEGORY_PROMPT + LOOP_BACK,
         'unknown', ic
     )
 
@@ -2450,59 +2448,7 @@ def handle_fallback(ctx: Dict, user_id: str, message: str,
 
 def _ask_category(ctx: Dict, user_id: str = '') -> Dict:
     ic = intent_to_normalized(ctx)
-    return _ok(_smart_clarification_prompt(ctx, user_id), 'need_category', ic)
-
-
-def _smart_clarification_prompt(ctx: Dict, user_id: str = '') -> str:
-    """Build a clarification that uses user profile when available.
-
-    Falls back to CATEGORY_PROMPT when there's no profile signal worth
-    referencing — never produces a worse message than the default.
-    """
-    try:
-        from repositories.state_repository import load_user_profile, get_session_category
-        profile = load_user_profile(user_id) if user_id else None
-        session_cat = get_session_category(user_id) if user_id else ''
-    except Exception:
-        profile = None
-        session_cat = ''
-
-    if not profile or profile.message_count == 0:
-        return CATEGORY_PROMPT
-
-    brand_hint = profile.preferred_brands[0] if profile.preferred_brands else ''
-    cat_hint = profile.interested_categories[0] if profile.interested_categories else ''
-
-    # Don't reference the profile category if the session already switched to a new one
-    if session_cat and cat_hint and session_cat.lower() != cat_hint.lower():
-        cat_hint = ''
-        brand_hint = ''
-    lang = profile.language
-    # Responses must always be in Bangla, never English — 'english'-profiled
-    # users (someone who typed a model number in plain Latin, say) get the
-    # same Bangla-script reply as 'bangla'; only genuine banglish keeps its
-    # own phrasing.
-
-    if cat_hint and brand_hint:
-        if lang != 'banglish':
-            return (f"স্যার, আগে আপনি {brand_hint.title()} {cat_hint} দেখছিলেন। "
-                    "এবার কী খুঁজছেন — একই ক্যাটাগরি, নাকি অন্য কিছু?")
-        return (f"স্যার, আগে {brand_hint.title()} {cat_hint} dekhcilen. "
-                "Ebar ki same category, naki onno kichu?")
-
-    if cat_hint:
-        if lang != 'banglish':
-            return f"স্যার, আবার {cat_hint} দেখাবো, নাকি অন্য কোনো ক্যাটাগরি?"
-        return f"স্যার, abar {cat_hint} dekhabo, naki onno category?"
-
-    if brand_hint:
-        if lang != 'banglish':
-            return (f"স্যার, {brand_hint.title()}-এর কী প্রোডাক্ট খুঁজছেন? "
-                    "phone, laptop, না অন্য কিছু?")
-        return (f"স্যার, {brand_hint.title()}-er ki product khujchen — "
-                "phone, laptop, naki onno kichu?")
-
-    return CATEGORY_PROMPT
+    return _ok(CATEGORY_PROMPT, 'need_category', ic)
 
 
 # ── Price-from-context helper ─────────────────────────────────────────────────
