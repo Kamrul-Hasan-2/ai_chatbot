@@ -2478,32 +2478,27 @@ def _smart_clarification_prompt(ctx: Dict, user_id: str = '') -> str:
         cat_hint = ''
         brand_hint = ''
     lang = profile.language
+    # Responses must always be in Bangla, never English — 'english'-profiled
+    # users (someone who typed a model number in plain Latin, say) get the
+    # same Bangla-script reply as 'bangla'; only genuine banglish keeps its
+    # own phrasing.
 
     if cat_hint and brand_hint:
-        if lang == 'bangla':
+        if lang != 'banglish':
             return (f"স্যার, আগে আপনি {brand_hint.title()} {cat_hint} দেখছিলেন। "
                     "এবার কী খুঁজছেন — একই ক্যাটাগরি, নাকি অন্য কিছু?")
-        if lang == 'english':
-            return (f"Earlier you were looking at {brand_hint.title()} {cat_hint}. "
-                    "Same category this time, or something different?")
-        # banglish (default)
         return (f"স্যার, আগে {brand_hint.title()} {cat_hint} dekhcilen. "
                 "Ebar ki same category, naki onno kichu?")
 
     if cat_hint:
-        if lang == 'bangla':
+        if lang != 'banglish':
             return f"স্যার, আবার {cat_hint} দেখাবো, নাকি অন্য কোনো ক্যাটাগরি?"
-        if lang == 'english':
-            return f"Want me to show you {cat_hint} again, or a different category?"
         return f"স্যার, abar {cat_hint} dekhabo, naki onno category?"
 
     if brand_hint:
-        if lang == 'bangla':
+        if lang != 'banglish':
             return (f"স্যার, {brand_hint.title()}-এর কী প্রোডাক্ট খুঁজছেন? "
                     "phone, laptop, না অন্য কিছু?")
-        if lang == 'english':
-            return (f"Which {brand_hint.title()} product are you looking for — "
-                    "phone, laptop, or something else?")
         return (f"স্যার, {brand_hint.title()}-er ki product khujchen — "
                 "phone, laptop, naki onno kichu?")
 
