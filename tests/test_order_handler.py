@@ -286,9 +286,10 @@ class TestValidateAndResolve:
         assert 'ঠিকানা' not in missing
 
     def test_missing_all_fields_reported(self):
+        # qty is not mandatory (defaults to 1) — 5 fields remain required.
         state = {}
         _, missing = _validate_and_resolve(state, {}, SAMPLE_CITIES, SAMPLE_AREAS)
-        assert len(missing) == 6
+        assert len(missing) == 5
 
     def test_unknown_city_not_resolved(self):
         state = {}

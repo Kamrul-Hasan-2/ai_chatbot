@@ -505,7 +505,23 @@ _QTY_INLINE_RE = re.compile(
 def _extract_fields(text: str) -> Dict[str, str]:
     """Combine labelled + freeform parsing. Labels win when both present."""
     labelled = _parse_labelled_lines(text)
-    freeform = _parse_freeform(text)
+    # Freeform must only guess from lines that weren't already consumed by a
+    # RECOGNISED label — otherwise a lone labelled line like "পরিমাণ : 1" also
+    # gets guessed as a free-text address (its only key is 'qty', which
+    # doesn't collide with the freeform 'address' guess, so the bad guess
+    # survives the merge below and corrupts the address field). A line with
+    # an unrecognised label word ("নাম্বার : 017...") must still reach
+    # freeform — that's how its bare-digit mobile detection finds it.
+    consumed_lines = set()
+    for raw_line in (text or '').splitlines():
+        m = _LABEL_LINE_RE.match(raw_line)
+        if m and _LABEL_ALIASES.get((m.group(1) or '').strip().lower()):
+            consumed_lines.add(raw_line)
+    remaining_lines = [
+        ln for ln in (text or '').splitlines()
+        if ln not in consumed_lines
+    ]
+    freeform = _parse_freeform('\n'.join(remaining_lines))
     out = dict(freeform)
     out.update(labelled)  # labelled overrides freeform guesses
     if 'qty' not in out:
@@ -630,11 +646,11 @@ def _validate_and_resolve(
             state['area_name']    = _best_a['area_name']
             state['area_city_id'] = _best_a['city_id']
 
-    # Qty
+    # Qty — not mandatory. Use whatever was given; if the customer never
+    # states a quantity, default to 1 rather than blocking the order on it.
     raw_qty = extracted.get('qty', '').strip()
     qty = _parse_qty(raw_qty) if raw_qty else int(state.get('qty', 0) or 0)
-    if qty > 0:
-        state['qty'] = qty
+    state['qty'] = qty if qty > 0 else 1
 
     # Figure out what's still missing
     missing: List[str] = []
@@ -650,8 +666,6 @@ def _validate_and_resolve(
     # null to the API) and counts as provided — only a never-given area is missing.
     if 'area_id' not in state:
         missing.append('এলাকা')
-    if not state.get('qty'):
-        missing.append('পরিমাণ')
     return state, missing
 
 
