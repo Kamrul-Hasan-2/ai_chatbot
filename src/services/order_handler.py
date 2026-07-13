@@ -578,7 +578,7 @@ def _validate_and_resolve(
             if (city_match
                     and _normalize_token(raw_area) ==
                         (city_match.get('city_name') or '').strip().lower()
-                    and str(city_match['city_id']) != str(state['city_id'])):
+                    and str(city_match['city_id']) != str(state.get('city_id'))):
                 # The buyer typed a DISTRICT name at the area prompt — that's
                 # a জেলা correction, not an area. Switch city, re-ask the area.
                 state['city_id']   = city_match['city_id']
@@ -592,9 +592,11 @@ def _validate_and_resolve(
                 # under Chittagong). Re-asking loops forever — no respelling
                 # will ever match — so accept the typed name with area_id null.
                 # The name is appended to the address at place-order time.
+                # city_id may be absent here (city itself was unmatched and
+                # popped from state above) — .get() to avoid a KeyError crash.
                 state['area_id']      = None
                 state['area_name']    = raw_area
-                state['area_city_id'] = state['city_id']
+                state['area_city_id'] = state.get('city_id')
             # Junk (acks, questions, long texts) falls through — এলাকা stays
             # missing and the buyer is re-prompted.
 
@@ -749,6 +751,71 @@ def start_order_flow(user_id: str, product: Dict) -> Dict:
     return _ok(_prompt_collect(title, url), 'order_collect')
 
 
+def _finalize_order(user_id: str, state: Dict) -> Dict:
+    """Call the place-order API and build the success/failure reply.
+
+    Fires as soon as every required field is collected — regardless of
+    whether the customer's city matched BDStall's known list (city_id may
+    be '' for an unmatched district; the API still accepts the order with
+    the raw address). No separate "হ্যাঁ" confirmation turn is required.
+    """
+    # An unmatched area has area_id=None and its name exists only in chat
+    # state — the order payload has no area_name field, so carry the typed
+    # area inside the address or it never reaches the seller.
+    address = state.get('address', '')
+    area_name = state.get('area_name', '')
+    if (state.get('area_id') is None and area_name
+            and area_name.lower() not in address.lower()):
+        address = f"{address}, {area_name}" if address else area_name
+    result = place_order(
+        name=state.get('name', ''),
+        mobile=state.get('mobile', ''),
+        address=address,
+        listing_id=state.get('listing_id', ''),
+        qty=state.get('qty', 1),
+        city_id=state.get('city_id', ''),
+        area_id=state.get('area_id') or '',
+    )
+    product_url = state.get('product_url', '')
+    buttons = ([{'text': 'প্রোডাক্ট দেখুন', 'url': product_url,
+                 'title': state.get('product_title', '')}]
+               if product_url else [])
+    if result.get('success'):
+        # Clear the flow ONLY after a confirmed order — otherwise a transient
+        # API failure below would wipe the user's whole collected order. (#1)
+        clear_order_flow(user_id)
+        order_no = (result.get('order_no') or '').strip()
+        order_id = (result.get('order_id') or '').strip()
+        order_ref = order_no or order_id
+        lines = ["✅ অর্ডার সফলভাবে গ্রহণ করা হয়েছে স্যার!", ""]
+        if order_ref:
+            lines.append(f"🧾 অর্ডার নম্বর: {order_ref}")
+        lines.append(f"📦 প্রোডাক্ট: {state.get('product_title', '')}")
+        lines.append(f"🔢 পরিমাণ: {state.get('qty', 1)}")
+        lines.append(f"📞 মোবাইল: {state.get('mobile', '')}")
+        lines.append(
+            f"🏠 ঠিকানা: {state.get('address', '')}, "
+            f"{state.get('area_name', '')}, {state.get('city_name', '')}"
+        )
+        lines.append("")
+        lines.append("আমাদের একজন প্রতিনিধি শীঘ্রই আপনার সাথে যোগাযোগ করে ডেলিভারি কনফার্ম করবেন।")
+        return _ok('\n'.join(lines) + LOOP_BACK, 'order_placed',
+                   link_buttons=buttons)
+
+    # Order NOT placed (timeout / 5xx / API error). Keep the flow at
+    # STEP_CONFIRM so the user can retry with "হ্যাঁ" without re-entering
+    # name / mobile / address / city / area / qty. (#1)
+    state['step'] = STEP_CONFIRM
+    set_order_flow(user_id, state)
+    msg_err = result.get('message') or 'অর্ডার এখন প্রক্রিয়া করা যাচ্ছে না।'
+    return _ok(
+        f"দুঃখিত স্যার, অর্ডার সম্পন্ন হয়নি: {msg_err}\n\n"
+        "আবার চেষ্টা করতে \"হ্যাঁ\" লিখুন, অথবা বাতিল করতে \"বাতিল\" লিখুন।"
+        + LOOP_BACK,
+        'order_failed', link_buttons=buttons
+    )
+
+
 def continue_order_flow(user_id: str, message: str) -> Optional[Dict]:
     """Advance the order flow. Returns None if user is not in flow or if the
     message is a fresh-start signal (greeting) — in which case the caller's
@@ -865,13 +932,20 @@ def continue_order_flow(user_id: str, message: str) -> Optional[Dict]:
         if missing:
             return _ok(_prompt_missing(missing, state, areas), 'order_collect')
 
-        state['step'] = STEP_CONFIRM
-        set_order_flow(user_id, state)
-        return _ok(_prompt_confirm(state), 'order_confirm')
+        # Every required field is present — place the order right away
+        # rather than stopping for a separate "হ্যাঁ" confirmation turn that
+        # customers don't know to send (see _finalize_order).
+        return _finalize_order(user_id, state)
 
     if step == STEP_CONFIRM:
-        # Labelled lines at the confirm step are FIELD CORRECTIONS ("জেলা:
-        # Dhaka", "পরিমাণ: 2") — re-validate them instead of stonewalling on
+        # Reached only as a retry after a previous place_order API failure —
+        # _finalize_order sets step=STEP_CONFIRM on failure so the user can
+        # retry with "হ্যাঁ" without re-entering every field. First-time
+        # completion now places the order directly from STEP_COLLECT with no
+        # separate confirmation turn (see _finalize_order).
+        #
+        # Labelled lines here are FIELD CORRECTIONS ("জেলা: Dhaka",
+        # "পরিমাণ: 2") — re-validate them instead of stonewalling on
         # হ্যাঁ/বাতিল, which would force a full restart to fix one field.
         corrections = _parse_labelled_lines(message)
         if corrections:
@@ -883,8 +957,7 @@ def continue_order_flow(user_id: str, message: str) -> Optional[Dict]:
                     state['step'] = STEP_COLLECT
                     set_order_flow(user_id, state)
                     return _ok(_prompt_missing(missing, state, areas), 'order_collect')
-                set_order_flow(user_id, state)
-                return _ok(_prompt_confirm(state), 'order_confirm')
+                return _finalize_order(user_id, state)
             else:
                 # City/area API unavailable — tell the user rather than silently
                 # discarding the correction and looping on "হ্যাঁ লিখুন".
@@ -895,63 +968,11 @@ def continue_order_flow(user_id: str, message: str) -> Optional[Dict]:
                 )
         if not _is_confirm(message):
             return _ok(
-                "স্যার, অর্ডার নিশ্চিত করতে \"হ্যাঁ\" লিখুন, "
+                "স্যার, আবার চেষ্টা করতে \"হ্যাঁ\" লিখুন, "
                 "অথবা বাতিল করতে \"বাতিল\" লিখুন।",
                 'order_confirm'
             )
-        # An unmatched area has area_id=None and its name exists only in chat
-        # state — the order payload has no area_name field, so carry the typed
-        # area inside the address or it never reaches the seller.
-        address = state.get('address', '')
-        area_name = state.get('area_name', '')
-        if (state.get('area_id') is None and area_name
-                and area_name.lower() not in address.lower()):
-            address = f"{address}, {area_name}" if address else area_name
-        result = place_order(
-            name=state.get('name', ''),
-            mobile=state.get('mobile', ''),
-            address=address,
-            listing_id=state.get('listing_id', ''),
-            qty=state.get('qty', 1),
-            city_id=state.get('city_id', ''),
-            area_id=state.get('area_id') or '',
-        )
-        product_url = state.get('product_url', '')
-        buttons = ([{'text': 'প্রোডাক্ট দেখুন', 'url': product_url,
-                     'title': state.get('product_title', '')}]
-                   if product_url else [])
-        if result.get('success'):
-            # Clear the flow ONLY after a confirmed order — otherwise a transient
-            # API failure below would wipe the user's whole collected order. (#1)
-            clear_order_flow(user_id)
-            order_no = (result.get('order_no') or '').strip()
-            order_id = (result.get('order_id') or '').strip()
-            order_ref = order_no or order_id
-            lines = ["✅ অর্ডার সফলভাবে গ্রহণ করা হয়েছে স্যার!", ""]
-            if order_ref:
-                lines.append(f"🧾 অর্ডার নম্বর: {order_ref}")
-            lines.append(f"📦 প্রোডাক্ট: {state.get('product_title', '')}")
-            lines.append(f"🔢 পরিমাণ: {state.get('qty', 1)}")
-            lines.append(f"📞 মোবাইল: {state.get('mobile', '')}")
-            lines.append(
-                f"🏠 ঠিকানা: {state.get('address', '')}, "
-                f"{state.get('area_name', '')}, {state.get('city_name', '')}"
-            )
-            lines.append("")
-            lines.append("আমাদের একজন প্রতিনিধি শীঘ্রই আপনার সাথে যোগাযোগ করে ডেলিভারি কনফার্ম করবেন।")
-            return _ok('\n'.join(lines) + LOOP_BACK, 'order_placed',
-                       link_buttons=buttons)
-
-        # Order NOT placed (timeout / 5xx / API error). Keep the flow at
-        # STEP_CONFIRM so the user can retry with "হ্যাঁ" without re-entering
-        # name / mobile / address / city / area / qty. (#1)
-        msg_err = result.get('message') or 'অর্ডার এখন প্রক্রিয়া করা যাচ্ছে না।'
-        return _ok(
-            f"দুঃখিত স্যার, অর্ডার সম্পন্ন হয়নি: {msg_err}\n\n"
-            "আবার চেষ্টা করতে \"হ্যাঁ\" লিখুন, অথবা বাতিল করতে \"বাতিল\" লিখুন।"
-            + LOOP_BACK,
-            'order_failed', link_buttons=buttons
-        )
+        return _finalize_order(user_id, state)
 
     logger.warning("continue_order_flow: unknown step %r for user %s", step, user_id)
     clear_order_flow(user_id)

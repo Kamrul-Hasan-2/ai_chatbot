@@ -479,22 +479,10 @@ class TestOrderFlow:
         response = result['response']
         assert 'Dhaka' not in response or 'নাম' not in response
 
-    def test_all_fields_moves_to_confirm(self, mock_areas, mock_cities):
-        start_order_flow(UID, SAMPLE_PRODUCT)
-        full_reply = (
-            "নাম: Rahim Ahmed\n"
-            "মোবাইল: 01711111111\n"
-            "ঠিকানা: House 5 Road 3\n"
-            "জেলা: Dhaka\n"
-            "এলাকা: Mirpur\n"
-            "পরিমাণ: 1"
-        )
-        result = continue_order_flow(UID, full_reply)
-        assert result['intent'] == 'order_confirm'
-        assert 'নিশ্চিত' in result['response'] or 'হ্যাঁ' in result['response']
-
     @patch('services.order_handler.place_order')
-    def test_confirm_yes_places_order(self, mock_place, mock_areas, mock_cities):
+    def test_all_fields_places_order_immediately(self, mock_place, mock_areas, mock_cities):
+        # No separate "হ্যাঁ" confirmation turn — the order places as soon as
+        # every required field is collected, city match or not.
         mock_place.return_value = {
             'success': True,
             'message': 'Order placed',
@@ -510,16 +498,42 @@ class TestOrderFlow:
             "এলাকা: Mirpur\n"
             "পরিমাণ: 1"
         )
-        continue_order_flow(UID, full_reply)   # → confirm step
-        result = continue_order_flow(UID, 'হ্যাঁ')
+        result = continue_order_flow(UID, full_reply)
         assert result['intent'] == 'order_placed'
         assert '17805661821' in result['response']
         assert 'প্রতিনিধি' in result['response']
         assert not is_in_order_flow(UID)
 
     @patch('services.order_handler.place_order')
+    def test_failed_order_retries_with_han(self, mock_place, mock_areas, mock_cities):
+        # A failed place_order call keeps the flow at STEP_CONFIRM so the
+        # customer can retry with "হ্যাঁ" without re-entering every field.
+        mock_place.side_effect = [
+            {'success': False, 'message': 'Server error'},
+            {'success': True, 'order_no': '321', 'order_id': '3'},
+        ]
+        start_order_flow(UID, SAMPLE_PRODUCT)
+        full_reply = (
+            "নাম: Rahim Ahmed\n"
+            "মোবাইল: 01711111111\n"
+            "ঠিকানা: House 5 Road 3\n"
+            "জেলা: Dhaka\n"
+            "এলাকা: Mirpur\n"
+            "পরিমাণ: 1"
+        )
+        result = continue_order_flow(UID, full_reply)
+        assert result['intent'] == 'order_failed'
+        assert is_in_order_flow(UID)
+        result = continue_order_flow(UID, 'হ্যাঁ')
+        assert result['intent'] == 'order_placed'
+        assert '321' in result['response']
+        assert not is_in_order_flow(UID)
+
+    @patch('services.order_handler.place_order')
     def test_confirm_no_asks_again(self, mock_place, mock_areas, mock_cities):
-        mock_place.return_value = {'success': True, 'order_no': '123', 'order_id': '1'}
+        # After a failed attempt (flow parked at STEP_CONFIRM), a non-"হ্যাঁ"
+        # reply must not silently retry — it should just re-ask.
+        mock_place.return_value = {'success': False, 'message': 'Server error'}
         start_order_flow(UID, SAMPLE_PRODUCT)
         full_reply = (
             "নাম: Rahim Ahmed\n"
@@ -529,7 +543,7 @@ class TestOrderFlow:
             "এলাকা: Mirpur\n"
             "পরিমাণ: 1"
         )
-        continue_order_flow(UID, full_reply)   # → confirm step
+        continue_order_flow(UID, full_reply)   # fails → parked at confirm step
         result = continue_order_flow(UID, 'not now')
         assert result['intent'] == 'order_confirm'
         # Flow still active awaiting proper confirm
@@ -557,8 +571,8 @@ class TestOrderFlow:
     @patch('services.order_handler.place_order')
     def test_unmatched_area_full_flow_sends_null_area(self, mock_place, mock_areas, mock_cities):
         # Screenshot bug: জেলা Chittagong + এলাকা Baraipara (not in the API list)
-        # looped on the এলাকা re-prompt forever. Now it must reach confirm and
-        # place the order with area_id=None (JSON null).
+        # looped on the এলাকা re-prompt forever. Now it must place the order
+        # directly, with area_id=None (JSON null).
         mock_place.return_value = {'success': True, 'message': 'ok',
                                    'order_no': '555', 'order_id': '5'}
         start_order_flow(UID, SAMPLE_PRODUCT)
@@ -571,10 +585,7 @@ class TestOrderFlow:
             "পরিমাণ: ১"
         )
         result = continue_order_flow(UID, full_reply)
-        assert result['intent'] == 'order_confirm'   # no এলাকা loop
-        assert 'Baraipara' in result['response']
-        result = continue_order_flow(UID, 'হ্যাঁ')
-        assert result['intent'] == 'order_placed'
+        assert result['intent'] == 'order_placed'   # no এলাকা loop, no confirm wait
         # area_id is normalised to '' (not None) before hitting place_order
         # so the API receives an empty string rather than JSON null.
         assert mock_place.call_args.kwargs['area_id'] == ''
@@ -598,8 +609,6 @@ class TestOrderFlow:
             "পরিমাণ ১"
         )
         result = continue_order_flow(UID, full_reply)
-        assert result['intent'] == 'order_confirm'
-        result = continue_order_flow(UID, 'হ্যাঁ')
         assert result['intent'] == 'order_placed'
         assert mock_place.call_args.kwargs['qty'] == 1
         assert mock_place.call_args.kwargs['area_id'] == ''
@@ -628,18 +637,21 @@ class TestOrderFlow:
 
     @patch('services.order_handler.place_order')
     def test_labelled_correction_at_confirm_step(self, mock_place, mock_areas, mock_cities):
-        # At the confirm step, "পরিমাণ: 3" is a field correction — update and
-        # re-show the summary instead of demanding হ্যাঁ/বাতিল.
-        mock_place.return_value = {'success': True, 'order_no': '777', 'order_id': '7'}
+        # At the (retry-after-failure) confirm step, "পরিমাণ: 3" is a field
+        # correction — apply it and place the order directly, no additional
+        # হ্যাঁ/বাতিল turn required.
+        mock_place.side_effect = [
+            {'success': False, 'message': 'Server error'},
+            {'success': True, 'order_no': '777', 'order_id': '7'},
+        ]
         start_order_flow(UID, SAMPLE_PRODUCT)
-        continue_order_flow(UID, (
+        result = continue_order_flow(UID, (
             "নাম: Rahim\nমোবাইল: 01711111111\nঠিকানা: House 5\n"
             "জেলা: Dhaka\nএলাকা: Mirpur\nপরিমাণ: 1"
         ))
+        assert result['intent'] == 'order_failed'   # parked at confirm step
         result = continue_order_flow(UID, 'পরিমাণ: 3')
-        assert result['intent'] == 'order_confirm'
-        assert 'পরিমাণ: 3' in result['response']
-        result = continue_order_flow(UID, 'হ্যাঁ')
+        assert result['intent'] == 'order_placed'
         assert mock_place.call_args.kwargs['qty'] == 3
 
     def test_area_hint_uses_selected_city_areas(self, mock_areas, mock_cities):
@@ -681,8 +693,8 @@ class TestOrderFlow:
                 "নাম: Rahim\nমোবাইল: 01711111111\nঠিকানা: House 5\n"
                 "জেলা: Dhaka\nএলাকা: Mirpur\nপরিমাণ: 1"
             )
-            continue_order_flow(UID, full_reply)
-            result = continue_order_flow(UID, 'হ্যাঁ')
+            result = continue_order_flow(UID, full_reply)
+            assert result['intent'] == 'order_placed'
             assert 'বিক্রেতা' not in result['response']
             assert 'প্রতিনিধি' in result['response']
 
