@@ -155,6 +155,17 @@ def handle_exit(ctx: Dict, user_id: str, message: str) -> Dict:
 
 def handle_buy(ctx: Dict, user_id: str, message: str) -> Dict:
     ic = intent_to_normalized(ctx)
+
+    # Intercept property/real-estate queries — route to dedicated handler.
+    # Groq frequently classifies "জমি কিনবেন?" ("will you buy land?") as intent
+    # 'buy' because of the bare "কিনবেন" (will buy) keyword, without noticing
+    # the subject is land, not a BDStall product. Without this check the
+    # customer gets the generic "which model do you want to buy?" prompt —
+    # nonsensical for a land/property offer. Matches the same check already
+    # present in handle_product_search / handle_faq / handle_fallback.
+    if any(w in (message or '').lower() for w in _PROPERTY_WORDS):
+        return _handle_property_query(user_id, message, ic)
+
     prev_products = get_product_context(user_id)
     if not prev_products and not ctx.get('category'):
         return _ok(
