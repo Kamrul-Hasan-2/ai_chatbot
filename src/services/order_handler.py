@@ -43,11 +43,15 @@ _PRICE_INQUIRY_SIGNALS = (
     'এর দাম', 'এটার দাম', 'এইটার দাম', 'etar dam', 'itar dam',
 )
 
-# Words that cancel an in-progress order
+# Unambiguous cancel phrases — safe to match anywhere in the message.
 _CANCEL_WORDS = {
-    'cancel', 'বাতিল', 'cancel korbo', 'বাদ দিন', 'বাদ দাও',
-    'stop', 'বন্ধ', 'বন্ধ করো',
+    'cancel', 'বাতিল', 'cancel korbo', 'বাদ দিন', 'বাদ দাও', 'বন্ধ করো',
 }
+
+# 'stop'/'বন্ধ' alone are too common as trailing words in a real address
+# ("... Rajlokkhi Bus Stop" is a normal Bangladeshi landmark-style address) —
+# only treat these as a cancel command when they're the ENTIRE message.
+_CANCEL_WORDS_EXACT_ONLY = {'stop', 'বন্ধ'}
 
 # Short greetings that should break out of the order flow entirely.
 # When the user types one of these, they're starting fresh — not filling the
@@ -60,14 +64,22 @@ _GREETING_RESET_WORDS = {
     'good morning', 'good evening', 'good afternoon',
 }
 
-# Product-search signals that should escape an in-progress order flow.
-# When a user mid-order suddenly asks about a completely different product,
-# they've abandoned the order — clear state and let Groq route normally.
+# Product-search INTENT signals ONLY — must never contain a product/category
+# word (see _CATEGORY_WORDS below). _is_product_search_escape() requires a
+# category/brand word AND a search signal from two DIFFERENT words in the
+# message; if a category word appeared here too, it would satisfy both
+# conditions by itself (e.g. a customer's own "Mobile: 017..." reply would
+# wipe the whole order, since "mobile" is both the category and the signal).
 _PRODUCT_SEARCH_SIGNALS = (
     'ase', 'আছে', 'ache', 'lagbe', 'লাগবে', 'chai', 'চাই',
     'dekhan', 'dekhao', 'দেখান', 'দেখাও',
     'khujtasi', 'khujchi', 'খুঁজছি',
     'price', 'dam', 'দাম', 'koto taka', 'koto daam',
+)
+
+# Product category/type words — checked separately from the intent signals
+# above so the two must come from different words in the message.
+_CATEGORY_WORDS = (
     'laptop', 'mobile', 'phone', 'tv', 'ac', 'fridge',
     'computer', 'tablet', 'watch', 'camera', 'headphone',
     'charger', 'router', 'printer', 'monitor', 'keyboard',
@@ -137,12 +149,28 @@ def _normalize_token(text: str) -> str:
     return (text or '').strip().lower()
 
 
+def _has_word_signal(msg: str, signals) -> bool:
+    """Match signals against msg — word/phrase-bounded for pure-ASCII (Latin)
+    tokens so short words ('ase', 'dam', 'stop', 'ac') don't collide as
+    substrings inside unrelated words or place names ('case', 'address',
+    'Bus Stop'); Bangla stays substring since it takes attached suffixes
+    that word boundaries would miss."""
+    for s in signals:
+        if s.isascii():
+            if _word_match(msg, s):
+                return True
+        elif s in msg:
+            return True
+    return False
+
+
 def _is_cancel(message: str) -> bool:
     msg = _normalize_token(message).rstrip('.!?।,')
     if not msg:
         return False
-    return any(msg == w or msg.startswith(w + ' ') or msg.endswith(' ' + w)
-               for w in _CANCEL_WORDS)
+    if msg in _CANCEL_WORDS_EXACT_ONLY:
+        return True
+    return _has_word_signal(msg, _CANCEL_WORDS)
 
 
 def _is_greeting_reset(message: str) -> bool:
@@ -160,29 +188,28 @@ def _is_product_search_escape(message: str) -> bool:
     arrive while order state is stale (user abandoned the previous order without
     explicitly cancelling). We clear the flow and let Groq route normally.
 
-    Guard: require either (a) a brand word + any search signal, or (b) a product
-    category word + a search signal. A bare brand name ("hp") or a bare search
-    signal ("ase") alone is NOT enough — those could be legitimate form values.
+    Guard: require either (a) a brand word + any search-INTENT signal, or (b) a
+    product category word + a search-INTENT signal — from two DIFFERENT words.
+    A bare brand name ("hp"), a bare search signal ("ase"), or a bare category
+    word ("mobile") alone is NOT enough — those are legitimate form values
+    (e.g. "Mobile: 017..." must never be misread as a product query and wipe
+    the whole order — _PRODUCT_SEARCH_SIGNALS previously ALSO contained the
+    category words themselves, so a single word like "mobile" or "watch"
+    satisfied both conditions on its own).
     """
     msg = _normalize_token(message)
     if not msg:
         return False
 
-    has_search = any(s in msg for s in _PRODUCT_SEARCH_SIGNALS)
-    has_brand  = any(b in msg.split() or msg.startswith(b + ' ') or msg.endswith(' ' + b) or msg == b
-                     for b in _BRAND_WORDS)
+    has_search = _has_word_signal(msg, _PRODUCT_SEARCH_SIGNALS)
+    has_brand  = _has_word_signal(msg, _BRAND_WORDS)
 
     # Brand + search signal → definitely a product query
     if has_brand and has_search:
         return True
 
     # Product category word + search signal (e.g. "laptop lagbe", "AC ase")
-    _CATEGORY_WORDS = (
-        'laptop', 'mobile', 'phone', 'tv', 'ac ', 'fridge',
-        'computer', 'tablet', 'watch', 'camera', 'headphone',
-        'charger', 'router', 'printer', 'monitor', 'keyboard',
-    )
-    has_category = any(c in msg for c in _CATEGORY_WORDS)
+    has_category = _has_word_signal(msg, _CATEGORY_WORDS)
     if has_category and has_search:
         return True
 
