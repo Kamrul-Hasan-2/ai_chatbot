@@ -31,7 +31,7 @@ from models.chatbot_config import (
     SAVE_MESSAGE_URL, SAVE_MESSAGE_KEY,
     CAT_LIST_URL, SPEC_URL, KNOWLEDGE_URL,
     CITY_LIST_URL, AREA_LIST_URL, PLACE_ORDER_URL, ORDER_STATUS_URL,
-    SELLER_REQUEST_URL,
+    SELLER_REQUEST_URL, SUPPORT_CONTACT_URL,
     _log_api_call,
 )
 
@@ -290,6 +290,37 @@ def fetch_delivery_template() -> Optional[str]:
         return _parse_template(resp.json() if resp.text else {})
     except Exception as e:
         logger.warning("fetch_delivery_template failed: %s", e)
+        return None
+
+
+_support_contact_cache: Optional[tuple] = None
+_SUPPORT_CONTACT_TTL = 300  # 5 min — phone number rarely changes, short enough to pick up an update
+
+
+def fetch_support_contact() -> Optional[str]:
+    """Fetch BDStall's support/WhatsApp contact number.
+
+    Returns the phone number string on success, or None on failure /
+    missing data — callers fall back to the static contact response.
+    """
+    global _support_contact_cache
+    now = time.time()
+    if _support_contact_cache and (now - _support_contact_cache[0]) < _SUPPORT_CONTACT_TTL:
+        return _support_contact_cache[1]
+    try:
+        resp = requests.get(SUPPORT_CONTACT_URL, params={'key': API_KEY}, timeout=10)
+        if resp.status_code != 200:
+            return None
+        data = resp.json() if resp.text else {}
+        if not isinstance(data, dict) or data.get('success') is False:
+            return None
+        phone = str((data.get('data') or {}).get('phone') or '').strip()
+        if not phone:
+            return None
+        _support_contact_cache = (now, phone)
+        return phone
+    except Exception as e:
+        logger.warning("fetch_support_contact failed: %s", e)
         return None
 
 

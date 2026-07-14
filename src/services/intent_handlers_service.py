@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 from models.chatbot_config import CATEGORY_PROMPT, LOOP_BACK, KNOWLEDGE_DAILY_LIMIT
-from services.api_client_service import search_products, fetch_delivery_template, fetch_condition_template, fetch_category_template, fetch_product_spec, fetch_buy_template, fetch_order_status, assign_agent
+from services.api_client_service import search_products, fetch_delivery_template, fetch_condition_template, fetch_category_template, fetch_product_spec, fetch_buy_template, fetch_order_status, assign_agent, fetch_support_contact
 from repositories.state_repository import (
     load_context, get_last_intent,
     set_product_context, get_product_context,
@@ -446,13 +446,19 @@ _WARRANTY_RESPONSE = (
 
 # Multi-word phrases only — never fire on bare "নাম্বার" (order number) or
 # bare "phone" (phone product search). Each phrase unambiguously means
-# "what is BDStall's contact phone number?".
+# "what is BDStall's contact phone number?". Bare "whatsapp"/"jugajug"-style
+# tokens are safe as substrings — distinctive enough not to collide with
+# unrelated words (unlike short tokens such as "shop"/"store").
 _CONTACT_PHRASES = (
     'ফোন নাম্বার', 'ফোন নম্বর', 'phone number', 'phone no',
     'mobile number', 'mobile no', 'contact number', 'contact no',
     'helpline', 'hotline', 'support number', 'call center',
     'আপনাদের নাম্বার', 'আপনাদের নম্বর', 'apnader number', 'apnader phone',
     'apnader mobile', 'apnar number', 'apnar phone',
+    'apnader ki number', 'apnar ki number',
+    'whatsapp', 'watsapp', 'whats app', 'হোয়াটসঅ্যাপ', 'হোয়াটস অ্যাপ',
+    'jugajug', 'jogajog', 'jugajog', 'jogajogh', 'যোগাযোগ নম্বর',
+    'যোগাযোগ নাম্বার', 'যোগাযোগের নম্বর', 'যোগাযোগের নাম্বার',
 )
 _CONTACT_RESPONSE = (
     "স্যার, BDStall একটি অনলাইন প্ল্যাটফর্ম। যেকোনো সহায়তার জন্য আমাদের "
@@ -567,6 +573,13 @@ def handle_faq(ctx: Dict, user_id: str, message: str, faq_db: List) -> Dict:
     if _has_showroom_word(msg_lower):
         return _ok(_SHOWROOM_RESPONSE + LOOP_BACK, 'faq_showroom', ic)
     if any(p in msg_lower for p in _CONTACT_PHRASES):
+        phone = fetch_support_contact()
+        if phone:
+            return _ok(
+                f"স্যার, আমাদের হোয়াটসঅ্যাপ/যোগাযোগ নম্বর:\n\n📞 {phone}\n\n"
+                "সরাসরি কল বা মেসেজ করতে পারেন।" + LOOP_BACK,
+                'faq_contact', ic
+            )
         return _ok(_CONTACT_RESPONSE + LOOP_BACK, 'faq_contact', ic)
     faq = search_faq(message, faq_db)
     if faq:
