@@ -576,7 +576,8 @@ def handle_faq(ctx: Dict, user_id: str, message: str, faq_db: List) -> Dict:
         phone = fetch_support_contact()
         if phone:
             return _ok(
-                f"স্যার, আমাদের হোয়াটসঅ্যাপ/যোগাযোগ নম্বর:\n\n📞 {phone}\n\n"
+                f"স্যার, আমাদের হোয়াটসঅ্যাপ/যোগাযোগ নম্বর:\n\n📞 {phone}\n"
+                "🕙 সাপোর্ট সময়: সকাল ১০টা - সন্ধ্যা ৬টা\n\n"
                 "সরাসরি কল বা মেসেজ করতে পারেন।" + LOOP_BACK,
                 'faq_contact', ic
             )
