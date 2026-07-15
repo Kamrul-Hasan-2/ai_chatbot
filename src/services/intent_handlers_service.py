@@ -81,6 +81,27 @@ def _build_broader_keywords(ctx: Dict) -> str:
     return ' '.join(parts).strip()
 
 
+# Accessory words that must survive into the search query even though Groq
+# resolves "Oppo A72 5G back cover" to category=mobile and drops "cover" —
+# without this, the search returns the phone itself instead of the
+# accessory. Multi-word phrases checked first so "back cover" stays specific
+# rather than being reduced to the bare "cover".
+_ACCESSORY_TERMS = (
+    'back cover', 'ব্যাক কভার',
+    'cover', 'case', 'skin', 'sleeve',
+    'কভার', 'কেস',
+)
+
+
+def _augment_with_accessory_term(keywords: str, message: str) -> str:
+    msg_l = (message or '').lower()
+    kw_l = keywords.lower()
+    for term in _ACCESSORY_TERMS:
+        if term in msg_l and term not in kw_l:
+            return f"{keywords} {term}".strip()
+    return keywords
+
+
 def _format_listing(products: List[Dict]) -> Tuple[str, List[Dict]]:
     lines = []
     buttons = []
@@ -770,7 +791,9 @@ def handle_clarification_selection(user_id: str, message: str,
     if not prev_products:
         return None
 
-    msg = message.strip()
+    # Bangla digits → English — the clarification prompt itself asks the user
+    # to answer with ১, ২, ৩, so replies commonly come back in Bangla numerals.
+    msg = message.strip().translate(_BN_ORDER_DIGITS)
     # Match leading number: "1", "1.", "1)", "#1"
     num_match = re.match(r'^[#\s]*([123])[.):\s]?$|^[#\s]*([123])[.):\s]', msg)
     if not num_match:
@@ -1439,6 +1462,7 @@ def handle_product_search(ctx: Dict, user_id: str, message: str,
                        link_buttons=buttons)
 
     keywords  = _translate_bn_search_terms(_build_keywords(ctx))
+    keywords  = _augment_with_accessory_term(keywords, message)
     logger.info("handle_product_search keywords=%r price_min=%s price_max=%s", keywords, price_min, price_max)
 
     # "More" rotation: if user asked for more AND we have a pool for the same query, slice next 3.
@@ -1479,6 +1503,7 @@ def handle_product_search(ctx: Dict, user_id: str, message: str,
 
     if result['products_found'] == 0:
         broader = _translate_bn_search_terms(_build_broader_keywords(ctx))
+        broader = _augment_with_accessory_term(broader, message)
         if broader and broader != keywords:
             retry = search_products(broader, price_max, price_min)
             if retry['products_found'] > 0:
@@ -1537,6 +1562,7 @@ def handle_product_search(ctx: Dict, user_id: str, message: str,
         # recovers the case where a noisy query ("i need 256 gb ssd") returns
         # junk from BDStall but the bare category ("ssd") finds real products.
         _broader_fb = _translate_bn_search_terms(_build_broader_keywords(ctx))
+        _broader_fb = _augment_with_accessory_term(_broader_fb, message)
         _recovered = False
         if _broader_fb and _broader_fb != keywords:
             _fb_result = search_products(_broader_fb, price_max, price_min)
