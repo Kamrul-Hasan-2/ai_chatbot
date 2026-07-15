@@ -50,7 +50,7 @@ from services.intent_handlers_service import (
     handle_technical_advice, handle_product_search, handle_price_query,
     handle_url_message, handle_product_detail_followup, handle_fallback,
     handle_clarification_selection, handle_product_spec_query,
-    handle_order_status,
+    handle_order_status, handle_category_clarification_selection,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -1115,6 +1115,17 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                                                    (datetime.now() - start_time).total_seconds(),
                                                    user_message=message, profile=profile)
 
+        # Clarification selection — user picks a numbered/named category after
+        # an ambiguous-category prompt (e.g. "helmet" -> bike vs safety helmet).
+        if get_last_intent(user_id) == 'category_clarification':
+            get_pending_question(user_id)  # consume — not needed for routing
+            cat_selected = handle_category_clarification_selection(user_id, message)
+            if cat_selected:
+                _observe_and_save(user_id, profile, message, cat_selected.get('intent', ''), {})
+                return _build_response(user_id, cat_selected, ChatMode.AI, AI_ACTIVE_STATUS,
+                                       (datetime.now() - start_time).total_seconds(),
+                                       user_message=message, profile=profile)
+
         # Product detail follow-up.
         # Fire when either: (a) a specific product URL was pinned via set_product_url,
         # or (b) products from a search result are cached — use the first result's URL.
@@ -1350,7 +1361,7 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         # When a handler asks the user to pick a product by number, save the
         # current message as the pending question so the selection turn can
         # answer it correctly (spec / condition / whatever was originally asked).
-        if handler_result.get('intent') == 'product_clarification':
+        if handler_result.get('intent') in ('product_clarification', 'category_clarification'):
             set_pending_question(user_id, message)
 
         # Update the rolling user profile from this turn's observations.

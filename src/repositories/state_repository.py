@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 # ── Per-user in-session state ─────────────────────────────────────────────────
 
 _product_context:   Dict[str, List] = {}
+_category_context:  Dict[str, List] = {}  # pending category-clarification candidates (e.g. helmet types)
 _product_url:       Dict[str, str]  = {}
 _last_intent:       Dict[str, str]  = {}
 _session_category:  Dict[str, str]  = {}  # persisted so restarts don't lose category
@@ -195,6 +196,14 @@ def get_product_context(user_id: str) -> List:
     return _product_context.get(user_id, [])
 
 
+def set_category_context(user_id: str, categories: List) -> None:
+    _category_context[user_id] = categories
+
+
+def get_category_context(user_id: str) -> List:
+    return _category_context.get(user_id, [])
+
+
 def set_product_url(user_id: str, url: str) -> None:
     _product_url[user_id] = url
 
@@ -205,6 +214,7 @@ def get_product_url(user_id: str) -> str:
 
 def clear_product_state(user_id: str) -> None:
     _product_context.pop(user_id, None)
+    _category_context.pop(user_id, None)
     _product_url.pop(user_id, None)
     _search_pool.pop(user_id, None)
     _search_offset.pop(user_id, None)

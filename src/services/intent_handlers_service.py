@@ -20,6 +20,7 @@ from services.api_client_service import search_products, fetch_delivery_template
 from repositories.state_repository import (
     load_context, get_last_intent,
     set_product_context, get_product_context,
+    set_category_context, get_category_context,
     set_product_url, search_faq,
     set_search_pool, get_search_pool, advance_search_offset,
     get_knowledge_count, increment_knowledge_count,
@@ -186,6 +187,12 @@ def handle_buy(ctx: Dict, user_id: str, message: str) -> Dict:
     # present in handle_product_search / handle_faq / handle_fallback.
     if any(w in (message or '').lower() for w in _PROPERTY_WORDS):
         return _handle_property_query(user_id, message, ic)
+
+    # Intercept category words that are ambiguous between two distinct BDStall
+    # categories (e.g. bare "helmet" — motorbike vs safety gear).
+    ambiguous = _handle_ambiguous_category_query(user_id, message, ic)
+    if ambiguous:
+        return ambiguous
 
     prev_products = get_product_context(user_id)
     if not prev_products and not ctx.get('category'):
@@ -566,6 +573,88 @@ def _handle_property_query(user_id: str, message: str, ic: dict) -> Dict:
         "বিস্তারিত দেখতে আমাদের ওয়েবসাইট ভিজিট করুন: 👉 www.bdstall.com" + LOOP_BACK,
         'faq_property', ic
     )
+
+
+# Curated groups for BDStall category names that share one bare word but are
+# genuinely different product types (e.g. bare "helmet" is ambiguous between
+# motorbike gear and industrial safety gear). A candidate auto-resolves when
+# the message already carries one of its own qualifier words; otherwise the
+# user is asked to pick. Kept as a small hand-maintained list (like
+# _PROPERTY_CATEGORY_MAP above) rather than derived from the full ~1300-entry
+# live category list, since most bare category words (mobile, laptop, tv...)
+# are NOT ambiguous and auto-detecting ambiguity risks asking unnecessary
+# clarification questions on those common searches.
+_AMBIGUOUS_CATEGORY_GROUPS = (
+    (
+        ('helmet', 'হেলমেট'),
+        (
+            {
+                'category_name': 'Motorcycle Helmet',
+                'cat_url': 'https://www.bdstall.com/motorbike-helmet/',
+                'qualifiers': ('bike', 'motorcycle', 'motorbike',
+                               'বাইক', 'মোটরসাইকেল', 'মোটরবাইক'),
+            },
+            {
+                'category_name': 'Safety Helmet',
+                'cat_url': 'https://www.bdstall.com/safety-helmet/',
+                'qualifiers': ('safety', 'সেফটি', 'নিরাপত্তা'),
+            },
+        ),
+    ),
+)
+
+
+def _route_to_category(cand: Dict, ic: dict) -> Dict:
+    cat_name = cand['category_name']
+    label = _build_category_button_label(cat_name)
+    reply = f"স্যার, আপনি বিডিস্টলে {cat_name} ক্যাটাগরিতে বিভিন্ন পণ্য দেখতে পারেন।"
+    buttons = [{'text': label, 'url': cand['cat_url'], 'title': cat_name}]
+    return _ok(reply + LOOP_BACK, 'product_search', ic, link_buttons=buttons)
+
+
+def _handle_ambiguous_category_query(user_id: str, message: str, ic: dict) -> Optional[Dict]:
+    msg_lower = (message or '').lower()
+    for triggers, candidates in _AMBIGUOUS_CATEGORY_GROUPS:
+        if not any(t in msg_lower for t in triggers):
+            continue
+        for cand in candidates:
+            if any(q in msg_lower for q in cand['qualifiers']):
+                return _route_to_category(cand, ic)
+        # Bare trigger word with no qualifier — ask which type.
+        set_category_context(user_id, list(candidates))
+        options = '\n'.join(
+            f"{i+1}. {c['category_name']}" for i, c in enumerate(candidates)
+        )
+        return _ok(
+            f"স্যার, আপনি কোন প্রোডাক্টটি নিতে চান?\n\n{options}\n\n"
+            "সংখ্যা বা প্রোডাক্টের নাম বলে জানান।",
+            'category_clarification', ic
+        )
+    return None
+
+
+def handle_category_clarification_selection(user_id: str, message: str) -> Optional[Dict]:
+    """After category_clarification, resolve the user's number/name reply."""
+    candidates = get_category_context(user_id)
+    if not candidates:
+        return None
+    msg = message.strip().translate(_BN_ORDER_DIGITS)
+    num_match = re.match(r'^[#\s]*([1-9])[.):\s]?$|^[#\s]*([1-9])[.):\s]', msg)
+    idx = -1
+    if num_match:
+        idx = int(num_match.group(1) or num_match.group(2)) - 1
+    else:
+        msg_lower = message.strip().lower()
+        for i, c in enumerate(candidates):
+            if c['category_name'].lower() in msg_lower:
+                idx = i
+                break
+    if idx < 0 or idx >= len(candidates):
+        return None
+    set_category_context(user_id, [])
+    ic = normalize_payload(load_context(user_id))
+    return _route_to_category(candidates[idx], ic)
+
 
 _AI_IDENTITY_WORDS = {
     'are you ai', 'are you a bot', 'are you robot', 'are you human',
@@ -1254,6 +1343,12 @@ def handle_product_search(ctx: Dict, user_id: str, message: str,
     if any(w in (message or '').lower() for w in _PROPERTY_WORDS):
         ic = intent_to_normalized(ctx)
         return _handle_property_query(user_id, message, ic)
+
+    # Intercept category words that are ambiguous between two distinct BDStall
+    # categories (e.g. bare "helmet" — motorbike vs safety gear).
+    _ambiguous = _handle_ambiguous_category_query(user_id, message, intent_to_normalized(ctx))
+    if _ambiguous:
+        return _ambiguous
 
     # Rejection / "নেই?" message — user says shown products won't work OR asks if
     # something exists in this budget. Extract the new keyword and search with budget.
