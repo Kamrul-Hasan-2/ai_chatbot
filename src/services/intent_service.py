@@ -342,6 +342,34 @@ def _msg_has_any(msg: str, words) -> bool:
     return False
 
 
+# 'আগাম' (advance) is a strict prefix of 'আগামী' (next/coming — e.g. "আগামী
+# মাসে" = "next month"), so plain substring matching would misfire on the
+# unrelated word. Both share the same trailing ী vowel sign as the only
+# difference, so exclude 'আগাম' when immediately followed by it.
+_ADVANCE_BN_EXCLUDE_RE = re.compile(r'আগাম(?!ী)')
+
+
+def has_advance_payment_signal(msg: str, signals) -> bool:
+    """Like _msg_has_any, but guards the 'আগাম'/'আগামী' collision above."""
+    other = set(signals) - {'আগাম'}
+    if _msg_has_any(msg, other):
+        return True
+    return 'আগাম' in signals and bool(_ADVANCE_BN_EXCLUDE_RE.search(msg))
+
+
+# 'গুদ' (vulgar slang) is a strict prefix of 'গুদাম' (warehouse), differing
+# only by an attached া-ম ending — same failure shape as আগাম/আগামী above.
+_HATE_BN_EXCLUDE_RE = re.compile(r'গুদ(?!াম)')
+
+
+def has_hate_speech_signal(msg: str, signals) -> bool:
+    """Like _msg_has_any, but guards the 'গুদ'/'গুদাম' collision above."""
+    other = set(signals) - {'গুদ'}
+    if _msg_has_any(msg, other):
+        return True
+    return 'গুদ' in signals and bool(_HATE_BN_EXCLUDE_RE.search(msg))
+
+
 def _fallback_intent(message: str) -> Dict[str, Any]:
     budget = extract_budget_range(message)
     msg = message.lower().strip()

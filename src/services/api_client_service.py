@@ -123,16 +123,24 @@ def search_products(keywords: str, price_max: Optional[int] = None,
     cached = _search_cache.get(cache_key)
     if cached and (now - cached[0]) < _SEARCH_TTL:
         return cached[1]
-    result = _do_search(keywords, price_max, price_min)
-    _search_cache[cache_key] = (now, result)
-    if len(_search_cache) > _SEARCH_MAX:
-        oldest = min(_search_cache, key=lambda k: _search_cache[k][0])
-        _search_cache.pop(oldest, None)
+    result, failed = _do_search(keywords, price_max, price_min)
+    # A timeout/HTTP-error result looks identical to a genuine "0 products"
+    # result ({'products_found': 0, 'products': []}) — caching it would tell
+    # every user searching this query "not found" for the full TTL even
+    # though the API recovers seconds later. Only cache real outcomes. (#H12)
+    if not failed:
+        _search_cache[cache_key] = (now, result)
+        if len(_search_cache) > _SEARCH_MAX:
+            oldest = min(_search_cache, key=lambda k: _search_cache[k][0])
+            _search_cache.pop(oldest, None)
     return result
 
 
 def _do_search(keywords: str, price_max: Optional[int],
-               price_min: Optional[int]) -> Dict[str, Any]:
+               price_min: Optional[int]) -> tuple:
+    """Returns (result, failed). failed=True means the call itself broke
+    (timeout/HTTP/parse error) — as opposed to a genuine zero-result search —
+    so the caller knows not to cache it as if it were a real answer."""
     try:
         params = {'term': keywords.strip(), 'key': API_KEY}
         if price_min and price_min > 0:
@@ -145,14 +153,14 @@ def _do_search(keywords: str, price_max: Optional[int],
         _log_api_call('ai_search', 'GET', SEARCH_URL, params, resp.status_code,
                       duration_ms, 'PASS' if resp.status_code == 200 else 'FAIL', resp.text[:400])
         if resp.status_code != 200:
-            return {'products_found': 0, 'products': []}
+            return {'products_found': 0, 'products': []}, True
         data = resp.json()
         if not data.get('getListingItem') or len(data['getListingItem']) < 2:
-            return {'products_found': 0, 'products': []}
+            return {'products_found': 0, 'products': []}, False
         total = int(data['getListingItem'][0] or 0)
         raw   = data['getListingItem'][1] or []
         if total == 0 or not raw:
-            return {'products_found': 0, 'products': []}
+            return {'products_found': 0, 'products': []}, False
         top = raw[:15]
         products = [{
             'title':          p.get('ListingTitle', 'N/A'),
@@ -162,10 +170,10 @@ def _do_search(keywords: str, price_max: Optional[int],
             'url':            p.get('ListingURL', ''),
             'image':          p.get('ListingThumbAvator', ''),
         } for p in top if isinstance(p, dict)]
-        return {'products_found': len(products), 'total_products': total, 'products': products}
+        return {'products_found': len(products), 'total_products': total, 'products': products}, False
     except Exception as e:
         logger.error("_do_search failed: %s", e)
-        return {'products_found': 0, 'products': []}
+        return {'products_found': 0, 'products': []}, True
 
 
 # ── Chat history ──────────────────────────────────────────────────────────────
@@ -233,8 +241,11 @@ def _normalize_history(payload: Any) -> List[str]:
 def fetch_intent_from_history(user_id: str) -> Dict:
     """Pull last saved intent_content from history — DB is source of truth.
 
-    Cached for _HISTORY_TTL seconds to avoid a second live HTTP call when
-    fetch_history already ran in the same request cycle.
+    Cached for up to _HISTORY_TTL seconds across requests (not just within one
+    request cycle) to cut down on live HTTP calls. save_message() invalidates
+    this on every successful save, so a bot reply's new intent_content is
+    always visible to the very next load_context() for this user — the TTL
+    only covers the case where nothing was saved in between. (#H11)
     """
     now = time.time()
     cached = _intent_cache.get(user_id)
@@ -496,6 +507,12 @@ def save_message(user_id: str, sender_type: int, message: str,
                           payload, resp.status_code, duration_ms,
                           'PASS' if ok else 'FAIL', resp.text[:400])
             if ok:
+                # This message (possibly a new intent_content) just changed
+                # what history/intent_content look like in the DB — drop the
+                # cached pre-save copies so the very next load_context() for
+                # this user sees it instead of serving a stale hit for up to
+                # _HISTORY_TTL seconds. (#H11)
+                invalidate_user_cache(str(user_id))
                 return True
         except Exception as e:
             logger.warning("save_message[%s] failed: %s", mode, e)

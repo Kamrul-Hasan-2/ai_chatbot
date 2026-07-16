@@ -42,7 +42,7 @@ from services.intent_service import (
     detect_intent, merge_context,
     resolve_category, normalize_payload,
     apply_post_groq_overrides, resolve_category_from_message,
-    _msg_has_any,
+    _msg_has_any, has_advance_payment_signal, has_hate_speech_signal,
 )
 from services.intent_handlers_service import (
     handle_greeting, handle_goodbye, handle_thanks, handle_exit,
@@ -627,7 +627,7 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
                 'বিক্রি', 'bikri', 'sell', 'bechte', 'beche', 'bechbo',
                 'bechte chai', 'sell korte', 'sell korbo',
             )
-            if any(s in _msg_l_sell for s in _SELL_SIGNALS):
+            if _msg_has_any(_msg_l_sell, _SELL_SIGNALS):
                 assign_bot(user_id)
                 # Fall through to normal Groq routing below
             else:
@@ -676,7 +676,7 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         # Banglish (verified: it scored as 'greeting'). Catch it
         # deterministically so an angry, swearing customer gets handed off
         # to a human instead of the bot repeating its last canned question.
-        if _msg_has_any(message.lower(), _HATE_SPEECH_SIGNALS):
+        if has_hate_speech_signal(message.lower(), _HATE_SPEECH_SIGNALS):
             _hate_ctx = normalize_payload(prev_ctx)
             _observe_and_save(user_id, profile, message, 'hate_speech', {})
             assign_agent(user_id, 'hate_speech')
@@ -692,7 +692,7 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         # ── Advance payment intercept ────────────────────────────────────────
         # Groq often mislabels "অগ্রিম টাকা দিতে হবে?" as product_search.
         # Catch it deterministically before Groq.
-        if any(s in message.lower() for s in _ADVANCE_SIGNALS):
+        if has_advance_payment_signal(message.lower(), _ADVANCE_SIGNALS):
             from services.intent_handlers_service import handle_delivery as _hd
             _adv_ctx = normalize_payload(prev_ctx)
             _adv_result = _hd(_adv_ctx, user_id, message, [])
@@ -763,7 +763,7 @@ def process_message(user_id: str, message: str) -> Dict[str, Any]:
         # status/"show me" marker — but never a buy marker — is a status inquiry.
         _has_order_no_shape = bool(re.search(r'[\d০-৯]{8,}', message))
         _is_order_inquiry = (
-            any(w in _msg_l_os for w in _ORDER_WORDS)
+            _msg_has_any(_msg_l_os, _ORDER_WORDS)
             and (_has_order_no_shape
                  or any(m in _msg_l_os for m in _ORDER_EXISTING_MARKERS))
             and not any(b in _msg_l_os for b in _ORDER_BUY_MARKERS)
