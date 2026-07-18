@@ -687,12 +687,10 @@ def _validate_and_resolve(
         missing.append('মোবাইল (01XXXXXXXXX)')
     if not (state.get('address') and len(state['address']) >= 2):
         missing.append('ঠিকানা')
-    if not state.get('city_id') and not state.get('city_unmatched'):
-        missing.append('জেলা')
-    # Key-presence check: an unmatched area is stored as area_id=None (sent as
-    # null to the API) and counts as provided — only a never-given area is missing.
-    if 'area_id' not in state:
-        missing.append('এলাকা')
+    # City/area are optional — not appended to `missing`, so an order can be
+    # placed with just name/mobile/address/qty. place_order() already accepts
+    # a blank city_id/area_id (the "unmatched" city/area path proves the API
+    # tolerates it), so there's nothing to hold the order back on.
     return state, missing
 
 
@@ -755,11 +753,15 @@ def _prompt_confirm(state: Dict) -> str:
         f"👤 নাম: {state.get('name', '')}",
         f"📞 মোবাইল: {state.get('mobile', '')}",
         f"🏠 ঠিকানা: {state.get('address', '')}",
-        f"🏙️ জেলা: {state.get('city_name', '')}",
-        f"📍 এলাকা: {state.get('area_name', '')}",
-        "",
-        "সব ঠিক থাকলে \"হ্যাঁ\" লিখুন। পরিবর্তন করতে \"বাতিল\" লিখে আবার শুরু করুন।",
     ]
+    # City/area are optional — omit the lines entirely rather than show them
+    # blank when the customer never provided one.
+    if state.get('city_name'):
+        lines.append(f"🏙️ জেলা: {state['city_name']}")
+    if state.get('area_name'):
+        lines.append(f"📍 এলাকা: {state['area_name']}")
+    lines.append("")
+    lines.append("সব ঠিক থাকলে \"হ্যাঁ\" লিখুন। পরিবর্তন করতে \"বাতিল\" লিখে আবার শুরু করুন।")
     return '\n'.join(lines)
 
 
@@ -834,10 +836,12 @@ def _finalize_order(user_id: str, state: Dict) -> Dict:
         lines.append(f"📦 প্রোডাক্ট: {state.get('product_title', '')}")
         lines.append(f"🔢 পরিমাণ: {state.get('qty', 1)}")
         lines.append(f"📞 মোবাইল: {state.get('mobile', '')}")
-        lines.append(
-            f"🏠 ঠিকানা: {state.get('address', '')}, "
-            f"{state.get('area_name', '')}, {state.get('city_name', '')}"
-        )
+        # City/area are optional — join only the parts that were actually
+        # provided instead of leaving trailing ", ," when they're blank.
+        _addr_parts = [p for p in (
+            state.get('address', ''), state.get('area_name', ''), state.get('city_name', '')
+        ) if p]
+        lines.append(f"🏠 ঠিকানা: {', '.join(_addr_parts)}")
         lines.append("")
         lines.append("আমাদের একজন প্রতিনিধি শীঘ্রই আপনার সাথে যোগাযোগ করে ডেলিভারি কনফার্ম করবেন।")
         return _ok('\n'.join(lines) + LOOP_BACK, 'order_placed',

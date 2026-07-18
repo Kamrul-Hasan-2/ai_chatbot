@@ -26,6 +26,7 @@ import logging
 import shutil
 import tempfile
 import threading
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -37,6 +38,7 @@ logger = logging.getLogger(__name__)
 # ── Per-user in-session state ─────────────────────────────────────────────────
 
 _product_context:   Dict[str, List] = {}
+_product_context_ts: Dict[str, float] = {}  # set_product_context timestamp, for TTL expiry
 _category_context:  Dict[str, List] = {}  # pending category-clarification candidates (e.g. helmet types)
 _product_url:       Dict[str, str]  = {}
 _last_intent:       Dict[str, str]  = {}
@@ -63,6 +65,7 @@ def _load_local_state() -> None:
         with open(_STATE_FILE, 'r', encoding='utf-8') as f:
             state = json.load(f)
         _product_context.update(state.get('user_product_context') or {})
+        _product_context_ts.update(state.get('user_product_context_ts') or {})
         _last_intent.update(state.get('user_last_intent') or {})
         _session_category.update(state.get('user_session_category') or {})
         _user_profile.update(state.get('user_profile') or {})
@@ -110,7 +113,8 @@ def _save_local_state(dirty_key: Optional[str] = None, dirty_user_id: Optional[s
                 disk_state = {}
 
             dicts = {
-                'user_product_context':  _product_context,
+                'user_product_context':    _product_context,
+                'user_product_context_ts': _product_context_ts,
                 'user_last_intent':      _last_intent,
                 'user_session_category': _session_category,
                 'user_profile':          _user_profile,
@@ -232,10 +236,30 @@ def get_pending_budget(user_id: str) -> Dict:
 
 def set_product_context(user_id: str, products: List) -> None:
     _product_context[user_id] = products
+    _product_context_ts[user_id] = time.time()
 
 
 def get_product_context(user_id: str) -> List:
-    return _product_context.get(user_id, [])
+    """Return cached products for user, or [] if none or expired.
+
+    Without a TTL this survives indefinitely (including across restarts,
+    since it's persisted to disk) — a product list from a search abandoned
+    days ago would otherwise resurface and hijack an unrelated new question
+    (e.g. "how do I order from your site?" answered against a 5-day-old,
+    already-irrelevant cached list).
+    """
+    products = _product_context.get(user_id, [])
+    if not products:
+        return products
+    ts = _product_context_ts.get(user_id)
+    # No timestamp means this entry predates the TTL fix — treat unknown age
+    # as stale rather than assume it's fresh, so old on-disk entries expire
+    # instead of persisting forever.
+    if ts is None or (time.time() - ts) > CONTEXT_TTL_SECONDS:
+        _product_context.pop(user_id, None)
+        _product_context_ts.pop(user_id, None)
+        return []
+    return products
 
 
 def set_category_context(user_id: str, categories: List) -> None:
@@ -256,6 +280,7 @@ def get_product_url(user_id: str) -> str:
 
 def clear_product_state(user_id: str) -> None:
     _product_context.pop(user_id, None)
+    _product_context_ts.pop(user_id, None)
     _category_context.pop(user_id, None)
     _product_url.pop(user_id, None)
     _search_pool.pop(user_id, None)
