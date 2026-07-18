@@ -2024,18 +2024,38 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
         r'\s*(সেট|set|টা|টি|পিছ|পিস|pcs|piece|pieces|নগ|nos|copy|copies)',
         re.IGNORECASE
     )
+    # A bare digit immediately preceded by a Latin brand/model word ("mi 3",
+    # "note 7", "iphone 13") is part of the PRODUCT NAME, not a requested
+    # quantity — without this guard, "Xiaomi mi 3 টা লাগবে" (I want the mi 3)
+    # misfires as "wants 3 pieces" and wrongly deflects a normal single-item
+    # purchase to "contact the seller for bulk orders". Excludes common
+    # Banglish connector words ("er 2 টা" = "2 of them", a real quantity)
+    # so it only catches an actual brand/model token, not filler.
+    _QTY_CONNECTOR_WORDS = {
+        'er', 'ei', 'oi', 'ba', 'na', 'ke', 'to', 'ta', 'ti', 'hoy', 'hoi',
+        'hobe', 'hocche', 'ache', 'ase', 'asbe', 'o', 'ar',
+        'and', 'the', 'a', 'an', 'is', 'of', 'for',
+    }
+    _MODEL_NUMBER_RE = re.compile(r'\b([a-zA-Z]+)\s+(\d+)\b')
     prev_products_qty = get_product_context(user_id)
-    if _QUANTITY_PATTERN.search(msg) and prev_products_qty:
-        ic_qty = normalize_payload(load_context(user_id))
-        top_qty = prev_products_qty[0]
-        url_qty = top_qty.get('url', '')
-        title_qty = top_qty.get('title', '')
-        buttons_qty = [{'text': 'প্রোডাক্ট দেখুন', 'url': url_qty, 'title': title_qty}] if url_qty else []
-        return _ok(
-            "স্যার, একাধিক পিস বা বাল্ক অর্ডারের জন্য সরাসরি বিক্রেতার সাথে যোগাযোগ করুন। "
-            "প্রোডাক্ট পেজে বিক্রেতার নম্বর ও WhatsApp পাবেন।" + LOOP_BACK,
-            'bulk_order_query', ic_qty, link_buttons=buttons_qty
+    _qty_match = _QUANTITY_PATTERN.search(msg)
+    if _qty_match and prev_products_qty:
+        _qty_digit = _qty_match.group(1)
+        _is_model_number = any(
+            m.group(2) == _qty_digit and m.group(1).lower() not in _QTY_CONNECTOR_WORDS
+            for m in _MODEL_NUMBER_RE.finditer(msg)
         )
+        if not _is_model_number:
+            ic_qty = normalize_payload(load_context(user_id))
+            top_qty = prev_products_qty[0]
+            url_qty = top_qty.get('url', '')
+            title_qty = top_qty.get('title', '')
+            buttons_qty = [{'text': 'প্রোডাক্ট দেখুন', 'url': url_qty, 'title': title_qty}] if url_qty else []
+            return _ok(
+                "স্যার, একাধিক পিস বা বাল্ক অর্ডারের জন্য সরাসরি বিক্রেতার সাথে যোগাযোগ করুন। "
+                "প্রোডাক্ট পেজে বিক্রেতার নম্বর ও WhatsApp পাবেন।" + LOOP_BACK,
+                'bulk_order_query', ic_qty, link_buttons=buttons_qty
+            )
 
     # "more / aro / onno / dekhao" signals the user wants a NEW search, not a
     # follow-up question about the current product. Let the full pipeline handle it.

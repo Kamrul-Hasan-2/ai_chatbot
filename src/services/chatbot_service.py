@@ -1477,6 +1477,17 @@ def _dispatch(intent: str, ctx: Dict, user_id: str, message: str,
                 'link_buttons':   [],
             }
 
+    # Downgrade misclassified human_request: a buyer asking us FOR our own
+    # contact number/WhatsApp ("যোগাযোগের নাম্বার দেন") is a FAQ answerable
+    # directly with fetch_support_contact() — Groq conflates "give me your
+    # number" with "connect me to a human", so the actual number never gets
+    # sent and the user is stuck with a generic "an agent will contact you".
+    if intent == 'human_request':
+        from services.intent_handlers_service import _CONTACT_PHRASES
+        msg_l = (message or '').lower()
+        if any(p in msg_l for p in _CONTACT_PHRASES):
+            return handle_faq(ctx, user_id, message, fetch_faq_db())
+
     if intent in _HANDOFF_MAP:
         text, handoff_intent = _HANDOFF_MAP[intent]
         assign_agent(user_id, handoff_intent)
