@@ -24,11 +24,12 @@ from repositories.state_repository import (
     set_product_url, search_faq,
     set_search_pool, get_search_pool, advance_search_offset,
     get_knowledge_count, increment_knowledge_count,
+    set_seller_flow,
 )
 from services.intent_service import (
     normalize_payload, intent_to_normalized,
     get_technical_advice, resolve_category, resolve_category_from_message,
-    has_advance_payment_signal,
+    has_advance_payment_signal, _msg_has_any,
 )
 
 logger = logging.getLogger(__name__)
@@ -552,8 +553,24 @@ _PROPERTY_CATEGORY_MAP = {
 }
 
 
+_PROPERTY_SELL_SIGNALS = (
+    'বিক্রি', 'বিক্রয়', 'বেচতে', 'বেচব', 'bikri', 'bikroy',
+    'bechte', 'beche', 'bechbo', 'sell', 'সেল',
+)
+
+
 def _handle_property_query(user_id: str, message: str, ic: dict) -> Dict:
     msg_lower = message.lower()
+    # A SELLER offering property ("ফ্ল্যাট সেল করতে চাচ্ছি") needs the same
+    # name/phone/details collection as any other seller_query — running an
+    # Apartment SEARCH (buyer-facing) or the generic property FAQ neither
+    # asks for nor collects anything, so the seller's message is a dead end.
+    if _msg_has_any(msg_lower, _PROPERTY_SELL_SIGNALS):
+        set_seller_flow(user_id, {'step': 'collecting'})
+        return _ok(
+            "স্যার, আপনার নাম, ফোন নম্বর এবং কী বিক্রি করতে চান তা বিস্তারিত বলুন।",
+            'seller_flow', ic
+        )
     # Pick best matching category
     category = 'Apartment'
     for word, cat in _PROPERTY_CATEGORY_MAP.items():
