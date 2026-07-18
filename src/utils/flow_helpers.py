@@ -270,8 +270,12 @@ def extract_product_selection(message: str) -> Optional[int]:
     nums = re.findall(r'\b([1-5])\b', nl)
     if len(nums) != 1:
         return None
-    cues = ['number', 'no', 'option', 'choose', 'select', 'pick',
-            'নম্বর', 'নাম্বার', 'পছন্দ', 'নিবো', 'নেবো']
-    if len(nl.split()) <= 3 or any(c in nl for c in cues):
+    cues_latin = ['number', 'no', 'option', 'choose', 'select', 'pick']
+    cues_bn = ['নম্বর', 'নাম্বার', 'পছন্দ', 'নিবো', 'নেবো']
+    has_cue = (
+        any(re.search(r'\b' + re.escape(c) + r'\b', nl) for c in cues_latin)
+        or any(c in nl for c in cues_bn)
+    )
+    if len(nl.split()) <= 3 or has_cue:
         return int(nums[0])
     return None

@@ -28,6 +28,7 @@ from repositories.state_repository import (
 from services.intent_service import (
     normalize_payload, intent_to_normalized,
     get_technical_advice, resolve_category, resolve_category_from_message,
+    has_advance_payment_signal,
 )
 
 logger = logging.getLogger(__name__)
@@ -437,7 +438,7 @@ def handle_delivery(ctx: Dict, user_id: str, message: str, faq_db: List) -> Dict
     msg_lower = message.lower()
 
     # Advance payment question
-    if any(s in msg_lower for s in _ADVANCE_PAYMENT_SIGNALS):
+    if has_advance_payment_signal(msg_lower, _ADVANCE_PAYMENT_SIGNALS):
         return _ok(_ADVANCE_PAYMENT_RESPONSE + LOOP_BACK, 'delivery', ic)
 
     # Tracking / order-status questions go straight to FAQ — the delivery
