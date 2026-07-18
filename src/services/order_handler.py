@@ -491,7 +491,7 @@ def _parse_freeform(text: str) -> Dict[str, str]:
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     remaining: List[str] = []
     for ln in lines:
-        if mobile and mobile in re.sub(r'[\s\-()]', '', _to_en_digits(ln)):
+        if mobile and mobile in _to_en_digits(ln).replace(' ', ''):
             continue
         remaining.append(ln)
 

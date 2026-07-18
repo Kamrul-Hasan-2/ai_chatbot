@@ -9,8 +9,6 @@ import json
 import re
 import hmac
 import hashlib
-import time
-import threading
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -27,12 +25,6 @@ try:
     from services.chatbot_service import SimpleChatbot
 except ImportError:
     from src.services.chatbot_service import SimpleChatbot
-
-# Import per-user history/intent cache invalidation
-try:
-    from services.api_client_service import invalidate_user_cache
-except ImportError:
-    from src.services.api_client_service import invalidate_user_cache
 
 # Import conversation context manager
 try:
@@ -297,12 +289,6 @@ def save_chat_message(
             )
 
             if passed:
-                # This message (possibly a new intent_content) just changed
-                # what history/intent_content look like in the DB — drop the
-                # cached pre-save copies so the very next load_context() for
-                # this user sees it instead of serving a stale hit for up to
-                # _HISTORY_TTL seconds. (#H11)
-                invalidate_user_cache(str(user_id))
                 return True
 
             logger.warning(
@@ -1308,31 +1294,6 @@ def verify_webhook():
     return 'Forbidden', 403
 
 
-# ── message.mid dedup (redelivery guard) ──────────────────────────────────────
-# Facebook redelivers a webhook event when it doesn't get a timely 200 (a slow
-# name-lookup/save-API/Groq call can push total processing past its ~20s
-# timeout even though the pipeline eventually finishes and replies). Without
-# this, the redelivered copy re-runs the whole pipeline: the user gets the
-# same answer twice and chat history gets duplicate rows. TTL is generous
-# (10 min) to cover multiple redelivery attempts; entries are purged lazily
-# on each call so the dict never grows unbounded.
-_SEEN_MIDS_TTL_SECONDS = 600
-_seen_mids: dict = {}
-_seen_mids_lock = threading.Lock()
-
-
-def _mid_already_seen(mid: str) -> bool:
-    """Record mid as processed; return True if it was already seen (duplicate)."""
-    now = time.time()
-    with _seen_mids_lock:
-        for k in [k for k, ts in _seen_mids.items() if now - ts > _SEEN_MIDS_TTL_SECONDS]:
-            del _seen_mids[k]
-        if mid in _seen_mids:
-            return True
-        _seen_mids[mid] = now
-        return False
-
-
 def _verify_fb_signature() -> bool:
     """Verify the webhook's X-Hub-Signature-256 against HMAC-SHA256 of the RAW
     body keyed by the Facebook app secret, so forged requests are rejected. (#2)
@@ -1376,181 +1337,163 @@ def messenger_webhook():
         replied_count = 0
         for entry in data.get('entry', []):
             for event in entry.get('messaging', []):
-                sender_id = None
-                try:
-                    message_obj = event.get('message') or {}
-                    if message_obj.get('is_echo'):
-                        logger.info("[WEBHOOK] Skipping echo event")
-                        continue
-
-                    mid = message_obj.get('mid') or ''
-                    if mid and _mid_already_seen(mid):
-                        logger.info("[WEBHOOK] Duplicate mid=%s — already processed, skipping redelivery", mid)
-                        continue
-
-                    sender_id = (event.get('sender') or {}).get('id')
-                    sender_name = (
-                        (event.get('sender') or {}).get('name')
-                        or (event.get('sender') or {}).get('username')
-                        or None
-                    )
-                    if not sender_name and sender_id:
-                        sender_name = get_messenger_user_name(sender_id)
-                    if not sender_name and sender_id:
-                        sender_name = get_known_user_name(sender_id)
-                    if not sender_name and sender_id:
-                        sender_name = get_responder_user_name(sender_id)
-                    if not sender_name and sender_id:
-                        sender_name = f"User {str(sender_id)[-6:]}"
-                    remember_user_name(sender_id, sender_name)
-                    message_text = (message_obj.get('text') or '').strip()
-
-                    # Handle image and file attachments — detected regardless of
-                    # whether text was also sent. A photo attached WITH a caption
-                    # ("eita ase?" + image) must still be treated as an image
-                    # message: falling through to the plain text pipeline would
-                    # ignore the photo entirely and ask the generic "which
-                    # category?" question instead of reading the picture.
-                    attachments = message_obj.get('attachments') or []
-                    image_received = False
-                    file_received = False
-                    sticker_received = False
-                    image_url = ''
-                    for att in attachments:
-                        att_type = att.get('type', '')
-                        att_payload = att.get('payload') or {}
-                        if att_type == 'image' and att_payload.get('sticker_id'):
-                            # Facebook stickers (👍 thumbs-up, hearts, etc.) arrive as
-                            # type='image' with a sticker_id. They are NOT product photos.
-                            sticker_received = True
-                        elif att_type == 'image':
-                            image_received = True
-                            image_url = image_url or (att_payload.get('url') or '')
-                        elif att_type in ('file', 'audio', 'video', 'fallback'):
-                            file_received = True
-
-                    if image_received or sticker_received or file_received:
-                        # Human mode — bot must stay completely silent, same as the
-                        # text-message path below. Stickers/images must not let the
-                        # bot butt in over an agent who already owns the thread.
-                        human_mode = bool(sender_id) and get_chatbot().get_user_mode(sender_id) == 'human'
-
-                        if sticker_received and not image_received:
-                            # Sticker / emoji reaction — acknowledge without asking
-                            # "which product do you want?" (which confuses customers).
-                            if human_mode:
-                                logger.info(
-                                    "[WEBHOOK] Sticker from sender_id=%s ignored — human mode active",
-                                    sender_id,
-                                )
-                            elif send_facebook_message(
-                                sender_id,
-                                "স্যার, কোনো সাহায্য লাগলে বলুন। 😊"
-                            ):
-                                replied_count += 1
-                            processed_count += 1
-                            continue
-
-                        if image_received:
-                            if human_mode:
-                                logger.info(
-                                    "[WEBHOOK] Image from sender_id=%s ignored — human mode active",
-                                    sender_id,
-                                )
-                            else:
-                                # Read the photo with a vision model and search the
-                                # catalog for it, instead of just asking the customer
-                                # to type the product name.
-                                from services.intent_handlers_service import handle_image_search
-                                from models.chatbot_config import GROQ_VISION_MODEL
-                                _send_typing_indicator(sender_id, on=True)
-                                image_result = handle_image_search(
-                                    sender_id, image_url,
-                                    get_chatbot().groq_client, GROQ_VISION_MODEL
-                                )
-                                _send_typing_indicator(sender_id, on=False)
-                                img_response_text = (image_result.get('response') or '').strip()
-                                img_link_buttons = image_result.get('link_buttons') or []
-                                if img_response_text and send_facebook_message(
-                                    sender_id, img_response_text, link_buttons=img_link_buttons
-                                ):
-                                    replied_count += 1
-                            processed_count += 1
-                            continue
-
-                        if file_received:
-                            if human_mode:
-                                logger.info(
-                                    "[WEBHOOK] File from sender_id=%s ignored — human mode active",
-                                    sender_id,
-                                )
-                            elif send_facebook_message(
-                                sender_id,
-                                "দুঃখিত স্যার, এই ফরম্যাটে সাহায্য করা সম্ভব হচ্ছে না। আপনার প্রশ্নটি টেক্সটে লিখলে আমরা সাহায্য করতে পারব।"
-                            ):
-                                replied_count += 1
-                            processed_count += 1
-                            continue
-
-                    if not message_text:
-                        quick_reply_payload = ((message_obj.get('quick_reply') or {}).get('payload') or '').strip()
-                        postback_payload = ((event.get('postback') or {}).get('payload') or '').strip()
-                        message_text = quick_reply_payload or postback_payload
-
-                    logger.info("[WEBHOOK] Event sender_id=%s has_text=%s", sender_id, bool(message_text))
-
-                    if not sender_id or not message_text:
-                        continue
-
-                    processed_count += 1
-
-                    _send_typing_indicator(sender_id, on=True)
-
-                    result = _process_user_message(
-                        user_id=sender_id,
-                        message=message_text,
-                        source='messenger',
-                        user_name=sender_name,
-                        platform_id='facebook'
-                    )
-                    response_text = (result.get('response') or '').strip()
-                    link_buttons = result.get('link_buttons') or []
-
-                    _send_typing_indicator(sender_id, on=False)
-
-                    # Human mode — bot must stay completely silent.
-                    if not response_text:
-                        logger.info(
-                            "[WEBHOOK] Empty reply for sender_id=%s (mode=%s, intent=%s) — silent",
-                            sender_id,
-                            result.get('mode'),
-                            result.get('intent'),
-                        )
-                        # Only send a fallback for genuine AI errors, never for human mode
-                        if (result.get('mode') == 'ai'
-                                and result.get('intent') not in (
-                                    'human_mode_active', 'ignored_automated_template')):
-                            if send_facebook_message(
-                                sender_id,
-                                "দুঃখিত স্য়ার, উত্তর তৈরি করতে সমস্যা হয়েছে। আবার প্রশ্নটি লিখে দিন।"
-                            ):
-                                replied_count += 1
-                        continue
-
-                    logger.info("[WEBHOOK] Sending reply to sender_id=%s", sender_id)
-                    if send_facebook_message(sender_id, response_text, link_buttons=link_buttons):
-                        replied_count += 1
-                except Exception:
-                    # One bad event must not fail the whole batch: an escaped
-                    # exception here would 500 the request, and Facebook
-                    # redelivers the ENTIRE batch on 5xx — re-sending replies
-                    # already sent above — plus sustained 5xx risks Facebook
-                    # throttling/deactivating the webhook subscription.
-                    logger.exception(
-                        "[WEBHOOK] Error processing event (sender_id=%s) — skipped, batch continues",
-                        sender_id,
-                    )
+                message_obj = event.get('message') or {}
+                if message_obj.get('is_echo'):
+                    logger.info("[WEBHOOK] Skipping echo event")
                     continue
+
+                sender_id = (event.get('sender') or {}).get('id')
+                sender_name = (
+                    (event.get('sender') or {}).get('name')
+                    or (event.get('sender') or {}).get('username')
+                    or None
+                )
+                if not sender_name and sender_id:
+                    sender_name = get_messenger_user_name(sender_id)
+                if not sender_name and sender_id:
+                    sender_name = get_known_user_name(sender_id)
+                if not sender_name and sender_id:
+                    sender_name = get_responder_user_name(sender_id)
+                if not sender_name and sender_id:
+                    sender_name = f"User {str(sender_id)[-6:]}"
+                remember_user_name(sender_id, sender_name)
+                message_text = (message_obj.get('text') or '').strip()
+
+                # Handle image and file attachments — detected regardless of
+                # whether text was also sent. A photo attached WITH a caption
+                # ("eita ase?" + image) must still be treated as an image
+                # message: falling through to the plain text pipeline would
+                # ignore the photo entirely and ask the generic "which
+                # category?" question instead of reading the picture.
+                attachments = message_obj.get('attachments') or []
+                image_received = False
+                file_received = False
+                sticker_received = False
+                image_url = ''
+                for att in attachments:
+                    att_type = att.get('type', '')
+                    att_payload = att.get('payload') or {}
+                    if att_type == 'image' and att_payload.get('sticker_id'):
+                        # Facebook stickers (👍 thumbs-up, hearts, etc.) arrive as
+                        # type='image' with a sticker_id. They are NOT product photos.
+                        sticker_received = True
+                    elif att_type == 'image':
+                        image_received = True
+                        image_url = image_url or (att_payload.get('url') or '')
+                    elif att_type in ('file', 'audio', 'video', 'fallback'):
+                        file_received = True
+
+                if image_received or sticker_received or file_received:
+                    # Human mode — bot must stay completely silent, same as the
+                    # text-message path below. Stickers/images must not let the
+                    # bot butt in over an agent who already owns the thread.
+                    human_mode = bool(sender_id) and get_chatbot().get_user_mode(sender_id) == 'human'
+
+                    if sticker_received and not image_received:
+                        # Sticker / emoji reaction — acknowledge without asking
+                        # "which product do you want?" (which confuses customers).
+                        if human_mode:
+                            logger.info(
+                                "[WEBHOOK] Sticker from sender_id=%s ignored — human mode active",
+                                sender_id,
+                            )
+                        elif send_facebook_message(
+                            sender_id,
+                            "স্যার, কোনো সাহায্য লাগলে বলুন। 😊"
+                        ):
+                            replied_count += 1
+                        processed_count += 1
+                        continue
+
+                    if image_received:
+                        if human_mode:
+                            logger.info(
+                                "[WEBHOOK] Image from sender_id=%s ignored — human mode active",
+                                sender_id,
+                            )
+                        else:
+                            # Read the photo with a vision model and search the
+                            # catalog for it, instead of just asking the customer
+                            # to type the product name.
+                            from services.intent_handlers_service import handle_image_search
+                            from models.chatbot_config import GROQ_VISION_MODEL
+                            _send_typing_indicator(sender_id, on=True)
+                            image_result = handle_image_search(
+                                sender_id, image_url,
+                                get_chatbot().groq_client, GROQ_VISION_MODEL
+                            )
+                            _send_typing_indicator(sender_id, on=False)
+                            img_response_text = (image_result.get('response') or '').strip()
+                            img_link_buttons = image_result.get('link_buttons') or []
+                            if img_response_text and send_facebook_message(
+                                sender_id, img_response_text, link_buttons=img_link_buttons
+                            ):
+                                replied_count += 1
+                        processed_count += 1
+                        continue
+
+                    if file_received:
+                        if human_mode:
+                            logger.info(
+                                "[WEBHOOK] File from sender_id=%s ignored — human mode active",
+                                sender_id,
+                            )
+                        elif send_facebook_message(
+                            sender_id,
+                            "দুঃখিত স্যার, এই ফরম্যাটে সাহায্য করা সম্ভব হচ্ছে না। আপনার প্রশ্নটি টেক্সটে লিখলে আমরা সাহায্য করতে পারব।"
+                        ):
+                            replied_count += 1
+                        processed_count += 1
+                        continue
+
+                if not message_text:
+                    quick_reply_payload = ((message_obj.get('quick_reply') or {}).get('payload') or '').strip()
+                    postback_payload = ((event.get('postback') or {}).get('payload') or '').strip()
+                    message_text = quick_reply_payload or postback_payload
+
+                logger.info("[WEBHOOK] Event sender_id=%s has_text=%s", sender_id, bool(message_text))
+
+                if not sender_id or not message_text:
+                    continue
+
+                processed_count += 1
+
+                _send_typing_indicator(sender_id, on=True)
+
+                result = _process_user_message(
+                    user_id=sender_id,
+                    message=message_text,
+                    source='messenger',
+                    user_name=sender_name,
+                    platform_id='facebook'
+                )
+                response_text = (result.get('response') or '').strip()
+                link_buttons = result.get('link_buttons') or []
+
+                _send_typing_indicator(sender_id, on=False)
+
+                # Human mode — bot must stay completely silent.
+                if not response_text:
+                    logger.info(
+                        "[WEBHOOK] Empty reply for sender_id=%s (mode=%s, intent=%s) — silent",
+                        sender_id,
+                        result.get('mode'),
+                        result.get('intent'),
+                    )
+                    # Only send a fallback for genuine AI errors, never for human mode
+                    if (result.get('mode') == 'ai'
+                            and result.get('intent') not in (
+                                'human_mode_active', 'ignored_automated_template')):
+                        if send_facebook_message(
+                            sender_id,
+                            "দুঃখিত স্য়ার, উত্তর তৈরি করতে সমস্যা হয়েছে। আবার প্রশ্নটি লিখে দিন।"
+                        ):
+                            replied_count += 1
+                    continue
+
+                logger.info("[WEBHOOK] Sending reply to sender_id=%s", sender_id)
+                if send_facebook_message(sender_id, response_text, link_buttons=link_buttons):
+                    replied_count += 1
 
         return jsonify({"status": "ok", "processed": processed_count, "replied": replied_count}), 200
 

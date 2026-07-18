@@ -76,40 +76,11 @@ def _load_local_state() -> None:
         logger.warning("_load_local_state failed: %s", e)
 
 
-# Dicts that always change through a setter which reports its own
-# (dict, user_id) as dirty — see _save_local_state. user_product_context is
-# deliberately excluded: it has no setter of its own (it piggybacks on
-# whichever save happens to run next) so it keeps the old memory-wins dump.
-_DIRTY_AWARE_KEYS = frozenset({
-    'user_last_intent', 'user_session_category', 'user_profile',
-    'user_knowledge_count', 'user_order_flow', 'user_seller_flow',
-    'user_pending_question',
-})
-
-
-def _save_local_state(dirty_key: Optional[str] = None, dirty_user_id: Optional[str] = None) -> None:
-    """Persist local state to disk.
-
-    dirty_key/dirty_user_id name the single (dict, user_id) pair this call
-    just changed. For every other user in a _DIRTY_AWARE_KEYS dict, the value
-    on disk is trusted over this process's in-memory copy: each of those dicts
-    only ever changes via a setter that passes its own dirty_key/dirty_user_id,
-    so disk is always at least as fresh as this process's memory for any user
-    it isn't currently the one updating. This stops an unrelated save (e.g.
-    save_last_intent for user B) from clobbering an in-progress order — or any
-    other field — that a different worker process wrote for user A and this
-    process never loaded into memory. (#H10)
-    """
+def _save_local_state() -> None:
     with _state_lock:
         try:
             os.makedirs(os.path.dirname(_STATE_FILE), exist_ok=True)
-            try:
-                with open(_STATE_FILE, 'r', encoding='utf-8') as f:
-                    disk_state = json.load(f) or {}
-            except Exception:
-                disk_state = {}
-
-            dicts = {
+            state = {
                 'user_product_context':  _product_context,
                 'user_last_intent':      _last_intent,
                 'user_session_category': _session_category,
@@ -119,19 +90,6 @@ def _save_local_state(dirty_key: Optional[str] = None, dirty_user_id: Optional[s
                 'user_seller_flow':      _seller_flow,
                 'user_pending_question': _pending_question,
             }
-            state = {}
-            for key, mem in dicts.items():
-                if key not in _DIRTY_AWARE_KEYS:
-                    state[key] = mem
-                    continue
-                merged = dict(disk_state.get(key) or {})
-                if key == dirty_key and dirty_user_id is not None:
-                    if dirty_user_id in mem:
-                        merged[dirty_user_id] = mem[dirty_user_id]
-                    else:
-                        merged.pop(dirty_user_id, None)
-                state[key] = merged
-
             fd, tmp = tempfile.mkstemp(dir=os.path.dirname(_STATE_FILE), suffix='.tmp')
             try:
                 with os.fdopen(fd, 'w', encoding='utf-8') as f:
@@ -197,7 +155,7 @@ def load_context(user_id: str) -> Dict:
 
 def save_last_intent(user_id: str, intent: str) -> None:
     _last_intent[user_id] = intent
-    _save_local_state('user_last_intent', user_id)
+    _save_local_state()
 
 
 def get_last_intent(user_id: str) -> str:
@@ -207,14 +165,14 @@ def get_last_intent(user_id: str) -> str:
 def set_pending_question(user_id: str, question: str) -> None:
     """Save the message that triggered a product_clarification prompt."""
     _pending_question[user_id] = question
-    _save_local_state('user_pending_question', user_id)
+    _save_local_state()
 
 
 def get_pending_question(user_id: str) -> str:
     """Return and clear the pending question (one-shot — consumed on read)."""
     val = _pending_question.pop(user_id, '')
     if val:
-        _save_local_state('user_pending_question', user_id)
+        _save_local_state()
     return val
 
 
@@ -287,7 +245,7 @@ def advance_search_offset(user_id: str, by: int = 3) -> int:
 
 def set_session_category(user_id: str, category: str) -> None:
     _session_category[user_id] = category
-    _save_local_state('user_session_category', user_id)
+    _save_local_state()
 
 
 def get_session_category(user_id: str) -> str:
@@ -307,7 +265,7 @@ def save_user_profile(user_id: str, profile) -> None:
     if profile is None:
         return
     _user_profile[user_id] = profile.to_dict()
-    _save_local_state('user_profile', user_id)
+    _save_local_state()
 
 
 # ── Knowledge intent rate limiting (Groq-backed answers, max 5/user/day) ─────
@@ -329,45 +287,28 @@ def increment_knowledge_count(user_id: str) -> int:
         rec = {'date': today, 'count': 0}
     rec['count'] = int(rec.get('count', 0)) + 1
     _knowledge_count[user_id] = rec
-    _save_local_state('user_knowledge_count', user_id)
+    _save_local_state()
     return rec['count']
 
 
 # ── Order flow (multi-step purchase) ──────────────────────────────────────────
 
 def get_order_flow(user_id: str) -> Dict:
-    """Return current order-flow state dict for user, or {} if none.
-
-    Per-user re-read from file so a different gunicorn worker's
-    set_order_flow()/clear_order_flow() is visible here immediately, without
-    wiping valid in-memory state that hasn't been flushed yet. (#H10)
-    """
-    try:
-        if os.path.exists(_STATE_FILE):
-            with open(_STATE_FILE, 'r', encoding='utf-8') as _f:
-                _file_of = json.load(_f).get('user_order_flow') or {}
-            # Sync this user's entry: file is authoritative
-            if user_id in _file_of:
-                _order_flow[user_id] = _file_of[user_id]
-            elif user_id in _order_flow:
-                # File says state was cleared → honour it
-                _order_flow.pop(user_id, None)
-    except Exception as _e:
-        logger.warning("get_order_flow file read failed: %s", _e)
+    """Return current order-flow state dict for user, or {} if none."""
     return dict(_order_flow.get(user_id) or {})
 
 
 def set_order_flow(user_id: str, state: Dict) -> None:
     """Persist the in-progress order state (step + collected fields)."""
     _order_flow[user_id] = dict(state or {})
-    _save_local_state('user_order_flow', user_id)
+    _save_local_state()
 
 
 def clear_order_flow(user_id: str) -> None:
     """Drop any in-progress order state for this user."""
     if user_id in _order_flow:
         _order_flow.pop(user_id, None)
-        _save_local_state('user_order_flow', user_id)
+        _save_local_state()
 
 
 # ── Seller request flow (multi-step info collection) ─────────────────────────
@@ -393,13 +334,13 @@ def get_seller_flow(user_id: str) -> Dict:
 
 def set_seller_flow(user_id: str, state: Dict) -> None:
     _seller_flow[user_id] = dict(state or {})
-    _save_local_state('user_seller_flow', user_id)
+    _save_local_state()
 
 
 def clear_seller_flow(user_id: str) -> None:
     if user_id in _seller_flow:
         _seller_flow.pop(user_id, None)
-        _save_local_state('user_seller_flow', user_id)
+        _save_local_state()
 
 
 # ── FAQ database ──────────────────────────────────────────────────────────────
