@@ -78,9 +78,9 @@ _boot()
 # ── Advance payment signals (module-level, synced with _ADVANCE_PAYMENT_SIGNALS) ─
 _ADVANCE_SIGNALS = frozenset({
     'অগ্রিম', 'agrim', 'ogrim', 'ogram', 'আগাম', 'আগে টাকা', 'আগে পেমেন্ট',
-    'আগে দিতে হবে', 'আগে দিতে হয়', 'আগে পাঠাতে হবে',
+    'আগে দিতে হবে', 'আগে দিতে হয়', 'আগে পাঠাতে হবে', 'আগে পে',
     'upfront', 'prepaid', 'prepay', 'advance', 'advance pay', 'advance dite',
-    'age taka', 'age payment', 'age dite', 'age pathate',
+    'age taka', 'age payment', 'age dite', 'age pathate', 'age pay',
 })
 
 # ── Hate-speech / abuse signals (deterministic, before Groq) ──────────────────
