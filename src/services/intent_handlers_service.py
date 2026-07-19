@@ -657,7 +657,12 @@ def handle_category_clarification_selection(user_id: str, message: str) -> Optio
     if not candidates:
         return None
     msg = message.strip().translate(_BN_ORDER_DIGITS)
-    num_match = re.match(r'^[#\s]*([1-9])[.):\s]?$|^[#\s]*([1-9])[.):\s]', msg)
+    # Digit followed by a delimiter OR directly glued to the Bangla word for
+    # "number" ("১নং", "১নাম্বার", "১নম্বর" — no space, very common) — not
+    # just "1.", "1)", "1 ".
+    num_match = re.match(
+        r'^[#\s]*([1-9])[.):\s]?$'
+        r'|^[#\s]*([1-9])(?:[.):\s]|নং|নম্বর|নাম্বার)', msg)
     idx = -1
     if num_match:
         idx = int(num_match.group(1) or num_match.group(2)) - 1
@@ -901,8 +906,12 @@ def handle_clarification_selection(user_id: str, message: str,
     # Bangla digits → English — the clarification prompt itself asks the user
     # to answer with ১, ২, ৩, so replies commonly come back in Bangla numerals.
     msg = message.strip().translate(_BN_ORDER_DIGITS)
-    # Match leading number: "1", "1.", "1)", "#1"
-    num_match = re.match(r'^[#\s]*([123])[.):\s]?$|^[#\s]*([123])[.):\s]', msg)
+    # Match leading number: "1", "1.", "1)", "#1" — or a digit glued directly
+    # to the Bangla word for "number" with no space ("১নং", "১নাম্বার",
+    # "১নম্বর"), which is at least as common as the spaced form in real replies.
+    num_match = re.match(
+        r'^[#\s]*([123])[.):\s]?$'
+        r'|^[#\s]*([123])(?:[.):\s]|নং|নম্বর|নাম্বার)', msg)
     if not num_match:
         # Try matching by product title keyword — require at least 2 words to match,
         # or a unique non-brand word (model number) to avoid brand-only false matches.
@@ -946,6 +955,30 @@ def handle_clarification_selection(user_id: str, message: str,
 
     ic = normalize_payload(load_context(user_id))
     buttons = [{'text': 'প্রোডাক্ট দেখুন', 'url': product_url_sel, 'title': title}] if product_url_sel else []
+
+    # A reply can combine the selection number WITH a genuine follow-up
+    # question in one message ("1 Nokia 106 Dual-sim Vietnam box ছবি দেওয়া
+    # যাবে" — pick #1 AND ask about the box photo). Without this, that
+    # question is silently dropped in favour of whatever pending_question
+    # was left over from a PRIOR turn. Strip the selection number and the
+    # selected product's own title words (the user is just naming it back,
+    # not asking about it); if substantial text remains, it's a real
+    # question and takes priority over the stale pending_question.
+    _title_words = set(re.findall(r'[a-z0-9]+', title.lower()))
+    # Selector/classifier particles ("১নাম্বার টা" = "the number-1 one") are
+    # grammar around the selection itself, not question content.
+    _SELECTOR_NOISE = {'নং', 'নম্বর', 'নাম্বার', 'টা', 'টি', 'no', 'number'}
+    # Separate alternatives (not one combined char class) so a digit glued
+    # directly to Bangla script ("1নাম্বার") tokenizes as "1" + "নাম্বার"
+    # instead of one unrecognizable blob that survives the noise filter.
+    _msg_tokens = re.findall(r'[a-z]+|[ঀ-৿]+|[0-9]+', msg.lower())
+    _leftover = ' '.join(
+        w for w in _msg_tokens
+        if w not in _title_words and w not in _SELECTOR_NOISE
+        and not re.fullmatch(r'[123]', w)
+    )
+    if len(_leftover) >= 6:
+        pending_question = _leftover
 
     # ── Route based on what the user originally asked ─────────────────────────
     _CONDITION_Q = {
