@@ -31,15 +31,18 @@ def extract_budget_range(message: str) -> Dict[str, Optional[int]]:
     text = text.translate(str.maketrans('০১২৩৪৫৬৭৮৯', '0123456789'))
 
     def _to_taka(v, u):
-        val = int(float(v))
+        # Multiply BEFORE truncating to int — truncating first drops the
+        # fraction from the unit's own magnitude ("1.5 lakh" → int(1.5)=1 →
+        # 100,000 instead of 150,000). (#I4)
+        val = float(v)
         un = (u or '').strip().lower()
         if un in {'k', 'হাজার', 'hazar', 'thousand'}:
-            return val * 1000
+            return int(val * 1000)
         if un in {'lakh', 'lac', 'lacs', 'lakhs', 'লাখ', 'লক্ষ'}:
-            return val * 100_000
+            return int(val * 100_000)
         if un in {'tk', 'taka', 'টাকা'}:
-            return val
-        return val * 1000 if val < 1000 else val
+            return int(val)
+        return int(val * 1000) if val < 1000 else int(val)
 
     rm = re.search(
         r'(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা|hazar|lakh|lac|lacs|lakhs|লাখ|লক্ষ)?\s*'
@@ -59,7 +62,10 @@ def extract_budget_range(message: str) -> Dict[str, Optional[int]]:
         return {'min_price': None, 'max_price': _to_taka(um.group(1), um.group(2) or '')}
 
     om = re.search(
-        r'(?:over|above|avobe|avobe|upore|উপরে|বেশি|beshi|more than|er upore|er beshi|minimum|theke beshi|theke upore)'
+        # 'over' is word-bounded — otherwise it matches inside "cover" (e.g.
+        # "mobile cover 300 tk er modde chai" would misfire as "over 300"
+        # instead of the correct "under 300"). (#I3)
+        r'(?:\bover\b|above|avobe|upore|উপরে|বেশি|beshi|more than|er upore|er beshi|minimum|theke beshi|theke upore)'
         r'\s*(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা|hazar|lakh|lac|lacs|lakhs|লাখ|লক্ষ)?', text)
     if om:
         return {'min_price': _to_taka(om.group(1), om.group(2) or ''), 'max_price': None}
@@ -68,7 +74,7 @@ def extract_budget_range(message: str) -> Dict[str, Optional[int]]:
     pm = re.search(
         r'(\d+(?:\.\d+)?)\s*(k|tk|taka|হাজার|টাকা|hazar|lakh|lac|lacs|lakhs|লাখ|লক্ষ)?'
         r'\s*(?:tk|taka|takar|টাকা|টাকার)?\s*'
-        r'(?:upore|উপরে|beshi|বেশি|above|over|er upore|er beshi)', text)
+        r'(?:upore|উপরে|beshi|বেশি|above|\bover\b|er upore|er beshi)', text)
     if pm:
         return {'min_price': _to_taka(pm.group(1), pm.group(2) or ''), 'max_price': None}
 
@@ -198,9 +204,17 @@ def resolve_category_from_message(message: str, categories: List[Dict]) -> str:
         return ''
     tl = message.lower()
 
-    # Check multi-word aliases first (longest match wins), then single tokens
+    # Check multi-word aliases first (longest match wins), then single tokens.
+    # Single-word Latin keys ('ac', 'phone', 'tv'...) are word-bounded so they
+    # don't fire inside unrelated words ('ac'⊂"black", 'phone'⊂"headphone");
+    # multi-word phrases and Bangla keys stay substring-matched (Bangla takes
+    # attached suffixes that \b would miss). Same rule as _msg_has_any. (#I1)
     for alias_key in _SORTED_ALIAS_KEYS:
-        if alias_key in tl:
+        if (' ' in alias_key) or any(ord(c) > 127 for c in alias_key):
+            matched = alias_key in tl
+        else:
+            matched = bool(re.search(r'\b' + re.escape(alias_key) + r'\b', tl))
+        if matched:
             result = resolve_category(_CATEGORY_ALIASES[alias_key], categories)
             if result:
                 return result
@@ -234,7 +248,11 @@ def resolve_category_from_message(message: str, categories: List[Dict]) -> str:
     if best:
         return best
 
-    for tok in set(_tokenize(tl)):
+    # dict.fromkeys (not set()) — dedupes while preserving the order tokens
+    # first appear in the message, so which category wins a multi-token
+    # message is deterministic instead of depending on Python's per-process
+    # string hash randomization. (#I26)
+    for tok in dict.fromkeys(_tokenize(tl)):
         if len(tok) < 5:
             continue
         for rec in categories:
@@ -242,7 +260,7 @@ def resolve_category_from_message(message: str, categories: List[Dict]) -> str:
                 return rec['category_name']
 
     # Fuzzy fallback: check each word in message against category names
-    for tok in set(_tokenize(tl)):
+    for tok in dict.fromkeys(_tokenize(tl)):
         if len(tok) < 5:
             continue
         best_ratio, best_rec = 0.0, None
@@ -397,9 +415,13 @@ def _fallback_intent(message: str) -> Dict[str, Any]:
     _EXIT_WORDS = {
         'pore kinbo', 'pore janabo', 'pore nibo', 'pore dekhbo', 'pore ashbo',
         'পরে কিনবো', 'পরে জানাবো', 'পরে নেবো', 'পরে দেখবো',
-        'later', 'not now', 'ekhon na', 'এখন না', 'পরে', 'abar ashbo',
+        'later', 'not now', 'ekhon na', 'এখন না', 'abar ashbo',
         'will come back', 'come back later', 'think about it', 'let me think',
     }
+    # 'পরে' (later) pulled out separately: it's the last two letters of
+    # 'উপরে' (above/over — a budget word, "৫০,০০০ টাকার উপরে"), so exclude it
+    # only when immediately preceded by 'উ'. (#I16)
+    _PORE_EXCLUDE_RE = re.compile(r'(?<!উ)পরে')
     _COMPARISON_WORDS = {
         'konti', 'konta', 'কোনটা', 'কোনটি', 'bhalo', 'ভালো', 'valo',
         'better', 'best', 'compare', 'which', 'কোনটা ভালো', 'সেরা',
@@ -426,7 +448,7 @@ def _fallback_intent(message: str) -> Dict[str, Any]:
         intent = 'goodbye'
     elif _msg_has_any(msg, _THANKS_WORDS):
         intent = 'thanks'
-    elif _msg_has_any(msg, _EXIT_WORDS):
+    elif _msg_has_any(msg, _EXIT_WORDS) or _PORE_EXCLUDE_RE.search(msg):
         intent = 'exit'
     elif _msg_has_any(msg, _DELIVERY_WORDS):
         intent = 'delivery'
@@ -474,7 +496,6 @@ def _fallback_intent(message: str) -> Dict[str, Any]:
 def merge_context(groq_result: Dict, prev: Dict, intent: str, clear_fn) -> Dict:
     new_ent      = groq_result['entities']
     new_category = new_ent.get('category', '')
-    is_followup  = groq_result.get('is_followup', False)
 
     prev_category  = prev.get('category', '') or prev.get('cat', '')
     prev_brand     = prev.get('brand', '')
@@ -497,15 +518,6 @@ def merge_context(groq_result: Dict, prev: Dict, intent: str, clear_fn) -> Dict:
             'prev_price_min': prev_price_min,
             'updated_at':     datetime.now().isoformat(),
         }
-
-    # Refinement-only → treat as follow-up
-    if not new_category and (
-        new_ent.get('price_max') is not None
-        or new_ent.get('price_min') is not None
-        or new_ent.get('brand')
-        or new_ent.get('title')
-    ):
-        is_followup = True
 
     effective_category = new_category or prev_category
 
@@ -563,8 +575,13 @@ _UNDER_SIGNALS = (
 
 _SEARCH_OVERRIDE_WORDS = {
     'dekhan', 'dekhao', 'দেখান', 'দেখাও', 'lagbe', 'লাগবে',
-    'ase', 'আছে', 'chai', 'চাই', 'khujchi', 'khujtasi', 'show me',
+    'ase', 'chai', 'চাই', 'khujchi', 'khujtasi', 'show me',
 }
+# 'আছে' (exists/have — "eta ache?") is pulled out separately: 'আছেন' ("how
+# ARE you" — a greeting honorific) is 'আছে' plus a bare 'ন' suffix, so a
+# plain substring check turns "কেমন আছেন?" into a false product_search
+# override. Exclude 'আছে' only when immediately followed by 'ন'. (#I2)
+_ASHE_EXCLUDE_RE = re.compile(r'আছে(?!ন)')
 
 _COMPARISON_OVERRIDE_WORDS = {
     'konti', 'konta', 'kunti', 'kunta', 'কোনটা', 'কোনটি',
@@ -581,8 +598,13 @@ _BUY_SIGNALS = {
     'kibabe order', 'kivabe order', 'order korbo kibabe', 'order korbo kivabe',
     'kinte chai', 'kinbo kibabe', 'kinbo kivabe',
     'কিভাবে কিনবো', 'কিনতে চাই', 'কিভাবে অর্ডার',
-    'payment method', 'cash on delivery', ' cod ',
+    'payment method', 'cash on delivery',
 }
+# 'cod' pulled out separately: the space-padded ' cod ' entry it used to be
+# never matches a message that STARTS or ENDS with "cod" (e.g. standalone
+# "cod ache?"), since msg_lower is .strip()'d before this check runs. Word-
+# bounded here instead, to also avoid matching inside "code"/"encode". (#I23)
+_COD_RE = re.compile(r'\bcod\b')
 
 
 def apply_post_groq_overrides(
@@ -635,7 +657,8 @@ def apply_post_groq_overrides(
 
     # Rule 3 — search words + brand/category = product_search, never greeting
     if (groq_result['intent'] == 'greeting'
-            and any(w in msg_lower for w in _SEARCH_OVERRIDE_WORDS)):
+            and (any(w in msg_lower for w in _SEARCH_OVERRIDE_WORDS)
+                 or _ASHE_EXCLUDE_RE.search(msg_lower))):
         groq_result['intent'] = 'product_search'
 
     # Rule 4 — comparison/recommendation words → comparison, never greeting/unknown.
@@ -656,7 +679,8 @@ def apply_post_groq_overrides(
 
     # Rule 5 — buy-process keywords always → buy, regardless of Groq
     # (only when not already overridden to exit above)
-    if groq_result['intent'] != 'exit' and any(sig in msg_lower for sig in _BUY_SIGNALS):
+    if (groq_result['intent'] != 'exit'
+            and (any(sig in msg_lower for sig in _BUY_SIGNALS) or _COD_RE.search(msg_lower))):
         groq_result['intent'] = 'buy'
 
     return {

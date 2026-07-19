@@ -96,11 +96,17 @@ _ACCESSORY_TERMS = (
 )
 
 
+_ACCESSORY_CASE_IDIOM_RE = re.compile(r'\b(?:just\s+)?in\s+case\b')
+
+
 def _augment_with_accessory_term(keywords: str, message: str) -> str:
-    msg_l = (message or '').lower()
+    # 'case' is a genuine whole word in the idiom "in case ki return kora
+    # jabe?" (if/in case), so word-bounding alone doesn't help — strip that
+    # idiom out first so it can't be mistaken for a phone-case accessory. (#I17)
+    msg_l = _ACCESSORY_CASE_IDIOM_RE.sub(' ', (message or '').lower())
     kw_l = keywords.lower()
     for term in _ACCESSORY_TERMS:
-        if term in msg_l and term not in kw_l:
+        if _msg_has_any(msg_l, (term,)) and term not in kw_l:
             return f"{keywords} {term}".strip()
     return keywords
 
@@ -165,7 +171,7 @@ def handle_goodbye(ctx: Dict, user_id: str, message: str) -> Dict:
 
 def handle_thanks(ctx: Dict, user_id: str, message: str) -> Dict:
     ic = intent_to_normalized(ctx)
-    return _ok("Most welcome! 😊" + LOOP_BACK, 'thanks', ic)
+    return _ok("স্যার, আপনাকেও ধন্যবাদ। 😊" + LOOP_BACK, 'thanks', ic)
 
 
 def handle_exit(ctx: Dict, user_id: str, message: str) -> Dict:
@@ -177,8 +183,25 @@ def handle_exit(ctx: Dict, user_id: str, message: str) -> Dict:
     )
 
 
+_BUY_NEGATION_SIGNALS = (
+    'kinbo na', 'na kinbo', 'kinte chai na', 'kinte na', 'lagbe na',
+    'dorkar nai', 'dorkar na', 'thak baad', 'baad dei', 'baad thak',
+    'কিনব না', 'কিনতে চাই না', 'কিনতে না', 'লাগবে না',
+    'দরকার নাই', 'দরকার না', 'থাক বাদ', 'বাদ দেই', 'বাদ থাক',
+)
+
+
 def handle_buy(ctx: Dict, user_id: str, message: str) -> Dict:
     ic = intent_to_normalized(ctx)
+
+    # A refusal ("na, eta kinbo na") must not start a purchase — without this,
+    # any message containing a buy keyword unconditionally proceeds into the
+    # buy/order flow regardless of an accompanying negation. (#I18)
+    if any(s in (message or '').lower() for s in _BUY_NEGATION_SIGNALS):
+        return _ok(
+            "জি স্যার, ঠিক আছে। অন্য কিছু প্রয়োজন হলে জানাবেন। 😊",
+            'buy_declined', ic
+        )
 
     # Intercept property/real-estate queries — route to dedicated handler.
     # Groq frequently classifies "জমি কিনবেন?" ("will you buy land?") as intent
@@ -187,7 +210,7 @@ def handle_buy(ctx: Dict, user_id: str, message: str) -> Dict:
     # customer gets the generic "which model do you want to buy?" prompt —
     # nonsensical for a land/property offer. Matches the same check already
     # present in handle_product_search / handle_faq / handle_fallback.
-    if any(w in (message or '').lower() for w in _PROPERTY_WORDS):
+    if _has_property_word((message or '').lower()):
         return _handle_property_query(user_id, message, ic)
 
     # Intercept category words that are ambiguous between two distinct BDStall
@@ -507,15 +530,21 @@ _SHOWROOM_LATIN = frozenset({
 })
 _SHOWROOM_BANGLA = (
     'শোরুম', 'শো রুম', 'অফিস', 'ঠিকানা', 'লোকেশন', 'কোথায়',
-    'দোকান', 'শপ', 'দুকান', 'কই', 'কোই',
+    'দোকান', 'শপ', 'দুকান', 'কোই',
 )
 _SHOWROOM_LATIN_RE = re.compile(
     r'\b(?:' + '|'.join(re.escape(w) for w in _SHOWROOM_LATIN) + r')\b'
 )
+# 'কই' (where) pulled out separately: it's the last two letters of 'একই'
+# (same/identical — "একই প্রোডাক্ট" is extremely common in shopping chat), so
+# exclude it only when immediately preceded by 'এ'. (#I7)
+_KOI_RE = re.compile(r'(?<!এ)কই')
 
 
 def _has_showroom_word(msg_lower: str) -> bool:
     if any(w in msg_lower for w in _SHOWROOM_BANGLA):
+        return True
+    if _KOI_RE.search(msg_lower):
         return True
     return bool(_SHOWROOM_LATIN_RE.search(msg_lower))
 
@@ -535,6 +564,18 @@ _PROPERTY_WORDS = {
     'bari chai', 'flat chai', 'bari lagbe', 'flat lagbe',
     'room rent', 'বাসা ভাড়া', 'basa vara', 'to let',
 }
+# Two known false-positive collisions, stripped out before matching:
+# 'flat screen'/'flatscreen' TV is a screen descriptor, not property; 'to let
+# you/u know' is the English idiom, not a rental listing. 'bari' itself is
+# word-bounded via _msg_has_any so it doesn't fire inside "barisal". (#I8)
+_PROPERTY_FALSE_POSITIVE_RE = re.compile(
+    r'flat[\s-]*screen|to let (?:you|u) know', re.IGNORECASE
+)
+
+
+def _has_property_word(msg_lower: str) -> bool:
+    checked = _PROPERTY_FALSE_POSITIVE_RE.sub(' ', msg_lower)
+    return _msg_has_any(checked, _PROPERTY_WORDS)
 
 # Map user words → BDStall category name
 _PROPERTY_CATEGORY_MAP = {
@@ -699,7 +740,7 @@ def handle_faq(ctx: Dict, user_id: str, message: str, faq_db: List) -> Dict:
     msg_lower = message.lower()
     if any(w in msg_lower for w in _AI_IDENTITY_WORDS):
         return _ok(_AI_IDENTITY_RESPONSE + LOOP_BACK, 'faq_identity', ic)
-    if any(w in msg_lower for w in _PROPERTY_WORDS):
+    if _has_property_word(msg_lower):
         return _handle_property_query(user_id, message, ic)
     if any(w in msg_lower for w in _WARRANTY_WORDS):
         return _ok(_WARRANTY_RESPONSE + LOOP_BACK, 'faq_warranty', ic)
@@ -783,7 +824,7 @@ def handle_technical_advice(ctx: Dict, user_id: str, message: str,
 _CONDITION_WORDS = {
     'used', 'new', 'notun', 'purano', 'second hand', 'refurbished',
     'condition', 'কন্ডিশন', 'fresh', 'is it used', 'is it new',
-    'nতুন', 'পুরনো', 'পুরাতন', 'naki purano', 'notun naki',
+    'নতুন', 'পুরনো', 'পুরাতন', 'naki purano', 'notun naki',
     'intake', 'original intake', 'non intake', 'ইনটেক', 'নন ইনটেক',
 }
 
@@ -916,7 +957,11 @@ def handle_clarification_selection(user_id: str, message: str,
         # Try matching by product title keyword — require at least 2 words to match,
         # or a unique non-brand word (model number) to avoid brand-only false matches.
         msg_lower = msg.lower()
-        msg_words = set(w for w in re.findall(r'[a-z0-9]+', msg_lower) if len(w) > 3)
+        # Same length floor (>2) on both sides — a stricter floor on the
+        # user's side than the title's meant a 3-char model code typed alone
+        # ("a13") could never match, since it'd never even enter msg_words
+        # even though the identical token in title_words would qualify. (#I9)
+        msg_words = set(w for w in re.findall(r'[a-z0-9]+', msg_lower) if len(w) > 2)
         best_idx = -1
         best_score = 0
         for i, p in enumerate(prev_products[:3]):
@@ -1363,10 +1408,13 @@ def _search_without_category(ctx: Dict, user_id: str, message: str) -> Optional[
 
     result = None
     used_kw = ''
+    _within_budget = True
     for attempt in attempts:
         result = search_products(attempt, price_max, price_min)
+        _within_budget = True
         if result['products_found'] == 0 and (price_max or price_min):
             result = search_products(attempt)
+            _within_budget = False
         if result['products_found'] > 0 and not _results_match_query(attempt, result['products']):
             logger.info("search results irrelevant for %r — treating as none", attempt)
             result = {'products_found': 0, 'products': []}
@@ -1382,7 +1430,13 @@ def _search_without_category(ctx: Dict, user_id: str, message: str) -> Optional[
     set_product_context(user_id, products[:5])
     text, buttons = _format_listing(products[:3])
     ic = intent_to_normalized(ctx)
-    return _ok("স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:\n\n" + text,
+    # Disclose when the shown products came from the no-budget retry — silently
+    # dropping the stated budget without saying so is misleading. (#I19)
+    if (price_max or price_min) and not _within_budget:
+        header = "স্যার, এই বাজেটে সরাসরি কিছু পাওয়া যায়নি। এই প্রোডাক্টগুলো দেখতে পারেন (দাম ভিন্ন হতে পারে):\n\n"
+    else:
+        header = "স্যার, এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
+    return _ok(header + text,
                'product_search', ic, products=products, link_buttons=buttons)
 
 
@@ -1391,7 +1445,7 @@ def handle_product_search(ctx: Dict, user_id: str, message: str,
     logger.info("handle_product_search ctx=%s", {k: ctx.get(k) for k in ('category','brand','title','price_min','price_max')})
 
     # Intercept property/real-estate queries — route to dedicated handler
-    if any(w in (message or '').lower() for w in _PROPERTY_WORDS):
+    if _has_property_word((message or '').lower()):
         ic = intent_to_normalized(ctx)
         return _handle_property_query(user_id, message, ic)
 
@@ -1406,11 +1460,15 @@ def handle_product_search(ctx: Dict, user_id: str, message: str,
     msg_lower = (message or '').lower()
     if any(p in msg_lower for p in _REJECTION_PHRASES):
         # Strip rejection/filler words; keep meaningful product keywords
+        # Short Latin tokens ('ki'/'ache'/'ase'/'nei') are word-bounded — a
+        # raw substring match otherwise mangles brand names ('ki' inside
+        # "nokia" turns it into "no a"), which then fails the re-search and
+        # falsely tells the customer "not found" even when it's in stock. (#I13)
         _FILLER = (r'(হবে না|হবেনা|na hobe|hobe na|na hoi|hoi na|পাওয়া যাবে না|পাবো না|'
                    r'paoa jabe na|pabo na|এটা না|এগুলো না|এগুলো হবে না|এটা চাই না|'
-                   r'নেই|nei|পাওয়া যায় না|পাই না|নাই|'
+                   r'নেই|\bnei\b|পাওয়া যায় না|পাই না|নাই|'
                    r'এই বাজেটের মধ্যে|এই বাজেটে|বাজেটের মধ্যে|বাজেটে|'
-                   r'কোনো|কোন|আছে|আছে কি|কি|ki|ache|ase|'
+                   r'কোনো|কোন|আছে|আছে কি|\bki\b|\bache\b|\base\b|'
                    r'\?\?|\?|।)')
         spec_text = re.sub(_FILLER, ' ', msg_lower).strip()
         spec_text = re.sub(r'\s+', ' ', spec_text).strip().rstrip('র ের এর ের').strip()
@@ -1472,8 +1530,10 @@ def handle_product_search(ctx: Dict, user_id: str, message: str,
                 price_min = ctx.get('price_min')
                 logger.info("purpose intercept: purpose=%r kw=%r", purpose_word, purpose_kw)
                 result = search_products(purpose_kw, price_max, price_min)
+                _within_budget = True
                 if result['products_found'] == 0 and (price_max or price_min):
                     result = search_products(purpose_kw)
+                    _within_budget = False
                 if result['products_found'] > 0:
                     products = result['products']
                     pool_key = f"{purpose_kw}|{price_min or ''}|{price_max or ''}"
@@ -1481,8 +1541,16 @@ def handle_product_search(ctx: Dict, user_id: str, message: str,
                     set_product_context(user_id, products[:5])
                     text, buttons = _format_listing(products[:3])
                     ic = intent_to_normalized(ctx)
-                    if price_max:
+                    # Don't claim "within ৳X" when the budgeted search found
+                    # nothing and these results only came from the no-budget
+                    # retry — that's a false claim about the shown prices. (#I14)
+                    if price_max and _within_budget:
                         header = f"স্যার, ৳{price_max:,} এর মধ্যে {purpose_word} কাজের জন্য উপযুক্ত প্রোডাক্টগুলো দেখুন:\n\n"
+                    elif price_max:
+                        header = (
+                            f"স্যার, ৳{price_max:,} এর মধ্যে সরাসরি কিছু পাওয়া যায়নি। "
+                            f"{purpose_word} কাজের জন্য এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
+                        )
                     else:
                         header = f"স্যার, {purpose_word} কাজের জন্য উপযুক্ত প্রোডাক্টগুলো দেখুন:\n\n"
                     return _ok(header + text, 'product_search', ic, products=products, link_buttons=buttons)
@@ -1680,7 +1748,13 @@ def handle_product_search(ctx: Dict, user_id: str, message: str,
                     set_search_pool(user_id, current_key, products)
                     set_product_context(user_id, products[:5])
                     text, buttons = _format_listing(products[:3])
-                    note = "স্যার, এই বাজেটে সরাসরি কোনো প্রোডাক্ট পাওয়া যায়নি। কাছাকাছি দামে এই প্রোডাক্টগুলো দেখতে পারেন:\n\n"
+                    # No price filter was applied on this retry (search_products
+                    # was called with price_max/min=None) — "কাছাকাছি দামে" (at a
+                    # similar price) is a claim this code never verified. (#I15)
+                    note = (
+                        "স্যার, এই বাজেটে সরাসরি কোনো প্রোডাক্ট পাওয়া যায়নি। "
+                        "এই প্রোডাক্টগুলো দেখতে পারেন (দাম ভিন্ন হতে পারে):\n\n"
+                    )
                     return _ok(note + text, 'product_search', ic, products=products, link_buttons=buttons)
                 # filtered is empty — fall through to out-of-stock message below
 
@@ -1788,9 +1862,13 @@ def handle_price_query(ctx: Dict, user_id: str, message: str) -> Dict:
     if has_budget and ctx.get('category'):
         return handle_product_search(ctx, user_id, message, _from_price_query=True)
 
-    # If products already shown and no budget filter, list cached prices
+    # If products already shown, report their price — regardless of whether
+    # this turn also carries a budget number ("5000 er modde hobe eta?" with
+    # no category). Without the `has_budget` case here, a cached product was
+    # silently ignored and the bot asked "which product?" for what's clearly
+    # a follow-up about the one just shown. (#I22)
     prev_products = get_product_context(user_id)
-    if prev_products and not has_budget:
+    if prev_products:
         ctx_reply = _reply_price_from_context(user_id)
         if ctx_reply:
             text, buttons = ctx_reply
@@ -1809,7 +1887,10 @@ def handle_price_query(ctx: Dict, user_id: str, message: str) -> Dict:
 
 def handle_url_message(ctx: Dict, user_id: str, message: str, url: str) -> Dict:
     url_lower = url.lower()
-    if re.search(r'bdstall\.com/(details|listing)/', url_lower):
+    # Bare-ID URLs ("bdstall.com/33323/") are a valid product link too — see
+    # _extract_product_id's own docstring — but previously only /details/ and
+    # /listing/ routed here at all. (#I21)
+    if re.search(r'bdstall\.com/(?:details|listing)/|bdstall\.com/\d{3,}/?(?:[?#].*)?$', url_lower):
         return handle_product_link(ctx, user_id, message, url)
     ic = normalize_payload(ctx)
     if re.search(r'(cdn\.bdstall\.com|bdstall\.com/.*\.(jpg|jpeg|png|webp|gif))', url_lower):
@@ -1942,6 +2023,24 @@ def handle_product_link(ctx: Dict, user_id: str, message: str, url: str) -> Dict
     keywords = _extract_keywords_from_url(url)
     ic = normalize_payload(ctx)
     if not keywords:
+        # /listing/NNNNN/ and bare /NNNNN/ URLs have no text slug to build
+        # search keywords from — _extract_product_id already handles all
+        # three URL shapes, so fall back to a direct ID lookup instead of
+        # failing outright. (#I21)
+        listing_id = _extract_product_id(url)
+        spec_data = fetch_product_spec(listing_id) if listing_id else None
+        if spec_data and spec_data.get('title'):
+            title = spec_data['title']
+            price = spec_data.get('price') or ''
+            product = {'title': title, 'price': price, 'url': url, 'image': ''}
+            set_product_context(user_id, [product])
+            set_product_url(user_id, url)
+            lines = ["স্যার, এই প্রোডাক্টটি পেয়েছি:", "", f"📦 {title}"]
+            if price and price.upper() != 'N/A':
+                lines.append(f"💰 মূল্য: ৳ {price}")
+            lines.append(LOOP_BACK)
+            buttons = [{'text': 'প্রোডাক্ট দেখুন', 'url': url, 'title': title}]
+            return _ok('\n'.join(lines), 'product_link', ic, link_buttons=buttons)
         return _ok(
             "স্যার, লিংকটি সঠিকভাবে পড়তে পারছি না। অনুগ্রহ করে আবার চেষ্টা করুন।" + LOOP_BACK,
             'product_link_error', ic
@@ -2110,9 +2209,13 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
 
     # "more / aro / onno / dekhao" signals the user wants a NEW search, not a
     # follow-up question about the current product. Let the full pipeline handle it.
+    # 'notun' deliberately excluded — it's also a condition signal ("is it
+    # new?"), and this check runs before the condition-handling branches
+    # below, so keeping it here would make "eta ki notun?" always exit to a
+    # fresh search instead of ever reaching the condition answer. (#I12)
     _EXIT_SIGNALS = {
-        'more', 'aro', 'onno', 'dekhao', 'dekhan', 'notun', 'alada',
-        'অন্য', 'আরও', 'আরো', 'nতুন',
+        'more', 'aro', 'onno', 'dekhao', 'dekhan', 'alada',
+        'অন্য', 'আরও', 'আরো',
     }
     if any(s in msg for s in _EXIT_SIGNALS):
         return None
@@ -2136,7 +2239,7 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
         'intake', 'original intake', 'non intake', 'নন ইনটেক', 'ইনটেক',
         'স্টক', 'রং', 'মান', 'দাম', 'ওয়ারেন্টি', 'spec', 'feature',
         'detail', 'details', 'বিস্তারিত', 'কেমন', 'kemon', 'review', 'rating',
-        'used', 'new', 'পুরনো', 'purano', 'second hand', 'refurbished',
+        'used', 'new', 'notun', 'নতুন', 'পুরনো', 'purano', 'second hand', 'refurbished',
         'condition', 'কন্ডিশন', 'fresh',
         'discount', 'ছাড়', 'offer', 'fixed', 'negotiate', 'কমানো', 'কমবে',
         # spec query signals — caught here so they don't fall to technical_advice
@@ -2250,7 +2353,11 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
         else:
             reply = "🛡️ ওয়ারেন্টি\n━━━━━━━━━━━━━━━\nওয়ারেন্টি সংক্রান্ত বিস্তারিত তথ্য প্রোডাক্ট পেজে দেওয়া আছে।"
 
-    elif any(w in msg for w in ('price', 'dam', 'দাম', 'মূল্য')) and not any(w in msg for w in _SPEC_SIGNALS):
+    # 'dam' and 'os' word-bounded via _msg_has_any — otherwise 'dam' matches
+    # inside "damage" (misrouting a damage/warranty question to the price
+    # answer) and 'os' matches inside "cost" (misrouting a price question —
+    # "cost koto?" — to the OS spec answer). (#I10, #I11)
+    elif _msg_has_any(msg, ('price', 'dam', 'cost', 'দাম', 'মূল্য')) and not _msg_has_any(msg, _SPEC_SIGNALS):
         _raw_price = str(top.get('price') or '').strip()
         price = _raw_price if (_raw_price and _raw_price not in ('N/A', '0', '0.00')) else ''
         if not price:
@@ -2293,7 +2400,9 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
         reply = ("📦 স্টক\n━━━━━━━━━━━━━━━\n"
                  "স্টক তথ্য প্রতিনিয়ত আপডেট হয়। সর্বশেষ স্টক জানতে প্রোডাক্ট পেজটি দেখুন।")
 
-    elif any(w in msg for w in _COLOR_SIZE_SIGNALS):
+    # 'rong' word-bounded — otherwise it matches inside "strong" (a battery/
+    # build-quality descriptor), misrouting to a color non-answer. (#I20)
+    elif _msg_has_any(msg, _COLOR_SIZE_SIGNALS):
         reply = ("🎨 রং ও ভেরিয়েন্ট\n━━━━━━━━━━━━━━━\n"
                  "রং ও স্টক প্রতিনিয়ত পরিবর্তন হয়। সর্বশেষ অপশন দেখতে প্রোডাক্ট পেজটি দেখুন।")
 
@@ -2308,7 +2417,7 @@ def handle_product_detail_followup(ctx: Dict, user_id: str, message: str,
                      + (f"{title} এর কন্ডিশন জানতে প্রোডাক্ট পেজটি দেখুন।"
                         if title else "প্রোডাক্টের কন্ডিশন জানতে পেজটি দেখুন।"))
 
-    elif any(w in msg for w in _SPEC_SIGNALS):
+    elif _msg_has_any(msg, _SPEC_SIGNALS):
         # Spec question — delegate to handle_product_spec_query for DB lookup.
         # Defined later in this file; forward reference is fine at call time.
         ctx_for_spec = {'category': '', 'brand': '', 'title': title}
@@ -2452,9 +2561,11 @@ def _match_spec_key(message: str, features: Dict) -> Optional[str]:
     """
     msg = message.lower()
 
-    # Pass 1 — keyword map
+    # Pass 1 — keyword map. Word-bounded via _msg_has_any — otherwise short
+    # tokens like 'sim'/'mp' match inside unrelated words ('sim'⊂"simple",
+    # 'mp'⊂"compare"), answering a spec question with the wrong feature. (#I25)
     for keywords, api_keys in _SPEC_KEYWORD_MAP:
-        if any(kw in msg for kw in keywords):
+        if _msg_has_any(msg, keywords):
             for api_key in api_keys:
                 val = features.get(api_key, '')
                 if val:
@@ -2462,13 +2573,16 @@ def _match_spec_key(message: str, features: Dict) -> Optional[str]:
 
     # Pass 2 — fuzzy: split message into words, check if any word appears
     # inside a feature name (or vice-versa). Avoids false positives from
-    # very short words by requiring length >= 4.
+    # very short words by requiring length >= 4 on BOTH sides — a short API
+    # feature abbreviation like "SIM"(3)/"OS"(2) is exactly as prone to
+    # matching inside an unrelated word ('sim' in "simple") as a short
+    # message word would be, so the same floor applies to feat_lower. (#I25)
     msg_words = [w for w in re.findall(r'[a-z0-9]+', msg) if len(w) >= 4]
     for feat_name, feat_val in features.items():
         if not feat_val:
             continue
         feat_lower = feat_name.lower()
-        if any(w in feat_lower or feat_lower in w for w in msg_words):
+        if any(w in feat_lower or (len(feat_lower) >= 4 and feat_lower in w) for w in msg_words):
             return f"{feat_name}: {feat_val}"
 
     return None
@@ -2671,7 +2785,7 @@ def handle_fallback(ctx: Dict, user_id: str, message: str,
     if any(w in msg_lower for w in _AI_IDENTITY_WORDS):
         ic = intent_to_normalized(ctx)
         return _ok(_AI_IDENTITY_RESPONSE + LOOP_BACK, 'faq_identity', ic)
-    if any(w in msg_lower for w in _PROPERTY_WORDS):
+    if _has_property_word(msg_lower):
         ic = intent_to_normalized(ctx)
         return _handle_property_query(user_id, message, ic)
     # Warranty questions always get the fixed website response
@@ -2689,8 +2803,10 @@ def handle_fallback(ctx: Dict, user_id: str, message: str,
         _buy_signals_fallback = {'kinbo', 'kinte', 'buy', 'order', 'কিনব', 'কিনতে', 'অর্ডার'}
         # Don't re-route to price_query when the message also has buy intent —
         # "kinbo, dam koto?" should stay as buy, not become price_query.
+        # 'dam' word-bounded via _msg_has_any — otherwise it matches inside
+        # "damage", misrouting a damage question to the price answer. (#I11)
         is_buy_message = any(w in msg_lower for w in _buy_signals_fallback)
-        if not is_buy_message and any(w in msg_lower for w in _price_signals):
+        if not is_buy_message and _msg_has_any(msg_lower, _price_signals):
             return handle_price_query(ctx, user_id, message)
         condition_result = _handle_condition_question(user_id, message)
         if condition_result:
