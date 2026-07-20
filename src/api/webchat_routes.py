@@ -164,7 +164,7 @@ _DOCS_PAGE_TEMPLATE = """<!DOCTYPE html>
 <div class="tryit">
   <h2>Try it out <span class="badge">LIVE</span></h2>
   <p style="margin:6px 0 0;color:#555;font-size:13px;">
-    Sends a real request to <code>POST /api/webchat/message</code> on this
+    Sends a real POST request to <code id="tryitEndpoint">...</code> on this
     running server and shows the actual response — nothing here is mocked.
   </p>
 
@@ -207,6 +207,16 @@ _DOCS_PAGE_TEMPLATE = """<!DOCTYPE html>
   sessionInput.value = genId();
   regenBtn.addEventListener('click', function () { sessionInput.value = genId(); });
 
+  // This page (/docs) may be served either at the app root (e.g. local dev,
+  // http://localhost:5000/docs) or behind a reverse-proxy prefix (e.g.
+  // production, https://ai.bdstall.com/chatbot/docs). A hardcoded absolute
+  // path like '/api/webchat/message' would miss the '/chatbot' prefix in
+  // the second case. Derive the correct base from this page's own URL
+  // instead — always correct regardless of how deep the app is mounted.
+  var basePath = window.location.pathname.replace(/\/docs\/?$/, '');
+  var endpointUrl = basePath + '/api/webchat/message';
+  document.getElementById('tryitEndpoint').textContent = endpointUrl;
+
   function setStatus(code, pending) {
     statusEl.style.display = 'inline-block';
     if (pending) {
@@ -230,7 +240,7 @@ _DOCS_PAGE_TEMPLATE = """<!DOCTYPE html>
     outputCode.textContent = '';
     setStatus(0, true);
 
-    fetch('/api/webchat/message', {
+    fetch(endpointUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ session_id: sessionId, message: message })
