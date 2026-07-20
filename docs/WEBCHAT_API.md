@@ -13,14 +13,15 @@ chat interface against this API.
 
 1. [What this is](#1-what-this-is)
 2. [Design constraint: the Messenger code is frozen](#2-design-constraint-the-messenger-code-is-frozen)
-3. [Endpoint: POST /api/webchat/message](#3-endpoint-post-apiwebchatmessage)
-4. [Session id: frontend responsibilities](#4-session-id-frontend-responsibilities)
-5. [Rendering the response](#5-rendering-the-response)
-6. [Errors](#6-errors)
-7. [Rate limiting](#7-rate-limiting)
-8. [CORS](#8-cors)
-9. [Optional: persisting a frontend-rendered welcome message](#9-optional-persisting-a-frontend-rendered-welcome-message)
-10. [Examples](#10-examples)
+3. [Base URL](#3-base-url)
+4. [Endpoint: POST /api/webchat/message](#4-endpoint-post-apiwebchatmessage)
+5. [Session id: frontend responsibilities](#5-session-id-frontend-responsibilities)
+6. [Rendering the response](#6-rendering-the-response)
+7. [Errors](#7-errors)
+8. [Rate limiting](#8-rate-limiting)
+9. [CORS](#9-cors)
+10. [Optional: persisting a frontend-rendered welcome message](#10-optional-persisting-a-frontend-rendered-welcome-message)
+11. [Examples](#11-examples)
 
 ---
 
@@ -56,7 +57,36 @@ entrypoint used by both `run.py` and Gunicorn/Docker), not to
 
 ---
 
-## 3. Endpoint: POST /api/webchat/message
+## 3. Base URL
+
+| Environment | Base URL |
+|---|---|
+| Local dev | `http://localhost:5000` |
+| Production | `https://ai.bdstall.com/chatbot` |
+
+Production is reverse-proxied by nginx under a `/chatbot` prefix — the same
+box also serves an unrelated app at the domain root. **Every route in this
+document must include that prefix in production**, e.g. the message endpoint
+is:
+
+```
+https://ai.bdstall.com/chatbot/api/webchat/message
+```
+
+Calling `https://ai.bdstall.com/api/webchat/message` (without `/chatbot`)
+hits the other service instead and returns a 404 — this has bitten us during
+testing, so it's worth double-checking whenever a request 404s unexpectedly.
+
+Because the frontend (`www.bdstall.com` or wherever it's hosted) is a
+different origin than `ai.bdstall.com`, **use the full base URL above**, not
+a relative path like `/api/webchat/message` — a relative path only works
+when the calling page is itself served from `ai.bdstall.com/chatbot/...`,
+which the real frontend won't be. CORS is already open (§9), so the
+cross-origin call itself is not a problem.
+
+---
+
+## 4. Endpoint: POST /api/webchat/message
 
 **Request**
 
@@ -69,7 +99,7 @@ entrypoint used by both `run.py` and Gunicorn/Docker), not to
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `session_id` | string | yes | Frontend-generated. `[A-Za-z0-9_-]`, 1–64 chars. See §4. |
+| `session_id` | string | yes | Frontend-generated. `[A-Za-z0-9_-]`, 1–64 chars. See §5. |
 | `message` | string | yes | The user's message. Max 2000 characters. |
 
 **Response — 200**
@@ -109,7 +139,7 @@ undefined/absent rather than assuming it exists.
 
 ---
 
-## 4. Session id: frontend responsibilities
+## 5. Session id: frontend responsibilities
 
 The frontend must generate a random id per visitor (e.g.
 `crypto.randomUUID()`) and persist it (e.g. `localStorage`) so a returning
@@ -124,12 +154,12 @@ numeric), so it can never read or pollute another channel's conversation
 state, mode, or history — regardless of what a client sends.
 
 If you also need to reference this same conversation elsewhere (e.g. calling
-`/save-message`, see §9), use `web_<session_id>` — the same prefix the server
+`/save-message`, see §10), use `web_<session_id>` — the same prefix the server
 applies internally — so both write to the same underlying conversation.
 
 ---
 
-## 5. Rendering the response
+## 6. Rendering the response
 
 - Render `response` as plain text (it may contain literal `\n` line breaks).
   Do **not** render it as HTML — it is untrusted user-visible text end to
@@ -143,17 +173,17 @@ applies internally — so both write to the same underlying conversation.
 
 ---
 
-## 6. Errors
+## 7. Errors
 
 | Status | Cause | Body |
 |---|---|---|
 | `400` | Missing/empty `message`, message over 2000 chars, or missing/invalid `session_id` | `{"success": false, "error": "..."}` |
-| `429` | Per-IP rate limit exceeded (§7) | `{"success": false, "error": "Too many messages — please slow down and try again shortly."}` |
+| `429` | Per-IP rate limit exceeded (§8) | `{"success": false, "error": "Too many messages — please slow down and try again shortly."}` |
 | `500` | Unexpected server error | `{"success": false, "error": "...", "response": "দুঃখিত, এই মুহূর্তে উত্তর দিতে সমস্যা হচ্ছে। অনুগ্রহ করে আবার চেষ্টা করুন।", "mode": "human"}` — safe to render `response` directly to the user as a fallback bubble. |
 
 ---
 
-## 7. Rate limiting
+## 8. Rate limiting
 
 The endpoint enforces an in-memory per-IP limit of **20 requests/minute**,
 returning `429` beyond that. Design the frontend to disable the send
@@ -163,7 +193,7 @@ moment").
 
 ---
 
-## 8. CORS
+## 9. CORS
 
 CORS is open on the whole Flask app (`CORS(app)`, no origin allowlist), so
 this endpoint can be called from the BDStall website domain or any other
@@ -171,7 +201,7 @@ origin without additional configuration.
 
 ---
 
-## 9. Optional: persisting a frontend-rendered welcome message
+## 10. Optional: persisting a frontend-rendered welcome message
 
 If the frontend renders a static greeting bubble on chat open *without*
 calling `/api/webchat/message` (common — no need to spend an AI call on a
@@ -185,14 +215,14 @@ POST /save-message
 ```
 
 `sender_type: 2` means "Bot". Use the same `web_<session_id>` id described
-in §4 so this message lands in the same conversation the AI-pipeline
+in §5 so this message lands in the same conversation the AI-pipeline
 messages use.
 
 ---
 
-## 10. Examples
+## 11. Examples
 
-**curl**
+**curl — local dev**
 
 ```bash
 curl -X POST http://localhost:5000/api/webchat/message \
@@ -200,11 +230,29 @@ curl -X POST http://localhost:5000/api/webchat/message \
   -d '{"session_id":"a1b2c3d4e5f6","message":"Hi"}'
 ```
 
+**curl — production**
+
+```bash
+curl -X POST https://ai.bdstall.com/chatbot/api/webchat/message \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"a1b2c3d4e5f6","message":"Hp g3 laptop ase"}'
+```
+
+Verified working — this exact request (session id, product-search message,
+and the full `/chatbot/...` production URL from §3) returned a real 200 with
+matching HP laptop results and prices.
+
 **Frontend fetch**
 
+Always call the full production base URL from §3 — the frontend runs on a
+different origin than `ai.bdstall.com`, so a relative path like
+`/api/webchat/message` will not resolve correctly from the real site.
+
 ```js
+const WEBCHAT_BASE_URL = 'https://ai.bdstall.com/chatbot';
+
 async function sendWebchatMessage(sessionId, message) {
-  const res = await fetch('/api/webchat/message', {
+  const res = await fetch(`${WEBCHAT_BASE_URL}/api/webchat/message`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session_id: sessionId, message })
