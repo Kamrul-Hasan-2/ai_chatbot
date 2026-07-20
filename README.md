@@ -66,6 +66,7 @@ Invoke-RestMethod -Uri "http://localhost:8000/health" -Method Get
 | [docs/API_QUICK_REFERENCE.md](docs/API_QUICK_REFERENCE.md) | Quick API cheatsheet |
 | [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) | Project organization |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production deployment guide |
+| [docs/WEBCHAT_API.md](docs/WEBCHAT_API.md) | Website webchat API — integration contract for the frontend team |
 
 ---
 
@@ -79,6 +80,8 @@ Invoke-RestMethod -Uri "http://localhost:8000/health" -Method Get
 | `/health` | GET | Health check |
 | `/analytics` | GET | System analytics |
 | `/webhook` | POST | Facebook Messenger |
+| `/api/webchat/message` | POST | Website webchat message (frontend team integration — see docs/WEBCHAT_API.md) |
+| `/docs` | GET | Rendered website webchat API docs (browsable) |
 
 **Full API docs:** [docs/API_DOCUMENTATION.md](docs/API_DOCUMENTATION.md)
 

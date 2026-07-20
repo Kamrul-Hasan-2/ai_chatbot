@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "ask": [
+      "Edit(src/controllers/chat_controller.py)",
+      "Write(src/controllers/chat_controller.py)"
+    ]
+  }
+}
