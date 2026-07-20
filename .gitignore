@@ -14,5 +14,6 @@ data/user_data.json
 data/chatbot_state.json
 data/lite_clients.json
 data/user_names.json
+data/chatbot_state.json.lock
 /models/
 .DS_Store
