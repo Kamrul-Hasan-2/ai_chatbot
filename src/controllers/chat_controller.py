@@ -233,12 +233,28 @@ def remember_user_name(user_id: str, user_name: Optional[str]) -> None:
         _save_user_name_map(name_map)
 
 
+# Platform codes expected by the BDStall save-message API.
+_PLATFORM_ID_CODES = {
+    "facebook": 1,
+    "messenger": 1,
+    "web": 2,
+    "webchat": 2,
+    "whatsapp": 3,
+}
+
+
+def _platform_id_code(platform_id: Optional[str]) -> Optional[int]:
+    """Map an internal platform_id string to the BDStall API's integer code."""
+    return _PLATFORM_ID_CODES.get(str(platform_id or '').strip().lower())
+
+
 def save_chat_message(
     user_id: str,
     sender_type: int,
     message: str,
     user_name: Optional[str] = None,
-    intent_content: Optional[dict[str, Any]] = None
+    intent_content: Optional[dict[str, Any]] = None,
+    platform_id: Optional[int] = None
 ) -> bool:
     """Persist a single chat message to BDStall message history API."""
     if not message:
@@ -254,6 +270,8 @@ def save_chat_message(
         payload["user_name"] = str(user_name)
     if isinstance(intent_content, dict) and intent_content:
         payload["intent_content"] = intent_content
+    if platform_id is not None:
+        payload["platform_id"] = int(platform_id)
 
     def _is_success_response(resp: requests.Response) -> bool:
         """Treat 2xx as success, with optional JSON 'success' flag validation when present."""
@@ -778,12 +796,15 @@ def _process_user_message(
             "error": "No message provided"
         }
 
+    platform_code = _platform_id_code(platform_id)
+
     # Save visitor message first (3 = Visitor)
     visitor_saved = save_chat_message(
         user_id=user_id,
         sender_type=3,
         message=clean_message,
-        user_name=resolved_user_name
+        user_name=resolved_user_name,
+        platform_id=platform_code
     )
     if not visitor_saved:
         logger.warning(
@@ -806,7 +827,8 @@ def _process_user_message(
             sender_type=2,
             message=response_text,
             user_name=resolved_user_name,
-            intent_content=intent_content if isinstance(intent_content, dict) else None
+            intent_content=intent_content if isinstance(intent_content, dict) else None,
+            platform_id=platform_code
         )
         if not bot_saved:
             logger.warning(
