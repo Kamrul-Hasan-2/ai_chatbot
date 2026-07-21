@@ -94,10 +94,17 @@ def _seed_page_context(user_id: str, product: str, category: str, page_link: str
                 'image': top.get('image', ''),
             }
 
-    if resolved is None:
+    if resolved is None and product:
         # Enrichment failed (no matching listing found) — still ground the
         # answer in exactly what the frontend told us about this page.
         resolved = {'title': product, 'price': '', 'url': page_link, 'image': ''}
+
+    if resolved is None:
+        # No product title anywhere and page_link didn't resolve to a real
+        # listing (e.g. a Referer-based fallback pointing at a non-product
+        # page, like the homepage or search results) — nothing usable to
+        # ground on. Don't seed junk state with an empty title.
+        return
 
     set_product_context(user_id, [resolved])
     set_product_url(user_id, resolved.get('url') or page_link)
@@ -150,6 +157,16 @@ def webchat_message():
     page_product = data.get('product')
     page_category = data.get('category')
     page_link = data.get('pageLink')
+
+    # Fallback when the frontend hasn't (yet) wired up `pageLink`: browsers
+    # automatically send the current page's URL in the Referer header on a
+    # same-page fetch/XHR call. _seed_page_context only actually uses this
+    # when it resolves to a real BDStall listing (_extract_product_id), so a
+    # referrer that isn't a product page (homepage, search results, another
+    # site) is safely ignored rather than seeding junk context.
+    if not page_link and request.referrer:
+        page_link = request.referrer
+        logger.info("[WEBCHAT] using Referer header as pageLink fallback: %s", page_link)
 
     if not message:
         return jsonify({"success": False, "error": "No message provided"}), 400
