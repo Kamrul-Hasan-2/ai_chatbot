@@ -29,7 +29,7 @@ from models.chatbot_config import (
     ASSIGN_BOT_URL, RESPONDER_URL, RESPONDER_KEY,
     HISTORY_URL, HISTORY_LIMIT,
     SAVE_MESSAGE_URL, SAVE_MESSAGE_KEY,
-    CAT_LIST_URL, SPEC_URL, KNOWLEDGE_URL,
+    CAT_LIST_URL, SPEC_URL, PRODUCT_DETAILS_URL, KNOWLEDGE_URL,
     CITY_LIST_URL, AREA_LIST_URL, PLACE_ORDER_URL, ORDER_STATUS_URL,
     SELLER_REQUEST_URL, SUPPORT_CONTACT_URL,
     _log_api_call,
@@ -586,6 +586,79 @@ def fetch_product_spec(listing_id: str) -> Optional[Dict]:
         return result
     except Exception as e:
         logger.error("fetch_product_spec failed: %s", e)
+        return None
+
+
+# ── Product details (chatbot-specific, richer than list_details) ──────────────
+
+_product_details_cache: Dict[str, tuple] = {}   # keyed by listing_id → (timestamp, dict)
+_PRODUCT_DETAILS_TTL = 600                       # 10 min — matches _SPEC_TTL
+
+
+def fetch_product_details(listing_id: str) -> Optional[Dict]:
+    """Fetch full product details from the chatbot-specific product_details API.
+
+    Richer than fetch_product_spec (brand, category, condition, discount,
+    in_stock, description, seller list) — used to ground webchat page-context
+    answers (src/api/webchat_routes.py). Returns a dict shaped compatibly
+    with the product-context dict search_products()/fetch_product_spec()
+    already produce elsewhere ({'title', 'price', 'original_price',
+    'discount', 'url', 'image'}), plus extra fields, or None on failure/not
+    found — callers should fall back to the existing fetch_product_spec path
+    on None, exactly as if this function didn't exist.
+    """
+    if not listing_id:
+        return None
+    now = time.time()
+    cached = _product_details_cache.get(listing_id)
+    if cached and (now - cached[0]) < _PRODUCT_DETAILS_TTL:
+        return cached[1]
+
+    try:
+        started = datetime.now()
+        resp = requests.get(PRODUCT_DETAILS_URL, params={'id': listing_id, 'key': API_KEY}, timeout=10)
+        duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+        payload = resp.json() if resp.text else {}
+        passed = resp.status_code == 200 and bool(payload.get('success'))
+        _log_api_call('fetch_product_details', 'GET', PRODUCT_DETAILS_URL,
+                      {'id': listing_id}, resp.status_code, duration_ms,
+                      'PASS' if passed else 'FAIL', resp.text[:400])
+        if not passed:
+            return None
+
+        d = payload.get('data') or {}
+        title = str(d.get('title') or '').strip()
+        if not title:
+            return None
+
+        def _to_float(v):
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return 0.0
+
+        price = _to_float(d.get('price'))
+        discount_price = _to_float(d.get('discount_price'))
+        effective_price = _to_float(d.get('effective_price')) or (price - discount_price) or price
+        discount_pct = round((discount_price / price) * 100) if price and discount_price else 0
+
+        result = {
+            'title': title,
+            'price': str(int(effective_price)) if effective_price else str(d.get('price') or ''),
+            'original_price': str(int(price)) if price else '',
+            'discount': discount_pct,
+            'url': str(d.get('url') or '').strip(),
+            'image': '',
+            'brand': str(d.get('brand') or '').strip(),
+            'category': str(d.get('category') or '').strip(),
+            'condition': str(d.get('condition') or '').strip(),
+            'in_stock': bool(d.get('in_stock')),
+            'description': str(d.get('description') or '').strip(),
+        }
+        _product_details_cache[listing_id] = (now, result)
+        return result
+    except Exception as e:
+        logger.error("fetch_product_details failed: %s", e)
         return None
 
 

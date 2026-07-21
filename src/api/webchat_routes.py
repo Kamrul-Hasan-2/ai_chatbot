@@ -19,12 +19,12 @@ except ImportError:
     from src.controllers.chat_controller import _process_user_message
 
 try:
-    from services.api_client_service import search_products, fetch_product_spec
+    from services.api_client_service import search_products, fetch_product_spec, fetch_product_details
     from services.intent_handlers_service import _extract_product_id
     from services.intent_service import resolve_category_from_message
     from repositories.state_repository import set_product_context, set_product_url, set_session_category
 except ImportError:
-    from src.services.api_client_service import search_products, fetch_product_spec
+    from src.services.api_client_service import search_products, fetch_product_spec, fetch_product_details
     from src.services.intent_handlers_service import _extract_product_id
     from src.services.intent_service import resolve_category_from_message
     from src.repositories.state_repository import set_product_context, set_product_url, set_session_category
@@ -71,18 +71,33 @@ def _seed_page_context(user_id: str, product: str, category: str, page_link: str
     # or title search needed, so try this before anything else.
     listing_id = product_id or (_extract_product_id(page_link) if page_link else None)
     if listing_id:
+        # Try the richer chatbot-specific product_details API first (price,
+        # discount, brand, category, stock, description). If it doesn't find
+        # anything, fall back to the existing fetch_product_spec lookup —
+        # unchanged from how this already worked before product_details
+        # existed, so nothing regresses if that new API is ever unavailable.
         try:
-            spec = fetch_product_spec(listing_id)
+            details = fetch_product_details(listing_id)
         except Exception as e:
-            logger.warning("[WEBCHAT] fetch_product_spec failed for page context: %s", e)
-            spec = None
-        if spec and spec.get('title'):
-            resolved = {
-                'title': spec.get('title') or product,
-                'price': spec.get('price') or '',
-                'url': page_link,
-                'image': '',
-            }
+            logger.warning("[WEBCHAT] fetch_product_details failed for page context: %s", e)
+            details = None
+        if details and details.get('title'):
+            resolved = dict(details)
+            resolved['url'] = resolved.get('url') or page_link
+
+        if resolved is None:
+            try:
+                spec = fetch_product_spec(listing_id)
+            except Exception as e:
+                logger.warning("[WEBCHAT] fetch_product_spec failed for page context: %s", e)
+                spec = None
+            if spec and spec.get('title'):
+                resolved = {
+                    'title': spec.get('title') or product,
+                    'price': spec.get('price') or '',
+                    'url': page_link,
+                    'image': '',
+                }
 
     if resolved is None and product:
         try:

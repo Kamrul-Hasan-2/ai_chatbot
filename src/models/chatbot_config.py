@@ -66,6 +66,7 @@ SAVE_MESSAGE_URL  = os.getenv('SAVE_MESSAGE_API_URL',    'https://www.bdstall.co
 SAVE_MESSAGE_KEY  = os.getenv('SAVE_MESSAGE_API_KEY',    os.getenv('BDSTALL_API_KEY', 'mkh677ddd2sxxkkdjff'))
 CAT_LIST_URL      = os.getenv('CATLIST_API_URL',         'https://www.bdstall.com/api/chatbot/cat_list/')
 SPEC_URL          = os.getenv('SPEC_API_URL',            'https://www.bdstall.com/api/item/list_details/')
+PRODUCT_DETAILS_URL = os.getenv('PRODUCT_DETAILS_API_URL', 'https://www.bdstall.com/api/chatbot/product_details/')
 KNOWLEDGE_URL     = os.getenv('KNOWLEDGE_API_URL',       'https://www.bdstall.com/api/chatbot/knowledge/')
 CITY_LIST_URL     = os.getenv('CITY_LIST_API_URL',       'https://www.bdstall.com/api/chatbot/city_list/')
 AREA_LIST_URL     = os.getenv('AREA_LIST_API_URL',       'https://www.bdstall.com/api/chatbot/area_list/')
