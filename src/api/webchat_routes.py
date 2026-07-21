@@ -19,6 +19,17 @@ except ImportError:
     from src.controllers.chat_controller import _process_user_message
 
 try:
+    from services.api_client_service import search_products, fetch_product_spec
+    from services.intent_handlers_service import _extract_product_id
+    from services.intent_service import resolve_category_from_message
+    from repositories.state_repository import set_product_context, set_product_url, set_session_category
+except ImportError:
+    from src.services.api_client_service import search_products, fetch_product_spec
+    from src.services.intent_handlers_service import _extract_product_id
+    from src.services.intent_service import resolve_category_from_message
+    from src.repositories.state_repository import set_product_context, set_product_url, set_session_category
+
+try:
     import markdown as _markdown
 except ImportError:
     _markdown = None
@@ -30,6 +41,74 @@ webchat_docs_bp = Blueprint('webchat_docs', __name__)
 
 _SESSION_ID_PATTERN = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
 _MESSAGE_MAX_LENGTH = 2000
+_PAGE_CONTEXT_FIELD_MAX_LENGTH = 300
+
+
+def _seed_page_context(user_id: str, product: str, category: str, page_link: str) -> None:
+    """Ground the shared pipeline's next answer in a specific product the
+    webchat visitor is currently looking at, by seeding the same session
+    state `handle_product_link` seeds when a Messenger user pastes a product
+    URL. The pipeline (src/services/chatbot_service.py) already checks this
+    state on every turn and routes product-specific questions (price, spec,
+    warranty, stock, ...) through `handle_product_detail_followup` against
+    it instead of running a fresh search — this just primes that mechanism
+    from page context instead of a pasted link. Webchat-only by construction:
+    nothing else calls this.
+    """
+    product = (product or '').strip()[:_PAGE_CONTEXT_FIELD_MAX_LENGTH]
+    category = (category or '').strip()[:_PAGE_CONTEXT_FIELD_MAX_LENGTH]
+    page_link = (page_link or '').strip()[:_PAGE_CONTEXT_FIELD_MAX_LENGTH]
+    if not product and not page_link:
+        return
+
+    resolved = None
+    listing_id = _extract_product_id(page_link) if page_link else None
+    if listing_id:
+        try:
+            spec = fetch_product_spec(listing_id)
+        except Exception as e:
+            logger.warning("[WEBCHAT] fetch_product_spec failed for page context: %s", e)
+            spec = None
+        if spec and spec.get('title'):
+            resolved = {
+                'title': spec.get('title') or product,
+                'price': spec.get('price') or '',
+                'url': page_link,
+                'image': '',
+            }
+
+    if resolved is None and product:
+        try:
+            search_result = search_products(product)
+        except Exception as e:
+            logger.warning("[WEBCHAT] search_products failed for page context: %s", e)
+            search_result = {}
+        if search_result.get('products_found'):
+            top = search_result['products'][0]
+            resolved = {
+                'title': top.get('title') or product,
+                'price': top.get('price', ''),
+                'original_price': top.get('original_price', ''),
+                'discount': top.get('discount', 0),
+                'url': top.get('url') or page_link,
+                'image': top.get('image', ''),
+            }
+
+    if resolved is None:
+        # Enrichment failed (no matching listing found) — still ground the
+        # answer in exactly what the frontend told us about this page.
+        resolved = {'title': product, 'price': '', 'url': page_link, 'image': ''}
+
+    set_product_context(user_id, [resolved])
+    set_product_url(user_id, resolved.get('url') or page_link)
+
+    if category:
+        try:
+            from services.chatbot_service import _categories
+        except ImportError:
+            from src.services.chatbot_service import _categories
+        resolved_category = resolve_category_from_message(category, _categories)
+        set_session_category(user_id, resolved_category or category)
 
 # ── Per-IP sliding-window rate limit ──────────────────────────────────────────
 # There is no rate limiting anywhere else in this app — fine when the only
@@ -68,6 +147,9 @@ def webchat_message():
     data = request.get_json(silent=True) or {}
     raw_session_id = str(data.get('session_id') or '').strip()
     message = str(data.get('message') or '').strip()
+    page_product = data.get('product')
+    page_category = data.get('category')
+    page_link = data.get('pageLink')
 
     if not message:
         return jsonify({"success": False, "error": "No message provided"}), 400
@@ -84,6 +166,14 @@ def webchat_message():
     # Namespace web session ids so they can never collide with a Facebook PSID
     # (always numeric) and cross-pollute another channel's conversation state.
     user_id = f"web_{raw_session_id}"
+
+    if page_product or page_category or page_link:
+        try:
+            _seed_page_context(user_id, page_product, page_category, page_link)
+        except Exception as e:
+            # Page-context grounding is a best-effort enhancement — never let
+            # it block the message from getting a normal reply.
+            logger.warning("[WEBCHAT] page context seeding failed: %s", e)
 
     try:
         result = _process_user_message(
@@ -213,7 +303,7 @@ _DOCS_PAGE_TEMPLATE = """<!DOCTYPE html>
   // path like '/api/webchat/message' would miss the '/chatbot' prefix in
   // the second case. Derive the correct base from this page's own URL
   // instead — always correct regardless of how deep the app is mounted.
-  var basePath = window.location.pathname.replace(/\/docs\/?$/, '');
+  var basePath = window.location.pathname.replace(/\\/docs\\/?$/, '');
   var endpointUrl = basePath + '/api/webchat/message';
   document.getElementById('tryitEndpoint').textContent = endpointUrl;
 
