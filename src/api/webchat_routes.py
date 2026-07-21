@@ -44,7 +44,7 @@ _MESSAGE_MAX_LENGTH = 2000
 _PAGE_CONTEXT_FIELD_MAX_LENGTH = 300
 
 
-def _seed_page_context(user_id: str, product: str, category: str, page_link: str) -> None:
+def _seed_page_context(user_id: str, product: str, category: str, page_link: str, product_id: str = '') -> None:
     """Ground the shared pipeline's next answer in a specific product the
     webchat visitor is currently looking at, by seeding the same session
     state `handle_product_link` seeds when a Messenger user pastes a product
@@ -58,11 +58,18 @@ def _seed_page_context(user_id: str, product: str, category: str, page_link: str
     product = (product or '').strip()[:_PAGE_CONTEXT_FIELD_MAX_LENGTH]
     category = (category or '').strip()[:_PAGE_CONTEXT_FIELD_MAX_LENGTH]
     page_link = (page_link or '').strip()[:_PAGE_CONTEXT_FIELD_MAX_LENGTH]
-    if not product and not page_link:
+    # Listing ids are always numeric (e.g. 24652) — strip anything else so a
+    # stray non-digit can't reach fetch_product_spec's URL building.
+    product_id = re.sub(r'\D', '', str(product_id or ''))[:32]
+    if not product and not page_link and not product_id:
         return
 
     resolved = None
-    listing_id = _extract_product_id(page_link) if page_link else None
+
+    # Highest-confidence path: the frontend already knows the exact listing
+    # id (it's the product's own primary key on their side) — no URL parsing
+    # or title search needed, so try this before anything else.
+    listing_id = product_id or (_extract_product_id(page_link) if page_link else None)
     if listing_id:
         try:
             spec = fetch_product_spec(listing_id)
@@ -157,6 +164,7 @@ def webchat_message():
     page_product = data.get('product')
     page_category = data.get('category')
     page_link = data.get('pageLink')
+    page_product_id = data.get('id')
 
     # Fallback when the frontend hasn't (yet) wired up `pageLink`: browsers
     # automatically send the current page's URL in the Referer header on a
@@ -184,9 +192,9 @@ def webchat_message():
     # (always numeric) and cross-pollute another channel's conversation state.
     user_id = f"web_{raw_session_id}"
 
-    if page_product or page_category or page_link:
+    if page_product or page_category or page_link or page_product_id:
         try:
-            _seed_page_context(user_id, page_product, page_category, page_link)
+            _seed_page_context(user_id, page_product, page_category, page_link, page_product_id)
         except Exception as e:
             # Page-context grounding is a best-effort enhancement — never let
             # it block the message from getting a normal reply.

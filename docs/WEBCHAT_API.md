@@ -95,6 +95,7 @@ cross-origin call itself is not a problem.
 {
   "session_id": "a1b2c3d4e5f6...",
   "message": "১০ হাজার টাকার মধ্যে ল্যাপটপ দেখান",
+  "id": "24652",
   "product": "HP ProBook 440 G3",
   "category": "Laptop",
   "pageLink": "https://www.bdstall.com/details/hp-laptop-pc-probook-440-g3-..."
@@ -105,12 +106,13 @@ cross-origin call itself is not a problem.
 |---|---|---|---|
 | `session_id` | string | yes | Frontend-generated. `[A-Za-z0-9_-]`, 1–64 chars. See §6. |
 | `message` | string | yes | The user's message. Max 2000 characters. |
+| `id` | string | no | BDStall listing id of the product on the current page (e.g. `"24652"`). Non-digit characters are stripped. See §5. |
 | `product` | string | no | Title of the product on the current page. See §5. |
 | `category` | string | no | Category of that product. See §5. |
 | `pageLink` | string | no | URL of the current product page. See §5. |
 
-`product`/`category`/`pageLink` are independent and optional — send any
-combination, all three, or none. Omitting them (or the whole request body
+`id`/`product`/`category`/`pageLink` are independent and optional — send any
+combination, all four, or none. Omitting them (or the whole request body
 they were never part of before) behaves exactly as it always has.
 
 **Response — 200**
@@ -153,25 +155,39 @@ undefined/absent rather than assuming it exists.
 ## 5. Page context (optional): grounding the answer in a specific product
 
 If the visitor is chatting from a specific product page, send that page's
-`product` (title), `category`, and `pageLink` alongside the message. When
-present, the bot answers the user's question **grounded in that exact
-product** — price, spec, warranty, stock, color, discount, condition
-questions get answered directly from it, with a link button back to the
-page — instead of running its own search from scratch.
+`id`, `product` (title), `category`, and/or `pageLink` alongside the
+message. When present, the bot answers the user's question **grounded in
+that exact product** — price, spec, warranty, stock, color, discount,
+condition questions get answered directly from it, with a link button back
+to the page — instead of running its own search from scratch.
 
 **Resolution order** (best result first, always falls through — never
 errors on a bad/missing value):
-1. `pageLink` → the backend extracts the listing ID from the URL and fetches
-   full product details (price, specs) directly from BDStall.
-2. If that fails (or no `pageLink`), `product` → the backend searches for it
-   by title and uses the top match (price, discount, image, url).
-3. If both fail (e.g. neither matches a real listing), the bot still grounds
-   its answer in exactly the `product` title / `pageLink` you sent, per
-   "answer from this data" — it never silently drops your context and falls
-   back to a generic search.
+1. `id` → the most reliable path. If you already know the listing id (it's
+   the product's own primary key on your side), send it directly — the
+   backend fetches full product details straight from BDStall, no URL
+   parsing or title search involved.
+2. Else `pageLink` → the backend extracts the listing id from the URL and
+   fetches full product details the same way as `id`.
+3. Else, if neither of the above resolved, **`pageLink` falls back to the
+   browser's own `Referer` header** when you don't send it explicitly —
+   most browsers automatically include the current page's URL on a
+   same-page fetch/XHR call, so this can work even before a frontend change
+   ships, as long as the referrer actually resolves to a real listing (a
+   referrer that isn't a product page — homepage, search results, another
+   site — is safely ignored, not treated as page context).
+4. Else `product` (title) → the backend searches for it by title and uses
+   the top match (price, discount, image, url).
+5. If all of the above fail (e.g. nothing resolves to a real listing) but
+   `product` was given, the bot still grounds its answer in exactly the
+   `product` title / `pageLink` you sent, per "answer from this data" — it
+   never silently drops your context and falls back to a generic search. If
+   nothing resolves and no `product` title was given either (e.g. only a
+   non-product Referer was available), page-context grounding is skipped
+   entirely and the message is handled normally.
 
-All three fields are **independent and optional** — send any combination,
-all three, or none; this is purely additive, on top of every other behaviour
+All four fields are **independent and optional** — send any combination, all
+of them, or none; this is purely additive, on top of every other behaviour
 described in this document (§3–§4 still apply unchanged).
 
 **This only affects the webchat endpoint.** It's implemented entirely in
@@ -304,7 +320,7 @@ Verified working — this exact request (session id, product-search message,
 and the full `/chatbot/...` production URL from §3) returned a real 200 with
 matching HP laptop results and prices.
 
-**curl — with page context (§5)**
+**curl — with page context, using `id` (§5)**
 
 ```bash
 curl -X POST https://ai.bdstall.com/chatbot/api/webchat/message \
@@ -312,19 +328,33 @@ curl -X POST https://ai.bdstall.com/chatbot/api/webchat/message \
   -d '{
     "session_id": "a1b2c3d4e5f6",
     "message": "price koto?",
+    "id": "24652",
     "product": "HP ProBook 440 G3",
     "category": "Laptop",
     "pageLink": "https://www.bdstall.com/details/hp-laptop-pc-probook-440-g3-core-i3-14-business-series-24652/"
   }'
 ```
 
+**curl — Referer fallback (no `pageLink` sent, only the header)**
+
+```bash
+curl -X POST https://ai.bdstall.com/chatbot/api/webchat/message \
+  -H "Content-Type: application/json" \
+  -H "Referer: https://www.bdstall.com/details/hp-laptop-pc-probook-440-g3-core-i3-14-business-series-24652/" \
+  -d '{"session_id":"a1b2c3d4e5f6","message":"price koto?"}'
+```
+
+Both verified working against the real BDStall product catalog.
+
 **Frontend fetch**
 
 Always call the full production base URL from §3 — the frontend runs on a
 different origin than `ai.bdstall.com`, so a relative path like
 `/api/webchat/message` will not resolve correctly from the real site.
-`product`/`category`/`pageLink` are optional (§5) — omit them, or pass
-whichever you have from the current page.
+`id`/`product`/`category`/`pageLink` are optional (§5) — omit them, or pass
+whichever you have from the current page. If you send none of them, the
+browser's own `Referer` header is tried automatically (§5) — no code change
+needed for that part.
 
 ```js
 const WEBCHAT_BASE_URL = 'https://ai.bdstall.com/chatbot';
@@ -336,6 +366,7 @@ async function sendWebchatMessage(sessionId, message, pageContext = {}) {
     body: JSON.stringify({
       session_id: sessionId,
       message,
+      id: pageContext.id,
       product: pageContext.product,
       category: pageContext.category,
       pageLink: pageContext.pageLink
