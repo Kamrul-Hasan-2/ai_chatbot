@@ -642,10 +642,17 @@ def fetch_product_details(listing_id: str) -> Optional[Dict]:
         effective_price = _to_float(d.get('effective_price')) or (price - discount_price) or price
         discount_pct = round((discount_price / price) * 100) if price and discount_price else 0
 
+        def _format_taka(amount: float) -> str:
+            """৳ + thousand separators, matching the '৳ 18,500' style used
+            elsewhere (search_products/fetch_product_spec return
+            pre-formatted price strings from BDStall directly; this API
+            returns bare numbers, so format them the same way here)."""
+            return f"৳ {int(amount):,}" if amount else ''
+
         result = {
             'title': title,
-            'price': str(int(effective_price)) if effective_price else str(d.get('price') or ''),
-            'original_price': str(int(price)) if price else '',
+            'price': _format_taka(effective_price) or str(d.get('price') or ''),
+            'original_price': _format_taka(price),
             'discount': discount_pct,
             'url': str(d.get('url') or '').strip(),
             'image': '',
