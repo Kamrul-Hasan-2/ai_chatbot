@@ -60,11 +60,12 @@ _PAGE_CONTEXT_FIELD_MAX_LENGTH = 300
 # renderer with no frontend changes needed — only digits can be styled this way
 # (the ৳ symbol and commas have no bold Unicode variant, so they stay as-is).
 _BOLD_DIGITS = str.maketrans('0123456789', '𝟎𝟏𝟐𝟑𝟒𝟓𝟔𝟕𝟖𝟗')
-# Matches an optional leading ": " (the shared pipeline's "Title: ৳429" style)
-# together with the price itself, so the colon can be dropped in favour of a
-# clean "মূল্য:" (Price:) label on its own line instead of dangling at the
-# end of the title line.
-_PRICE_PATTERN = re.compile(r':?\s*৳\s*[\d,]+')
+# Matches an optional existing "মূল্য" label and/or leading ": " (the shared
+# pipeline uses both "Title: ৳429" and "Title\nমূল্য: ৳429" styles depending
+# on the response type) together with the price itself, so whichever style
+# was already there gets consumed as ONE match and replaced with exactly one
+# clean "মূল্য:" (Price:) label on its own line — never a duplicate.
+_PRICE_PATTERN = re.compile(r'(?:মূল্য\s*)?:?\s*৳\s*[\d,]+')
 _PRICE_ONLY_PATTERN = re.compile(r'৳\s*[\d,]+')
 
 
