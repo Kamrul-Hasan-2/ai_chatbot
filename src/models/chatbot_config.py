@@ -47,8 +47,11 @@ CATEGORY_PROMPT = (
 )
 
 # ── Loop-back suffix appended to informational responses ─────────────────────
+# Empty by request — every handler that does `text + LOOP_BACK` (both
+# Messenger and webchat use the same shared handlers) now just gets `text`,
+# with no closing line, no code changes needed at each of the ~80 call sites.
 
-LOOP_BACK = "\n\nআর কোনো প্রোডাক্ট বা বিষয়ে সাহায্য করতে পারি? 😊"
+LOOP_BACK = ""
 
 # ── API credentials & URLs ────────────────────────────────────────────────────
 
