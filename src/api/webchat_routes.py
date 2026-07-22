@@ -106,7 +106,7 @@ _PRICE_RANGE_SIGNALS = (
 )
 
 
-def _try_price_range_answer(user_id: str, message: str, explicit_category: str) -> dict | None:
+def _try_price_range_answer(user_id: str, message: str, explicit_category: str, explicit_product: str) -> dict | None:
     """If the message asks about a category's price range and the category is
     known (explicit or previously seeded from page context), answer directly
     from fetch_category_filters(). Returns None to fall through to the normal
@@ -149,8 +149,11 @@ def _try_price_range_answer(user_id: str, message: str, explicit_category: str) 
     except Exception as e:
         logger.warning("[WEBCHAT] save_chat_message failed for price-range answer: %s", e)
 
+    # Only attach the "view category" link when a specific product name was
+    # also given — a bare price-range question with no product name attached
+    # shouldn't get a promotional-feeling link back.
     link_buttons = []
-    if filters.get('url'):
+    if (explicit_product or '').strip() and filters.get('url'):
         link_buttons = [{'text': f"{display_category} দেখুন", 'url': filters['url']}]
 
     return {
@@ -357,7 +360,7 @@ def webchat_message():
             logger.warning("[WEBCHAT] page context seeding failed: %s", e)
 
     try:
-        price_range_result = _try_price_range_answer(user_id, message, page_category)
+        price_range_result = _try_price_range_answer(user_id, message, page_category, page_product)
     except Exception as e:
         # Best-effort shortcut — never let it block the normal reply.
         logger.warning("[WEBCHAT] price range answer failed: %s", e)
