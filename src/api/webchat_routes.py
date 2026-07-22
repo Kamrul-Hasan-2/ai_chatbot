@@ -14,20 +14,30 @@ import logging
 from flask import Blueprint, request, jsonify, Response
 
 try:
-    from controllers.chat_controller import _process_user_message
+    from controllers.chat_controller import _process_user_message, save_chat_message, get_known_user_name
 except ImportError:
-    from src.controllers.chat_controller import _process_user_message
+    from src.controllers.chat_controller import _process_user_message, save_chat_message, get_known_user_name
 
 try:
-    from services.api_client_service import search_products, fetch_product_spec, fetch_product_details
+    from services.api_client_service import (
+        search_products, fetch_product_spec, fetch_product_details, fetch_category_filters,
+    )
     from services.intent_handlers_service import _extract_product_id
     from services.intent_service import resolve_category_from_message
-    from repositories.state_repository import set_product_context, set_product_url, set_session_category
+    from repositories.state_repository import (
+        set_product_context, set_product_url, set_session_category, get_session_category,
+    )
+    from models.chatbot_config import LOOP_BACK, AI_ACTIVE_STATUS
 except ImportError:
-    from src.services.api_client_service import search_products, fetch_product_spec, fetch_product_details
+    from src.services.api_client_service import (
+        search_products, fetch_product_spec, fetch_product_details, fetch_category_filters,
+    )
     from src.services.intent_handlers_service import _extract_product_id
     from src.services.intent_service import resolve_category_from_message
-    from src.repositories.state_repository import set_product_context, set_product_url, set_session_category
+    from src.repositories.state_repository import (
+        set_product_context, set_product_url, set_session_category, get_session_category,
+    )
+    from src.models.chatbot_config import LOOP_BACK, AI_ACTIVE_STATUS
 
 try:
     import markdown as _markdown
@@ -68,6 +78,93 @@ def _emphasize_prices(text: str) -> str:
         return '\nমূল্য: ' + price_only.translate(_BOLD_DIGITS)
 
     return _PRICE_PATTERN.sub(_replace, text)
+
+
+def _format_bold_taka(amount) -> str:
+    """৳ + thousand separators + bold-styled digits, same convention as
+    _emphasize_prices (see there for why bold digits rather than markup)."""
+    try:
+        n = int(float(amount))
+    except (TypeError, ValueError):
+        return str(amount)
+    return f"৳ {n:,}".translate(_BOLD_DIGITS)
+
+
+# ── Category price-range answers (webchat-only, deterministic) ────────────────
+# The shared pipeline (chatbot_service.py) answers PRODUCT-level questions
+# (price of *this* item) but has no notion of a whole category's price
+# range/brand list — there's nothing to hook into there the way page-context
+# grounding hooks into existing product-context state. So this is answered
+# directly here instead, mirroring the deterministic-intercept style already
+# used throughout this codebase (e.g. greeting/hate-speech signal sets) —
+# rather than teaching the shared pipeline a new category-filters concept.
+_PRICE_RANGE_SIGNALS = (
+    'price range', 'range koto', 'range ki', 'দাম রেঞ্জ', 'দামের রেঞ্জ',
+    'কত থেকে কত', 'কতো থেকে কতো', 'সর্বনিম্ন', 'সর্বোচ্চ দাম',
+    'min price', 'max price', 'lowest price', 'highest price',
+    'সর্বনিম্ন দাম', 'সর্বোচ্চ মূল্য',
+)
+
+
+def _try_price_range_answer(user_id: str, message: str, explicit_category: str) -> dict | None:
+    """If the message asks about a category's price range and the category is
+    known (explicit or previously seeded from page context), answer directly
+    from fetch_category_filters(). Returns None to fall through to the normal
+    pipeline when the message doesn't match or no category is known/found —
+    never blocks the normal flow.
+    """
+    msg_lower = (message or '').lower()
+    if not any(sig in msg_lower for sig in _PRICE_RANGE_SIGNALS):
+        return None
+
+    category = (explicit_category or '').strip()
+    if not category:
+        try:
+            category = get_session_category(user_id)
+        except Exception:
+            category = ''
+    if not category:
+        return None
+
+    try:
+        filters = fetch_category_filters(category)
+    except Exception as e:
+        logger.warning("[WEBCHAT] fetch_category_filters failed: %s", e)
+        filters = None
+    if not filters or not (filters.get('price_min') and filters.get('price_max')):
+        return None
+
+    display_category = filters.get('category') or category
+    response_text = (
+        f"স্যার, {display_category} ক্যাটাগরিতে দামের রেঞ্জ:\n\n"
+        f"সর্বনিম্ন মূল্য: {_format_bold_taka(filters['price_min'])}\n"
+        f"সর্বোচ্চ মূল্য: {_format_bold_taka(filters['price_max'])}"
+        + LOOP_BACK
+    )
+
+    user_name = get_known_user_name(user_id) or f"User {user_id[-6:]}"
+    try:
+        save_chat_message(user_id=user_id, sender_type=3, message=message, user_name=user_name, platform_id=2)
+        save_chat_message(user_id=user_id, sender_type=2, message=response_text, user_name=user_name, platform_id=2)
+    except Exception as e:
+        logger.warning("[WEBCHAT] save_chat_message failed for price-range answer: %s", e)
+
+    link_buttons = []
+    if filters.get('url'):
+        link_buttons = [{'text': f"{display_category} দেখুন", 'url': filters['url']}]
+
+    return {
+        'response': response_text,
+        'mode': 'ai',
+        'intent': 'category_price_range',
+        'intent_content': {'cat': display_category},
+        'conversation_status': AI_ACTIVE_STATUS,
+        'products': [],
+        'link_buttons': link_buttons,
+        'processing_time': 0.0,
+        'user_name': user_name,
+        'platform_id': 'web',
+    }
 
 
 def _seed_page_context(user_id: str, product: str, category: str, page_link: str, product_id: str = '') -> None:
@@ -258,6 +355,15 @@ def webchat_message():
             # Page-context grounding is a best-effort enhancement — never let
             # it block the message from getting a normal reply.
             logger.warning("[WEBCHAT] page context seeding failed: %s", e)
+
+    try:
+        price_range_result = _try_price_range_answer(user_id, message, page_category)
+    except Exception as e:
+        # Best-effort shortcut — never let it block the normal reply.
+        logger.warning("[WEBCHAT] price range answer failed: %s", e)
+        price_range_result = None
+    if price_range_result:
+        return jsonify(price_range_result), 200
 
     try:
         result = _process_user_message(

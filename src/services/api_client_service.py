@@ -29,7 +29,7 @@ from models.chatbot_config import (
     ASSIGN_BOT_URL, RESPONDER_URL, RESPONDER_KEY,
     HISTORY_URL, HISTORY_LIMIT,
     SAVE_MESSAGE_URL, SAVE_MESSAGE_KEY,
-    CAT_LIST_URL, SPEC_URL, PRODUCT_DETAILS_URL, KNOWLEDGE_URL,
+    CAT_LIST_URL, SPEC_URL, PRODUCT_DETAILS_URL, CATEGORY_FILTERS_URL, KNOWLEDGE_URL,
     CITY_LIST_URL, AREA_LIST_URL, PLACE_ORDER_URL, ORDER_STATUS_URL,
     SELLER_REQUEST_URL, SUPPORT_CONTACT_URL,
     _log_api_call,
@@ -666,6 +666,71 @@ def fetch_product_details(listing_id: str) -> Optional[Dict]:
         return result
     except Exception as e:
         logger.error("fetch_product_details failed: %s", e)
+        return None
+
+
+# ── Category filters (price range, brands, spec options) ──────────────────────
+
+_category_filters_cache: Dict[str, tuple] = {}   # keyed by category (lowercased) → (timestamp, dict)
+_CATEGORY_FILTERS_TTL = 600                       # 10 min — matches _SPEC_TTL
+
+
+def fetch_category_filters(category: str) -> Optional[Dict]:
+    """Fetch available filters (price range, brand list, spec options) for a
+    whole category from the chatbot-specific category_filters API.
+
+    Used to answer category-level questions like "price range koto?" (used by
+    src/api/webchat_routes.py — webchat only, nothing else calls this).
+
+    Returns:
+        {
+          'category': str,
+          'url':      str,
+          'price_min': str,
+          'price_max': str,
+          'brands':   [{'name': str, 'count': str}, ...],
+        }
+        or None on failure/not found.
+    """
+    category = (category or '').strip()
+    if not category:
+        return None
+    cache_key = category.lower()
+    now = time.time()
+    cached = _category_filters_cache.get(cache_key)
+    if cached and (now - cached[0]) < _CATEGORY_FILTERS_TTL:
+        return cached[1]
+
+    try:
+        started = datetime.now()
+        resp = requests.get(CATEGORY_FILTERS_URL, params={'category': category, 'key': API_KEY}, timeout=10)
+        duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+        payload = resp.json() if resp.text else {}
+        passed = resp.status_code == 200 and bool(payload.get('success'))
+        _log_api_call('fetch_category_filters', 'GET', CATEGORY_FILTERS_URL,
+                      {'category': category}, resp.status_code, duration_ms,
+                      'PASS' if passed else 'FAIL', resp.text[:400])
+        if not passed:
+            return None
+
+        d = payload.get('data') or {}
+        if not d.get('price_min') and not d.get('price_max'):
+            return None
+
+        result = {
+            'category': str(d.get('category') or category).strip(),
+            'url': str(d.get('url') or '').strip(),
+            'price_min': str(d.get('price_min') or '').strip(),
+            'price_max': str(d.get('price_max') or '').strip(),
+            'brands': [
+                {'name': str(b.get('name') or '').strip(), 'count': str(b.get('count') or '').strip()}
+                for b in (d.get('brands') or []) if isinstance(b, dict)
+            ],
+        }
+        _category_filters_cache[cache_key] = (now, result)
+        return result
+    except Exception as e:
+        logger.error("fetch_category_filters failed: %s", e)
         return None
 
 
