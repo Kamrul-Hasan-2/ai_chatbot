@@ -170,7 +170,9 @@ def webchat_message():
     if _is_rate_limited(client_ip):
         return jsonify({
             "success": False,
-            "error": "Too many messages — please slow down and try again shortly."
+            "error": "Too many messages — please slow down and try again shortly.",
+            "response": "একটু ধীরে স্যার! কিছুক্ষণ পর আবার চেষ্টা করুন।",
+            "mode": "human"
         }), 429
 
     data = request.get_json(silent=True) or {}
@@ -180,6 +182,10 @@ def webchat_message():
     page_category = data.get('category')
     page_link = data.get('pageLink')
     page_product_id = data.get('id')
+    # Whether the frontend explicitly sent all three of product/category/
+    # pageLink itself — checked before the Referer fallback below overwrites
+    # page_link, so a Referer-derived link never counts as "explicit."
+    page_context_explicit_and_complete = bool(page_product) and bool(page_category) and bool(page_link)
 
     # Fallback when the frontend hasn't (yet) wired up `pageLink`: browsers
     # automatically send the current page's URL in the Referer header on a
@@ -192,16 +198,28 @@ def webchat_message():
         logger.info("[WEBCHAT] using Referer header as pageLink fallback: %s", page_link)
 
     if not message:
-        return jsonify({"success": False, "error": "No message provided"}), 400
+        return jsonify({
+            "success": False,
+            "error": "No message provided",
+            "response": "অনুগ্রহ করে একটি বার্তা লিখুন।",
+            "mode": "human"
+        }), 400
 
     if len(message) > _MESSAGE_MAX_LENGTH:
         return jsonify({
             "success": False,
-            "error": f"Message too long (max {_MESSAGE_MAX_LENGTH} characters)"
+            "error": f"Message too long (max {_MESSAGE_MAX_LENGTH} characters)",
+            "response": "স্যার, বার্তাটি অনেক বড় হয়ে গেছে। অনুগ্রহ করে একটু ছোট করে লিখুন।",
+            "mode": "human"
         }), 400
 
     if not _SESSION_ID_PATTERN.match(raw_session_id):
-        return jsonify({"success": False, "error": "Invalid or missing session_id"}), 400
+        return jsonify({
+            "success": False,
+            "error": "Invalid or missing session_id",
+            "response": "দুঃখিত, একটি কারিগরি সমস্যা হয়েছে। পেজ রিফ্রেশ করে আবার চেষ্টা করুন।",
+            "mode": "human"
+        }), 400
 
     # Namespace web session ids so they can never collide with a Facebook PSID
     # (always numeric) and cross-pollute another channel's conversation state.
@@ -223,6 +241,13 @@ def webchat_message():
             user_name=None,
             platform_id='web'
         )
+        if page_context_explicit_and_complete:
+            # The frontend already told us product + category + pageLink —
+            # the visitor is already on this exact page, so a "view this
+            # product" link button pointing back at it is redundant. Only
+            # suppress when all three were explicitly given; a partial or
+            # Referer-derived context still benefits from the link.
+            result.pop('link_buttons', None)
         return jsonify(result), 200
     except Exception as e:
         logger.error("Webchat message error: %s", e)
