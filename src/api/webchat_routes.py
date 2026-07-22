@@ -43,6 +43,26 @@ _SESSION_ID_PATTERN = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
 _MESSAGE_MAX_LENGTH = 2000
 _PAGE_CONTEXT_FIELD_MAX_LENGTH = 300
 
+# ── Price emphasis (webchat display only) ──────────────────────────────────────
+# The response text is rendered as plain text by design (see docs/WEBCHAT_API.md
+# §6 — never innerHTML, to stay safe against XSS), so real bold formatting isn't
+# available. Unicode "Mathematical Bold" digits look bold in any plain-text
+# renderer with no frontend changes needed — only digits can be styled this way
+# (the ৳ symbol and commas have no bold Unicode variant, so they stay as-is).
+_BOLD_DIGITS = str.maketrans('0123456789', '𝟎𝟏𝟐𝟑𝟒𝟓𝟔𝟕𝟖𝟗')
+_PRICE_PATTERN = re.compile(r'৳\s*[\d,]+')
+
+
+def _emphasize_prices(text: str) -> str:
+    """Put every '৳ N,NNN' price on its own line with bold-styled digits."""
+    if not text or '৳' not in text:
+        return text
+
+    def _replace(m: 're.Match') -> str:
+        return '\n' + m.group(0).translate(_BOLD_DIGITS)
+
+    return _PRICE_PATTERN.sub(_replace, text)
+
 
 def _seed_page_context(user_id: str, product: str, category: str, page_link: str, product_id: str = '') -> None:
     """Ground the shared pipeline's next answer in a specific product the
@@ -248,6 +268,8 @@ def webchat_message():
             # suppress when all three were explicitly given; a partial or
             # Referer-derived context still benefits from the link.
             result.pop('link_buttons', None)
+        if isinstance(result.get('response'), str):
+            result['response'] = _emphasize_prices(result['response'])
         return jsonify(result), 200
     except Exception as e:
         logger.error("Webchat message error: %s", e)
