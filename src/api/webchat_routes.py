@@ -50,16 +50,22 @@ _PAGE_CONTEXT_FIELD_MAX_LENGTH = 300
 # renderer with no frontend changes needed — only digits can be styled this way
 # (the ৳ symbol and commas have no bold Unicode variant, so they stay as-is).
 _BOLD_DIGITS = str.maketrans('0123456789', '𝟎𝟏𝟐𝟑𝟒𝟓𝟔𝟕𝟖𝟗')
-_PRICE_PATTERN = re.compile(r'৳\s*[\d,]+')
+# Matches an optional leading ": " (the shared pipeline's "Title: ৳429" style)
+# together with the price itself, so the colon can be dropped in favour of a
+# clean "মূল্য:" (Price:) label on its own line instead of dangling at the
+# end of the title line.
+_PRICE_PATTERN = re.compile(r':?\s*৳\s*[\d,]+')
+_PRICE_ONLY_PATTERN = re.compile(r'৳\s*[\d,]+')
 
 
 def _emphasize_prices(text: str) -> str:
-    """Put every '৳ N,NNN' price on its own line with bold-styled digits."""
+    """Put every price on its own 'মূল্য: ৳ N,NNN' line with bold-styled digits."""
     if not text or '৳' not in text:
         return text
 
     def _replace(m: 're.Match') -> str:
-        return '\n' + m.group(0).translate(_BOLD_DIGITS)
+        price_only = _PRICE_ONLY_PATTERN.search(m.group(0)).group(0)
+        return '\nমূল্য: ' + price_only.translate(_BOLD_DIGITS)
 
     return _PRICE_PATTERN.sub(_replace, text)
 
