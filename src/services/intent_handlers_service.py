@@ -1715,6 +1715,30 @@ def handle_product_search(ctx: Dict, user_id: str, message: str,
 
     result    = search_products(keywords, price_max, price_min)
 
+    # When a specific product title was given, the resolved category itself
+    # may be wrong (e.g. Groq reading "KM 6330" as a phone model and guessing
+    # category=Mobile Phone for what's actually a hair trimmer). Try this
+    # BEFORE the generic brand+category "broader" retry below: that retry
+    # keeps the (possibly wrong) category, so for a named product it can
+    # confidently return same-category-but-unrelated items (real mobile
+    # phones for a trimmer query) — _results_match_query alone can't catch
+    # that, since the wrong category's own words genuinely appear in those
+    # results. Checking title-relevance specifically, before category
+    # relevance, avoids that trap.
+    if result['products_found'] == 0 and ctx.get('title') and ctx.get('category'):
+        title_only_kw = ' '.join(
+            v.lower() for v in [ctx.get('brand', ''), ctx.get('title', '')] if v
+        ).strip()
+        if title_only_kw and title_only_kw != keywords:
+            category_drop_retry = search_products(title_only_kw, price_max, price_min)
+            if (category_drop_retry['products_found'] > 0
+                    and _results_match_query(title_only_kw, category_drop_retry['products'])):
+                logger.info(
+                    "category-drop fallback: category=%r was likely wrong, kw=%r found=%d",
+                    ctx.get('category'), title_only_kw, category_drop_retry['products_found']
+                )
+                keywords, result = title_only_kw, category_drop_retry
+
     if result['products_found'] == 0:
         broader = _translate_bn_search_terms(_build_broader_keywords(ctx))
         broader = _augment_with_accessory_term(broader, message)
