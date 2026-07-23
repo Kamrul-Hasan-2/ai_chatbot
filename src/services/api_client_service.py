@@ -259,6 +259,28 @@ def fetch_intent_from_history(user_id: str) -> Dict:
             _intent_cache[user_id] = (now, {})
             return {}
         data = resp.json() if resp.text else {}
+
+        # Primary path: the live API returns intent_content on the top-level
+        # user_info object (the user's current/latest state) — not attached
+        # to individual messages. (#H11 fix) Confirmed against the real API
+        # response shape; the per-message scan below never actually matched
+        # anything, so brand/category continuity was silently dropping on
+        # every follow-up turn regardless of platform.
+        if isinstance(data, dict):
+            user_info = data.get('user_info')
+            if isinstance(user_info, dict):
+                ic = user_info.get('intent_content')
+                if isinstance(ic, str):
+                    try:
+                        ic = json.loads(ic)
+                    except Exception:
+                        ic = None
+                if isinstance(ic, dict) and ic:
+                    _intent_cache[user_id] = (now, ic)
+                    return ic
+
+        # Fallback for any response shape that embeds intent_content on each
+        # message instead of user_info (kept for safety/compatibility).
         candidates: List = []
         if isinstance(data, list):
             candidates = data
