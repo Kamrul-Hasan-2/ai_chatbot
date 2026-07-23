@@ -11,6 +11,7 @@ import time
 import threading
 import logging
 
+import requests
 from flask import Blueprint, request, jsonify, Response
 
 try:
@@ -27,7 +28,7 @@ try:
     from repositories.state_repository import (
         set_product_context, set_product_url, set_session_category, get_session_category,
     )
-    from models.chatbot_config import LOOP_BACK, AI_ACTIVE_STATUS
+    from models.chatbot_config import LOOP_BACK, AI_ACTIVE_STATUS, HISTORY_URL, API_KEY
 except ImportError:
     from src.services.api_client_service import (
         search_products, fetch_product_spec, fetch_product_details, fetch_category_filters,
@@ -37,7 +38,7 @@ except ImportError:
     from src.repositories.state_repository import (
         set_product_context, set_product_url, set_session_category, get_session_category,
     )
-    from src.models.chatbot_config import LOOP_BACK, AI_ACTIVE_STATUS
+    from src.models.chatbot_config import LOOP_BACK, AI_ACTIVE_STATUS, HISTORY_URL, API_KEY
 
 try:
     import markdown as _markdown
@@ -107,6 +108,35 @@ _PRICE_RANGE_SIGNALS = (
 )
 
 
+def _fetch_prev_intent_content(user_id: str) -> dict:
+    """Webchat-only replacement for repositories.state_repository.load_context()
+    for this one call site. That shared function (used by Messenger too, via
+    services.api_client_service.fetch_intent_from_history) looks for
+    intent_content inside each message in BDStall's chatbot_history response —
+    but the real API only ever puts it in the separate top-level user_info
+    object, so that lookup silently returns {} every time. Confirmed by
+    testing the *normal* pipeline (no price-range feature involved) with the
+    same brand-drop symptom, so it's a pre-existing gap in shared code, not
+    something introduced here — deliberately NOT touched (would also change
+    Messenger's behaviour); this reads the correct field directly instead,
+    scoped to only this webchat code path.
+    """
+    if not user_id:
+        return {}
+    try:
+        resp = requests.get(
+            HISTORY_URL, params={'user_id': user_id, 'limit': 1, 'key': API_KEY}, timeout=8
+        )
+        if resp.status_code != 200:
+            return {}
+        data = resp.json() if resp.text else {}
+        ic = (data.get('user_info') or {}).get('intent_content')
+        return ic if isinstance(ic, dict) else {}
+    except Exception as e:
+        logger.warning("[WEBCHAT] _fetch_prev_intent_content failed: %s", e)
+        return {}
+
+
 def _try_price_range_answer(user_id: str, message: str, explicit_category: str, explicit_product: str) -> dict | None:
     """If the message asks about a category's price range and the category is
     known (explicit or previously seeded from page context), answer directly
@@ -143,10 +173,32 @@ def _try_price_range_answer(user_id: str, message: str, explicit_category: str, 
         + LOOP_BACK
     )
 
+    # The normal pipeline persists intent_content (brand/cat/title/budget)
+    # with every bot turn, and the next turn re-reads the MOST RECENT saved
+    # intent_content to keep e.g. "brand: MSI" alive across follow-up
+    # questions. Saving this turn with no intent_content would overwrite that
+    # with nothing and silently drop the active brand — so carry the existing
+    # context forward, only updating 'cat'. (#brand-drop) See
+    # _fetch_prev_intent_content's docstring for why that helper is used here
+    # instead of the shared load_context().
+    prev_ctx = _fetch_prev_intent_content(user_id)
+    intent_content = {
+        'cat': display_category,
+        'brand': prev_ctx.get('brand') or '',
+        'title': prev_ctx.get('title') or '',
+        'compare': prev_ctx.get('compare') or '',
+        'buy': prev_ctx.get('buy') or '',
+        'price_min': prev_ctx.get('price_min') or 0,
+        'price_max': prev_ctx.get('price_max') or 0,
+    }
+
     user_name = get_known_user_name(user_id) or f"User {user_id[-6:]}"
     try:
         save_chat_message(user_id=user_id, sender_type=3, message=message, user_name=user_name, platform_id=2)
-        save_chat_message(user_id=user_id, sender_type=2, message=response_text, user_name=user_name, platform_id=2)
+        save_chat_message(
+            user_id=user_id, sender_type=2, message=response_text, user_name=user_name,
+            intent_content=intent_content, platform_id=2,
+        )
     except Exception as e:
         logger.warning("[WEBCHAT] save_chat_message failed for price-range answer: %s", e)
 
@@ -161,7 +213,7 @@ def _try_price_range_answer(user_id: str, message: str, explicit_category: str, 
         'response': response_text,
         'mode': 'ai',
         'intent': 'category_price_range',
-        'intent_content': {'cat': display_category},
+        'intent_content': intent_content,
         'conversation_status': AI_ACTIVE_STATUS,
         'products': [],
         'link_buttons': link_buttons,
